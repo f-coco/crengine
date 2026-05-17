@@ -141,6 +141,7 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
             int spaceReduceWidth = 0;
             int cjkReduceWidth = 0;
             int firstInlineBoxPos = -1;
+            int inline_box_extra = 0; // extra column depth from inline boxes beyond avg_char_advance
 
             // Float handling skipped in vertical mode (Step 1).
             // TODO (Step 2+): implement vertical float positioning if needed.
@@ -180,8 +181,15 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                         }
                         continue;
                     }
-                    if ( fmt->m_charindex[i] == INLINEBOX_CHAR_INDEX && firstInlineBoxPos < 0 ) {
-                        firstInlineBoxPos = i;
+                    if ( fmt->m_charindex[i] == INLINEBOX_CHAR_INDEX ) {
+                        if ( firstInlineBoxPos < 0 )
+                            firstInlineBoxPos = i;
+                        // A ruby inline box occupies advance = N × avg_char_advance column depth,
+                        // not 1 ×.  Track the excess so char_count_adv does not undercount column
+                        // usage and push body chars past clip.bottom (same class of bug as P11).
+                        int ibox_adv = fmt->m_srcs[i]->o.width; // set by measureText()
+                        if ( ibox_adv > avg_char_advance )
+                            inline_box_extra += ibox_adv - avg_char_advance;
                     }
                 }
                 if (!seen_non_collapsed_space) {
@@ -224,7 +232,9 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                 //    effective_width = max(word->width, font_size) spacing.  When TTB advances
                 //    are slightly smaller than font_size, the draw positions accumulate faster
                 //    than m_advance predicts, placing glyphs past clip.bottom.
-                int char_count_adv = (i - pos + 1) * avg_char_advance + avg_char_advance / 2;
+                // For inline boxes (ruby groups), o.width > avg_char_advance: inline_box_extra
+                // carries the excess so char_count_adv correctly reflects total column depth.
+                int char_count_adv = (i - pos + 1) * avg_char_advance + avg_char_advance / 2 + inline_box_extra;
                 if ( y + fmt->m_advance[i]-w0 >= maxHeight + spaceReduceWidth
                         || y + char_count_adv > maxHeight + spaceReduceWidth ) {
                     if ( (flags & LCHAR_IS_SPACE) && (flags & LCHAR_ALLOW_WRAP_AFTER) )
