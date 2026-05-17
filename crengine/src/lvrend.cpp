@@ -1840,9 +1840,27 @@ public:
                     RenderRectAccessor fmt( cell->elem );
                     // TRs padding and border don't apply (see below), so they
                     // don't add any x/y shift to the cells' positions in the TR
-                    fmt.setX(cell->col->x); // relative to its TR (border_spacing_h is
-                                            // already accounted in col->x)
-                    fmt.setY(0); // relative to its TR
+                    //
+                    // Vertical-rl ruby table fix: in a ruby table (rb column + rt column),
+                    // the column positions (cell->col->x) represent the block-direction
+                    // offset (screen-X: rb at right, rt further right for annotation).
+                    // With the Y=X swap, setX() goes into doc-X (= screen-Y, inline direction),
+                    // which would displace the annotation vertically — causing bleed into
+                    // adjacent characters.  For vertical-rl ruby tables, put the column
+                    // position into setY() (block direction) and leave setX()=0 so all
+                    // cells share the same inline-direction start position.
+                    {
+                        bool vert_ruby = is_ruby_table &&
+                            (table_style->writing_mode == css_wm_vertical_rl ||
+                             table_style->writing_mode == css_wm_vertical_lr);
+                        if (vert_ruby) {
+                            fmt.setX(0);             // same inline position for all cells
+                            fmt.setY(cell->col->x);  // column offset in block direction
+                        } else {
+                            fmt.setX(cell->col->x);  // horizontal column position
+                            fmt.setY(0);
+                        }
+                    }
                     fmt.setWidth( cell->width );
                     fmt.setHeight( cell->height );
                     fmt.push();
