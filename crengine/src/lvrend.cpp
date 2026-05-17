@@ -1841,23 +1841,27 @@ public:
                     // TRs padding and border don't apply (see below), so they
                     // don't add any x/y shift to the cells' positions in the TR
                     //
-                    // Vertical-rl ruby table fix: in a ruby table (rb column + rt column),
-                    // the column positions (cell->col->x) represent the block-direction
-                    // offset (screen-X: rb at right, rt further right for annotation).
-                    // With the Y=X swap, setX() goes into doc-X (= screen-Y, inline direction),
-                    // which would displace the annotation vertically — causing bleed into
-                    // adjacent characters.  For vertical-rl ruby tables, put the column
-                    // position into setY() (block direction) and leave setX()=0 so all
-                    // cells share the same inline-direction start position.
+                    // Vertical-rl ruby table fix:
+                    // In horizontal mode, cell->col->x is the column's horizontal position
+                    // (doc-X), correctly encoded via setX().  In vertical-rl (Y=X swap),
+                    // doc-X = screen-Y (inline direction), so setX(col->x) displaces the
+                    // annotation cell 26px lower in the column than the base cell — causing
+                    // the annotation to start at the 2nd base character instead of the 1st.
+                    //
+                    // For vertical-rl ruby tables: ALL cells use setX(0) setY(0).
+                    // The screen-X separation between rb (base) and rt (annotation) comes
+                    // naturally from their different frmline->height values (rb=font_size,
+                    // rt=annot_font_size), which shift x0 = line_x - frmline->height in
+                    // Draw().  No extra setX/setY offset is needed.
                     {
                         bool vert_ruby = is_ruby_table &&
                             (table_style->writing_mode == css_wm_vertical_rl ||
                              table_style->writing_mode == css_wm_vertical_lr);
                         if (vert_ruby) {
-                            fmt.setX(0);             // same inline position for all cells
-                            fmt.setY(cell->col->x);  // column offset in block direction
+                            fmt.setX(0);  // same inline-start for all cells
+                            fmt.setY(0);  // block separation via frmline->height in Draw()
                         } else {
-                            fmt.setX(cell->col->x);  // horizontal column position
+                            fmt.setX(cell->col->x);
                             fmt.setY(0);
                         }
                     }
