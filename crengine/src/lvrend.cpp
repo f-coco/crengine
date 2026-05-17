@@ -17,6 +17,7 @@
 #include "../include/lvtinydom.h"
 #include "../include/fb2def.h"
 #include "../include/lvrend.h"
+#include "../include/lvlogical.h"
 
 // Note about box model/sizing in crengine:
 // https://quirksmode.org/css/user-interface/boxsizing.html says:
@@ -7605,12 +7606,16 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
 
     const int em = enode->getFont()->getSize();
 
-    int border_left = measureBorder(enode, 3);
-    int border_right = measureBorder(enode, 1);
-    int padding_left   = lengthToPx( enode, style->padding[0], container_width ) + border_left + DEBUG_TREE_DRAW;
-    int padding_right  = lengthToPx( enode, style->padding[1], container_width ) + border_right + DEBUG_TREE_DRAW;
-    int padding_top    = lengthToPx( enode, style->padding[2], container_width ) + measureBorder(enode, 0) + DEBUG_TREE_DRAW;
-    int padding_bottom = lengthToPx( enode, style->padding[3], container_width ) + measureBorder(enode, 2) + DEBUG_TREE_DRAW;
+    // Option C: use CSS logical properties so that padding/margin/border map to
+    // the correct inline/block directions in vertical-rl mode.  CSSLogical (lvlogical.h)
+    // returns the correct physical array index for each logical role.
+    CSSLogical L(style->writing_mode);
+    int border_left = measureBorder(enode, L.brdIS());
+    int border_right = measureBorder(enode, L.brdIE());
+    int padding_left   = lengthToPx( enode, style->padding[L.padIS()], container_width ) + border_left + DEBUG_TREE_DRAW;
+    int padding_right  = lengthToPx( enode, style->padding[L.padIE()], container_width ) + border_right + DEBUG_TREE_DRAW;
+    int padding_top    = lengthToPx( enode, style->padding[L.padBS()], container_width ) + measureBorder(enode, L.brdBS()) + DEBUG_TREE_DRAW;
+    int padding_bottom = lengthToPx( enode, style->padding[L.padBE()], container_width ) + measureBorder(enode, L.brdBE()) + DEBUG_TREE_DRAW;
 
     // Handle our auto/special/dynamic padding sizing (if it has not been overridden) set in our user-agent
     // stylesheet: "ol, ul { padding-left: -cr-special; padding-right: -cr-special }".
@@ -7618,8 +7623,8 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
     // that may change with DPI), that publishers ought to override if they care about rendering. If they haven't,
     // let's do the best thing (that crengine used to do with ALL list-items - but this wasn't per-specs, so we
     // removed this behaviour, allowing us to still get it with -cr-special on the list-items parent container).)
-    if ( (!is_rtl && style->padding[0].type == css_val_unspecified && style->padding[0].value == css_generic_cr_special) ||
-          (is_rtl && style->padding[1].type == css_val_unspecified && style->padding[1].value == css_generic_cr_special) ) {
+    if ( (!is_rtl && style->padding[L.padIS()].type == css_val_unspecified && style->padding[L.padIS()].value == css_generic_cr_special) ||
+          (is_rtl && style->padding[L.padIE()].type == css_val_unspecified && style->padding[L.padIE()].value == css_generic_cr_special) ) {
         // This is to be used on nodes expecting to have children with "display:list-item".
         // Look for any, considering only those with "list-style-position:outside" (they are allowed to be mixed).
         int cnt = enode->getChildCount();
@@ -7638,31 +7643,31 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
                     css_style_ref_t newstyle(new css_style_rec_t);
                     copystyle(style, newstyle);
                     if ( is_rtl ) {
-                        newstyle->padding[1].type = css_val_screen_px;
-                        newstyle->padding[1].value = marker_width;
+                        newstyle->padding[L.padIE()].type = css_val_screen_px;
+                        newstyle->padding[L.padIE()].value = marker_width;
                     }
                     else {
-                        newstyle->padding[0].type = css_val_screen_px;
-                        newstyle->padding[0].value = marker_width;
+                        newstyle->padding[L.padIS()].type = css_val_screen_px;
+                        newstyle->padding[L.padIS()].value = marker_width;
                     }
                     enode->setStyle(newstyle);
                     style = enode->getStyle(); // Re-fetch it
                     // And re-compute the values we'll use below.
-                    padding_left   = lengthToPx( enode, style->padding[0], container_width ) + border_left + DEBUG_TREE_DRAW;
-                    padding_right  = lengthToPx( enode, style->padding[1], container_width ) + border_right + DEBUG_TREE_DRAW;
+                    padding_left   = lengthToPx( enode, style->padding[L.padIS()], container_width ) + border_left + DEBUG_TREE_DRAW;
+                    padding_right  = lengthToPx( enode, style->padding[L.padIE()], container_width ) + border_right + DEBUG_TREE_DRAW;
                     break;
                 }
             }
         }
     }
 
-    css_length_t css_margin_left  = style->margin[0];
-    css_length_t css_margin_right = style->margin[1];
+    css_length_t css_margin_left  = style->margin[L.marIS()];
+    css_length_t css_margin_right = style->margin[L.marIE()];
 
     int margin_left   = lengthToPx( enode, css_margin_left, container_width ) + DEBUG_TREE_DRAW;
     int margin_right  = lengthToPx( enode, css_margin_right, container_width ) + DEBUG_TREE_DRAW;
-    int margin_top    = lengthToPx( enode, style->margin[2], container_width ) + DEBUG_TREE_DRAW;
-    int margin_bottom = lengthToPx( enode, style->margin[3], container_width ) + DEBUG_TREE_DRAW;
+    int margin_top    = lengthToPx( enode, style->margin[L.marBS()], container_width ) + DEBUG_TREE_DRAW;
+    int margin_bottom = lengthToPx( enode, style->margin[L.marBE()], container_width ) + DEBUG_TREE_DRAW;
 
     if ( ! BLOCK_RENDERING(flags, ALLOW_HORIZONTAL_NEGATIVE_MARGINS) ) {
         if (margin_left < 0) margin_left = 0;
@@ -10693,9 +10698,10 @@ void DrawDocument( LVDrawBuf & drawbuf, ldomNode * enode, int x0, int y0, int dx
                     // Note: this computation is wrong for paddings in %, as they should
                     // apply against the parent container width, not this block width.
                     bool draw_padding_bg = true; //( enode->getRendMethod()==erm_final );
-                    padding_left = !draw_padding_bg ? 0 : lengthToPx( enode, style->padding[0], width ) + DEBUG_TREE_DRAW+measureBorder(enode,3);
-                    int padding_right = !draw_padding_bg ? 0 : lengthToPx( enode, style->padding[1], width ) + DEBUG_TREE_DRAW+measureBorder(enode,1);
-                    padding_top = !draw_padding_bg ? 0 : lengthToPx( enode, style->padding[2], width ) + DEBUG_TREE_DRAW+measureBorder(enode,0);
+                    CSSLogical DL(style->writing_mode);
+                    padding_left = !draw_padding_bg ? 0 : lengthToPx( enode, style->padding[DL.padIS()], width ) + DEBUG_TREE_DRAW+measureBorder(enode,DL.brdIS());
+                    int padding_right = !draw_padding_bg ? 0 : lengthToPx( enode, style->padding[DL.padIE()], width ) + DEBUG_TREE_DRAW+measureBorder(enode,DL.brdIE());
+                    padding_top = !draw_padding_bg ? 0 : lengthToPx( enode, style->padding[DL.padBS()], width ) + DEBUG_TREE_DRAW+measureBorder(enode,DL.brdBS());
                     inner_width = width - padding_left - padding_right;
                 }
 

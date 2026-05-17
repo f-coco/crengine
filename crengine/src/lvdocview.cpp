@@ -2006,14 +2006,42 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 	// that is set to be on prev/next page).
 	lvRect clip;
 	clip.top = pageRect->top + m_pageMargins.top + headerHeight;
-	clip.bottom = pageRect->top + m_pageMargins.top + height + headerHeight;
+	// In vertical-rl mode, `height` (= page.height) is the page-split stride
+	// in the COLUMN-PROGRESSION direction (horizontal), NOT the vertical
+	// extent.  Using it for clip.bottom truncates each column at clip.top +
+	// page_split_stride, leaving the lower portion of the screen empty and
+	// the column's text off-screen.  Use the full page rect (minus bottom
+	// margin) instead — columns are still sized by the text formatter's
+	// page_height (= _page_height), which fits the screen.
+	if ( isVerticalText() ) {
+		clip.bottom = pageRect->bottom - m_pageMargins.bottom;
+	} else {
+		clip.bottom = pageRect->top + m_pageMargins.top + height + headerHeight;
+	}
 	// clip.left = pageRect->left + m_pageMargins.left;
 	// clip.right = pageRect->left + pageRect->width() - m_pageMargins.right;
 	// We don't really need to enforce left and right clipping of page margins:
 	// this allows glyphs that need to (like 'J' at start of line or 'f' at
 	// end of line with some fonts) to not be cut by this clipping.
-	clip.left = pageRect->left;
 	clip.right = pageRect->left + pageRect->width();
+	if ( isVerticalText() ) {
+		// In vertical-rl, the column-progression direction is the SCREEN-X
+		// axis (right-to-left).  The page covers c_x ∈ [page.start,
+		// page.start + page.height).  When DrawDocument descends a block
+		// that straddles the page boundary, LFormattedText::Draw iterates
+		// every frmline of the block and decides per-frmline visibility
+		// using clip.left / clip.right.  Without column-direction clipping
+		// here, frmlines past the page boundary still satisfy line_x ≥
+		// clip.left and get drawn — the same column appears on the
+		// current page and again on the next page.  Setting clip.left =
+		// clip.right - page.height makes the leftmost in-page column the
+		// last visible one and excludes everything past it.
+		clip.left = clip.right - height;
+		if ( clip.left < pageRect->left )
+			clip.left = pageRect->left;
+	} else {
+		clip.left = pageRect->left;
+	}
 
 	// Extra info that DrawDocument() can fetch from drawbuf when some
 	// alternative clipping is preferred
@@ -2154,16 +2182,27 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 			if ( m_markRanges.length() )
 				CRLog::trace("Entering DrawDocument() : %d ranges", m_markRanges.length());
 			//CRLog::trace("Entering DrawDocument()");
-			if (page.height)
+			if (page.height) {
+				// In vertical-rl mode the Y=X swap in LFormattedText::Draw means:
+				//   draw_x (= doc_x + x0) → y  (screen-Y, row position within column)
+				//   draw_y (= doc_y + y0) → x → line_x = clip.right - x (column screen-X)
+				// x0 must therefore carry the screen-Y origin (clip.top) so text
+				// starts below the header, and y0 must be 0 so columns are not
+				// shifted left by clip.top pixels (which would hide the last
+				// clip.top-worth of columns on every page).
+				bool is_vert = isVerticalText();
+				int draw_x0 = is_vert ? clip.top                        : pageRect->left + m_pageMargins.left;
+				int draw_y0 = is_vert ? 0                               : clip.top;
 				DrawDocument(*drawbuf, m_doc->getRootNode(),
-						pageRect->left + m_pageMargins.left, // x0
-						clip.top,                            // y0
+						draw_x0,
+						draw_y0,
 						pageRect->width() - m_pageMargins.left - m_pageMargins.right, // dx
-						height,  // dy
-						0,       // doc_x
-						-start,  // doc_y
-						m_dy,    // page_height
+						height,   // dy
+						0,        // doc_x
+						-start,   // doc_y
+						m_dy,     // page_height
 						&m_markRanges, &m_bmkRanges);
+			}
 			//CRLog::trace("Done DrawDocument() for main text");
 			if ( m_doc->getPartialRerenderingsCount() != prev_partial_rerenderings_count ) {
 				return; // this page may have been deleted/replaced, and footnotes would be invalid
@@ -2593,6 +2632,54 @@ void LVDocView::Draw(LVDrawBuf & drawbuf, int position, int page, bool rotate, b
 //Draw( m_drawbuf, m_pos, true );
 //}
 
+/// Returns true if the document root body uses vertical-rl or vertical-lr writing mode.
+/// Phase 1: checks the body element only. Mixed-mode documents (Phase 2) not yet supported.
+bool LVDocView::isVerticalText() const {
+    // Detect vertical text by checking the body element's writing-mode style
+    // (most reliable; works regardless of cover pages or page-list layout).
+    // Falls back to a height-based heuristic if the style lookup fails.
+    if (m_doc) {
+        ldomNode * root = m_doc->getRootNode();
+        if (root) {
+            // Walk the tree shallowly to find <body> (typically root → DocFragment → body)
+            for (int depth = 0; depth < 4; depth++) {
+                if (!root) break;
+                if (root->isElement() && root->getNodeId() == el_body) {
+                    css_style_ref_t style = root->getStyle();
+                    if (!style.isNull()) {
+                        int wm = style->writing_mode;
+                        if (wm == css_wm_vertical_rl || wm == css_wm_vertical_lr) {
+                            return true;
+                        }
+                        if (wm == css_wm_horizontal_tb) {
+                            return false;
+                        }
+                    }
+                    break;
+                }
+                // Descend to first element child
+                ldomNode * next = NULL;
+                int cnt = root->getChildCount();
+                for (int i = 0; i < cnt; i++) {
+                    ldomNode * c = root->getChildNode(i);
+                    if (c && c->isElement()) { next = c; break; }
+                }
+                root = next;
+            }
+        }
+    }
+    // Fallback: page-height heuristic. Scan all pages for any with height ≤ m_dx + 32
+    // (cover pages and tall image pages don't qualify; vertical content pages do).
+    if (m_pages.length() == 0) return false;
+    for (int i = 0; i < m_pages.length(); i++) {
+        int page_h = m_pages[i]->height;
+        if (page_h > 0 && page_h <= m_dx + 32) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /// converts point from window to document coordinates, returns true if success
 bool LVDocView::windowToDocPoint(lvPoint & pt, bool pullInPageArea) {
     CHECK_RENDER("windowToDocPoint()")
@@ -2658,6 +2745,19 @@ bool LVDocView::windowToDocPoint(lvPoint & pt, bool pullInPageArea) {
 		}
 		if (rc && page >= 0 && page < m_pages.length()) {
 			int page_y = m_pages[page]->start;
+			if (isVerticalText()) {
+				// Vertical-rl/lr: screen coordinates are swapped relative to document layout.
+				// In our Y=X coordinate-swap rendering:
+				//   screen_x identifies the column → doc_y (horizontal column position)
+				//   screen_y identifies character position within column → doc_x
+				// Inverse of docToWindowPoint: doc_x = screen_y - draw_x0
+				// where draw_x0 = rc->top = pageRect.top + margin.top + headerHeight.
+				int screen_x = pt.x;
+				int screen_y = pt.y;
+				pt.y = page_y + (rc->right - screen_x);
+				pt.x = screen_y - rc->top;
+				return true;
+			}
 			pt.x -= rc->left;
 			pt.y -= rc->top;
 			if ( pullInPageArea ) {
@@ -2707,6 +2807,44 @@ bool LVDocView::docToWindowPoint(lvPoint & pt, bool isRectBottom, bool fitToPage
                     }
                 }
                 if (index >= 0) {
+                    if (isVerticalText()) {
+                        // Vertical-rl: reverse of windowToDocPoint vertical swap.
+                        // drawPageTo uses draw_x0 = clip.top = pageRect.top + margin.top + headerHeight
+                        // as the screen-Y origin. Document coords start at 0 relative to that origin.
+                        // doc_y (column horizontal pos) → screen_x = page_right - (doc_y - page_y)
+                        // doc_x (character Y offset) → screen_y = doc_x + draw_x0
+                        int page_right  = m_pageRects[index].right  - m_pageMargins.right;
+                        int page_left   = m_pageRects[index].left   + m_pageMargins.left;
+                        int page_top    = m_pageRects[index].top    + m_pageMargins.top;
+                        int page_bottom = m_pageRects[index].bottom - m_pageMargins.bottom;
+                        int page_y_val  = m_pages[page + index]->start;
+                        int doc_x = pt.x;
+                        int doc_y = pt.y;
+                        int screen_x = page_right - (doc_y - page_y_val);
+                        // Reject positions outside the visible page area. Ruby annotations
+                        // in vertical-rl can produce large doc_x values (their internal
+                        // frmline->x + word->x overflows the column height) making screen_y
+                        // land off-screen. Check both axes with a 50px tolerance.
+                        if (screen_x < page_left - 50 || screen_x > page_right + 50) {
+                            return false;
+                        }
+                        int draw_x0 = m_pageRects[index].top + m_pageMargins.top + getPageHeaderHeight();
+                        int screen_y = doc_x + draw_x0;
+                        // Ruby annotations in vertical-rl can produce doc_x slightly larger
+                        // than the column height (frmline->x + word->x overflow).
+                        // Clamp screen_y to page bounds instead of rejecting — this produces
+                        // a valid sbox at the column edge rather than silently dropping the
+                        // annotation position.
+                        if (screen_y < page_top - 50) {
+                            return false;
+                        }
+                        if (screen_y > page_bottom) {
+                            screen_y = page_bottom;
+                        }
+                        pt.x = screen_x;
+                        pt.y = screen_y;
+                        return true;
+                    }
                     /*
                     int x = pt.x + m_pageRects[index].left + m_pageMargins.left;
                     // We shouldn't get x ouside page width as we never crop on the

@@ -95,7 +95,19 @@ extern const int gDOMVersionCurrent = DOM_VERSION_CURRENT;
 // increment to force complete reload/reparsing of old file
 #define CACHE_FILE_FORMAT_VERSION "3.05.77k"
 /// increment following value to force re-formatting of old book after load
-#define FORMATTING_VERSION_ID 0x0034
+// 0x0036: vertical-rl page splitter uses a separate vert_split_page_h field
+//         (= page_width) for page-split boundaries while keeping page_h at
+//         _page_height so the text formatter retains full screen-height
+//         columns.  Earlier 0x0035 caches were either still horizontal-sized
+//         or short-column-broken; force a re-render with the proper layout.
+// 0x0037: vertical-rl space reduction disabled in alignLineHorizontal (was
+//         shifting ruby inline-box word->x upward, causing kanji with ruby
+//         to appear shifted into the preceding text line).
+// 0x003B: html5.css rb{line-height:inherit} so the inner base-cell formatter
+//         has strut = outer col_w; centering (col_w-em)/2 now applied inside
+//         the ruby block, and vert_y_adjust = -annotation_h is line-spacing-
+//         independent, keeping the base char centred at all line spacings.
+#define FORMATTING_VERSION_ID 0x003D
 
 #ifndef DOC_DATA_COMPRESSION_LEVEL
 /// data compression level (0=no compression, 1=fast compressions, 3=normal compression)
@@ -225,6 +237,7 @@ enum CacheFileBlockType {
 #include "../include/fb2def.h"
 #if BUILD_LITE!=1
 #include "../include/lvrend.h"
+#include "../include/lvlogical.h"
 #include "../include/chmfmt.h"
 #endif
 #include "../include/crtest.h"
@@ -7511,6 +7524,57 @@ void ldomNode::initNodeRendMethod()
         //recurseElements( resetRendMethodToInvisible );
         setRendMethod(erm_invisible);
     } else if ( d==css_d_inline ) {
+        // Ruby boxing nodes (rubyBox, el_rbc, el_rtc) have css_d_inline as their
+        // default display, but they need specific render methods based on their role
+        // in the ruby table structure. Detect them by structural position so that
+        // initNodeRendMethod() (called deepest-first) sets the correct method without
+        // relying on the <ruby> element's post-boxing loop.
+        // Ruby boxing nodes (el_rubyBox, el_rbc, el_rtc, el_rb, el_rt) inside the ruby
+        // boxing structure need specific render methods. Detect by structural position:
+        // the ruby boxing always creates: el_ruby > el_inlineBox > rbox1(el_rubyBox) >
+        // rbox2(el_rubyBox/el_rbc/el_rtc) > rbox3(el_rubyBox/el_rb/el_rt).
+        if ( BLOCK_RENDERING(rend_flags, ENHANCED) ) {
+            lUInt16 _nid = getNodeId();
+            ldomNode * _par = getParentNode();
+            if ( _par && _nid == el_rubyBox && _par->getNodeId() == el_inlineBox ) {
+                // rbox1: el_rubyBox, parent=inlineBox, grandparent=el_ruby
+                ldomNode * _gpar = _par->getParentNode();
+                if ( _gpar && _gpar->getNodeId() == el_ruby ) {
+                    setRendMethod( erm_table );
+                    return;
+                }
+            } else if ( _par ) {
+                ldomNode * _gpar = _par->getParentNode();
+                ldomNode * _ggpar = _gpar ? _gpar->getParentNode() : NULL;
+                // rbox2: parent=rbox1(el_rubyBox), gpar=inlineBox, ggpar=el_ruby
+                if ( _par->getNodeId() == el_rubyBox &&
+                     _gpar && _gpar->getNodeId() == el_inlineBox &&
+                     _ggpar && _ggpar->getNodeId() == el_ruby ) {
+                    if ( _nid == el_rubyBox || _nid == el_rbc || _nid == el_rtc ) {
+                        setRendMethod( erm_table_row );
+                        return;
+                    }
+                }
+                // rbox3: parent=rbox2(el_rubyBox/rbc/rtc), gpar=rbox1(el_rubyBox),
+                //        ggpar=inlineBox, gggpar=el_ruby
+                ldomNode * _gggpar = _ggpar ? _ggpar->getParentNode() : NULL;
+                if ( _gpar && _gpar->getNodeId() == el_rubyBox &&
+                     _ggpar && _ggpar->getNodeId() == el_inlineBox &&
+                     _gggpar && _gggpar->getNodeId() == el_ruby ) {
+                    lUInt16 _par_nid = _par->getNodeId();
+                    if ( _par_nid == el_rubyBox || _par_nid == el_rbc || _par_nid == el_rtc ) {
+                        if ( _nid == el_rubyBox || _nid == el_rb || _nid == el_rt ) {
+                            setRendMethod( erm_final );
+                            return;
+                        } else {
+                            // rp or unexpected: invisible
+                            setRendMethod( erm_invisible );
+                            return;
+                        }
+                    }
+                }
+            }
+        }
         // Used to be: an inline parent resets all its children to inline
         //   (so, if some block content is erroneously wrapped in a SPAN, all
         //   the content became inline...), except, depending on what's enabled:
@@ -8534,48 +8598,51 @@ void ldomNode::initNodeRendMethod()
         }
         // All wrapping done, or assumed to have already been done correctly.
         // We can set the rendering methods to make all this a table.
-        // All unexpected elements will be erm_invisible
-        len = getChildCount();
-        for ( int i=0; i<len; i++ ) {
-            ldomNode * ibox1 = getChildNode(i);
-            if ( !ibox1->isElement() || ibox1->getNodeId() != el_inlineBox )
-                continue;
-            ibox1->setRendMethod( erm_inline );
-            ldomNode * rbox1 = ibox1->getChildCount() > 0 ? ibox1->getChildNode(0) : NULL;
-            if ( rbox1 && rbox1->isElement() && rbox1->getNodeId() == el_rubyBox ) {
-                // First level rubyBox: each will be an inline table
-                rbox1->setRendMethod( erm_table );
-                int len1 = rbox1->getChildCount();
-                for ( int i1=0; i1<len1; i1++ ) {
-                    ldomNode * rbox2 = rbox1->getChildNode(i1);
-                    if ( rbox2->isElement() ) {
-                        rbox2->setRendMethod( erm_invisible );
-                        lInt16 rb2elemId = rbox2->getNodeId();
-                        if ( rb2elemId == el_rubyBox || rb2elemId == el_rbc || rb2elemId == el_rtc ) {
-                            // Second level rubyBox: each will be a table row
-                            rbox2->setRendMethod( erm_table_row );
-                            int len2 = rbox2->getChildCount();
-                            for ( int i2=0; i2<len2; i2++ ) {
-                                ldomNode * rbox3 = rbox2->getChildNode(i2);
-                                if ( rbox3->isElement() ) {
-                                    rbox3->setRendMethod( erm_invisible );
-                                    lInt16 rb3elemId = rbox3->getNodeId();
-                                    if ( rb3elemId == el_rubyBox || rb3elemId == el_rb || rb3elemId == el_rt ) {
-                                        // Third level rubyBox: each will be a table cell.
-                                        // (As all it content has previously been reset to erm_inline)
-                                        //  /\ This is no more true, but we expect to find inline
-                                        //  content, with possibly some nested ruby.
-                                        // We can have the cell erm_final.
-                                        rbox3->setRendMethod( erm_final );
+        // All unexpected elements will be erm_invisible.
+        // On re-renders (needs_wrapping=false), render methods are kept correct by the
+        // el_rubyBox special-case in the css_d_inline branch of initNodeRendMethod above:
+        // each rubyBox sets its own render method based on its structural position.
+        // We only call persist() here for newly created nodes (needs_wrapping=true).
+        if ( needs_wrapping ) {
+            len = getChildCount();
+            for ( int i=0; i<len; i++ ) {
+                ldomNode * ibox1 = getChildNode(i);
+                if ( !ibox1->isElement() || ibox1->getNodeId() != el_inlineBox )
+                    continue;
+                ibox1->setRendMethod( erm_inline );
+                ldomNode * rbox1 = ibox1->getChildCount() > 0 ? ibox1->getChildNode(0) : NULL;
+                if ( rbox1 && rbox1->isElement() && rbox1->getNodeId() == el_rubyBox ) {
+                    // First level rubyBox: each will be an inline table
+                    rbox1->setRendMethod( erm_table );
+                    int len1 = rbox1->getChildCount();
+                    for ( int i1=0; i1<len1; i1++ ) {
+                        ldomNode * rbox2 = rbox1->getChildNode(i1);
+                        if ( rbox2->isElement() ) {
+                            lInt16 rb2elemId = rbox2->getNodeId();
+                            if ( rb2elemId == el_rubyBox || rb2elemId == el_rbc || rb2elemId == el_rtc ) {
+                                // Second level rubyBox: each will be a table row
+                                rbox2->setRendMethod( erm_table_row );
+                                int len2 = rbox2->getChildCount();
+                                for ( int i2=0; i2<len2; i2++ ) {
+                                    ldomNode * rbox3 = rbox2->getChildNode(i2);
+                                    if ( rbox3->isElement() ) {
+                                        lInt16 rb3elemId = rbox3->getNodeId();
+                                        if ( rb3elemId == el_rubyBox || rb3elemId == el_rb || rb3elemId == el_rt ) {
+                                            // Third level rubyBox: each will be a table cell.
+                                            rbox3->setRendMethod( erm_final );
+                                        } else {
+                                            rbox3->setRendMethod( erm_invisible );
+                                        }
                                     }
-                                    // We let <rp> be invisible like other unexpected elements
+                                    rbox3->persist();
                                 }
-                                rbox3->persist();
+                            } else {
+                                rbox2->setRendMethod( erm_invisible );
                             }
+                            rbox2->persist();
                         }
-                        rbox2->persist();
+                        rbox1->persist();
                     }
-                    rbox1->persist();
                 }
             }
         }
@@ -21432,6 +21499,24 @@ int ldomNode::renderFinalBlock(  LFormattedTextRef & frmtext, RenderRectAccessor
     // the inner content in that context.
     // This page_h we provide to f->Format() is only used to enforce a max height to images
     int page_h = getDocument()->getPageHeight();
+    // Vertical-rl: reduce page_h by the block's accumulated inline-start offset so
+    // processParagraphVertical() does not place characters past clip.bottom.
+    // With Option C (CSSLogical in renderBlockElementEnhanced), getX() stores the
+    // inline-start content edge (CSS padding-top for vertical-rl), so bvo is
+    // naturally 0 for typical body content that has no CSS padding-top/border-top.
+    {
+        css_writing_mode_t wm = getStyle()->writing_mode;
+        if (wm == css_wm_vertical_rl || wm == css_wm_vertical_lr) {
+            CSSLogical L(wm);
+            int bvo = fmt->getX();
+            bvo += measureBorder(this, L.brdIS());   // inline-start border (border-top)
+            bvo += lengthToPx(this, getStyle()->padding[L.padIS()], fmt->getWidth());  // padding-top
+            for (ldomNode* cur = getParentNode(); cur != NULL && cur->isElement(); cur = cur->getParentNode())
+                bvo += RenderRectAccessor(cur).getX();
+            if (bvo > 0 && bvo < page_h)
+                page_h -= bvo;
+        }
+    }
     // Save or restore outer floats footprint (it is only provided
     // when rendering the document - when this is called to draw the
     // node, or search for text and links, we need to get it from
@@ -21465,7 +21550,8 @@ int ldomNode::renderFinalBlock(  LFormattedTextRef & frmtext, RenderRectAccessor
     // Format/render inner content: this makes lines and words, which are
     // cached into the LFormattedText and ready to be used for drawing
     // and text selection.
-    int h = f->Format((lUInt16)width, (lUInt16)page_h, direction, usable_left_overflow, usable_right_overflow,
+    int h = f->Format((lUInt16)width, (lUInt16)page_h, direction,
+                            getStyle()->writing_mode, usable_left_overflow, usable_right_overflow,
                             getDocument()->getHangingPunctiationEnabled(), float_footprint);
     frmtext = f;
     //CRLog::trace("Created new formatted object for node #%08X", (lUInt32)this);

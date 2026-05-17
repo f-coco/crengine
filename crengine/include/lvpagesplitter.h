@@ -402,6 +402,12 @@ class LVRendPageContext
     LVRendPageList * page_list;
     // page height
     int page_h;
+    // For vertical-rl/lr: page-split boundary stride (= page_width).
+    // When non-zero, split() uses this instead of page_h, so vertical
+    // documents can keep the column-length page_h (for the text formatter)
+    // while still having the page splitter break at every page_width of
+    // horizontal advance.  Zero means "use page_h" (default / horizontal).
+    int vert_split_page_h;
     // document default font size (= root node font size)
     int doc_font_size;
     // Whether to gather lines or not (only footnote links will be gathered if not)
@@ -563,6 +569,16 @@ public:
 
     /// returns page height
     int getPageHeight() { return page_h; }
+
+    /// set page height (used for vertical text: temporarily swapped with page width)
+    void setPageHeight( int h ) { page_h = h; }
+
+    /// for vertical-rl/lr: tell the page splitter to break at every `h` units
+    /// of horizontal advance instead of page_h.  Pass 0 to disable (default).
+    void setVerticalSplitPageHeight( int h ) { vert_split_page_h = h; }
+    int  getVerticalSplitPageHeight() { return vert_split_page_h; }
+    /// effective page-split stride: vertical override if set, else page_h
+    int  getEffectivePageHeight() { return vert_split_page_h > 0 ? vert_split_page_h : page_h; }
 
     /// returns document font size
     int getDocFontSize() { return doc_font_size; }

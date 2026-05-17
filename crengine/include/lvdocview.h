@@ -618,6 +618,10 @@ public:
     void setPageMargins( const lvRect & rc );
     /// returns page margins
     lvRect getPageMargins() const { return m_pageMargins; }
+    /// returns true if the document uses vertical-rl or vertical-lr writing mode
+    /// Phase 1: document-level flag only; mixed horizontal/vertical elements not yet supported.
+    /// TODO (Phase 2): per-element writing mode for mixed-mode documents.
+    bool isVerticalText() const;
 #if CR_INTERNAL_PAGE_ORIENTATION==1
     /// sets rotate angle
     void SetRotateAngle( cr_rotate_angle_t angle );

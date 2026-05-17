@@ -70,7 +70,7 @@ extern "C" {
 
 #define LTEXT_SRC_IS_OBJECT          0x00100000  // Source is not a text node
 #define LTEXT_HAS_TOP_BOTTOM_BORDER  0x00200000  // text should have top or bottom border (possibly from upper inline container nodes)
-#define LTEXT__AVAILABLE_BIT_23__    0x00400000
+#define LTEXT_IS_TCY                 0x00400000  // text-combine-upright: tate-chu-yoko
 #define LTEXT__AVAILABLE_BIT_24__    0x00800000
 // "clear" handling
 #define LTEXT_SRC_IS_CLEAR_RIGHT     0x01000000  // text follows <BR style="clear: right">
@@ -104,6 +104,7 @@ enum ltext_extra_t {
     LTEXT_EXTRA_CSS_HIDDEN = 1,         // visibility: hidden
     LTEXT_EXTRA_CSS_LINE_BREAK,         // line-break: anywhere, or loose/normal/strict (for lang=ja/zh)
     LTEXT_EXTRA_CSS_WORD_BREAK,         // word-break: break-all or keep-all
+    LTEXT_EXTRA_CSS_TEXT_EMPHASIS,      // text-emphasis-style: 圏点/傍点 (value = css_text_emphasis_style_t)
 };
 
 // Text color reserved values
@@ -205,7 +206,7 @@ typedef struct
 #define LTEXT_WORD_VALIGN_BOTTOM             0x2000 /// word is to be vertical-align: bottom
 #define LTEXT_WORD_STRUT_CONFINED            0x4000 /// word is to be fully contained into strut bounds
                                                     /// (used only when one of the 2 previous is set)
-#define LTEXT_WORD__AVAILABLE_BIT_16__       0x8000
+#define LTEXT_WORD_IS_TCY                    0x8000  // word has text-combine-upright (tate-chu-yoko)
 
 //#define LTEXT_BACKGROUND_MARK_FLAGS 0xFFFF0000l
 
@@ -317,6 +318,9 @@ typedef struct
 
    // Highlighting
    text_highlight_options_t highlight_options; /**< options for selection/bookmark highlighting */
+
+   // Writing mode (for Draw() to know vertical vs horizontal)
+   lInt16                writing_mode;       /**< 0=inherit, 1=horizontal-tb, 2=vertical-rl, 3=vertical-lr */
 
    // Reusable after it is cached by ldomNode::renderFinalBlock()
    // (Usually true, except in a single case: first rendering of final block
@@ -474,6 +478,7 @@ public:
 
     lUInt32 Format(lUInt16 width, lUInt16 page_height,
                         int para_direction=0, // = REND_DIRECTION_UNSET in lvrend.h
+                        int writing_mode=0, // = css_wm_horizontal_tb in cssdef.h
                         int usable_left_overflow=0, int usable_right_overflow=0,
                         bool hanging_punctuation=false,
                         BlockFloatFootprint * float_footprint = NULL );
