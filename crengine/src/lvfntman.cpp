@@ -4536,28 +4536,24 @@ public:
                                         bool has_nominal = hb_font_get_glyph(_hb_font, text[cluster], 0, &nominal) != 0;
                                         // Rotate only when cmap lookup succeeds AND +vert left the glyph unchanged.
                                         if (has_nominal && nominal != 0 && glyph_info[i].codepoint == nominal) {
-                                            // For the rotation fallback, horizontal-mode gx/gy centres the
-                                            // glyph at the horizontal baseline — wrong for vertical-rl.
-                                            // Instead, centre the pre-rotation bitmap in the em-square slot.
+                                            // Bearing-correct placement of the rotated glyph.
+                                            //
+                                            // 90° CW rotation about the em-square centre maps the
+                                            // bearing-placed top-left of the pre-rotation bitmap to:
+                                            //   correct_x = x + _baseline - origin_y
+                                            //   correct_y = y + _size - origin_x - bmp_w
                                             //
                                             // drawGlyphItemRotated90CW internally applies:
                                             //   adj_x = rot_gx + (bmp_w - bmp_h) / 2
                                             //   adj_y = rot_gy + (bmp_h - bmp_w) / 2
-                                            //
-                                            // We want:
-                                            //   adj_x = x + (_size - bmp_h) / 2   (centred in column width)
-                                            //   adj_y = max(y, y + (_size - bmp_w) / 2)  (centred in slot,
-                                            //             but never above slot top when bmp_w > _size)
-                                            //
-                                            // Back-solving:
-                                            //   rot_gx = x + (_size - bmp_w) / 2
-                                            //   rot_gy = adj_y - (bmp_h - bmp_w) / 2
-                                            int rot_gx = x + (_size - item->bmp_width)  / 2;
-                                            // Ideal centre: adj_y = y + (_size - bmp_w)/2
-                                            // When bmp_w > _size this is < y → bleed above. Clamp to y.
-                                            int adj_y = y + (_size - item->bmp_width) / 2;
-                                            if (adj_y < y) adj_y = y;
-                                            int rot_gy = adj_y - (item->bmp_height - item->bmp_width) / 2;
+                                            // Back-solve for rot_gx, rot_gy:
+                                            int bw = item->bmp_width;
+                                            int bh = item->bmp_height;
+                                            int correct_x = x + _baseline - item->origin_y;
+                                            int correct_y = y + _size - item->origin_x - bw;
+                                            if (correct_y < y) correct_y = y;
+                                            int rot_gx = correct_x - (bw - bh) / 2;
+                                            int rot_gy = correct_y - (bh - bw) / 2;
                                             drawGlyphItemRotated90CW(buf, rot_gx, rot_gy, item, palette);
                                             did_rotate = true;
                                         }
