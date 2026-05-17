@@ -1873,14 +1873,32 @@ public:
                     // rt=annot_font_size), which shift x0 = line_x - frmline->height in
                     // Draw().  No extra setX/setY offset is needed.
                     {
-                        bool vert_ruby = is_ruby_table &&
-                            (table_style->writing_mode == css_wm_vertical_rl ||
-                             table_style->writing_mode == css_wm_vertical_lr);
-                        // Diagnostic: track whether vertical ruby tables are
-                        // correctly detected.  table_style->writing_mode may be
-                        // css_wm_inherit (0) for inherited writing-mode, making
-                        // vert_ruby=false even when the document is vertical.
+                        // Determine vertical mode using the effective (cascaded)
+                        // writing-mode.  table_style->writing_mode stores only the
+                        // *specified* CSS value: for <rubyBox> synthetic nodes and
+                        // elements that inherit writing-mode it is css_wm_inherit
+                        // (= 0) even when the document is vertical.  Walk up the
+                        // parent chain to find the nearest ancestor whose stored
+                        // writing_mode is an explicit value.
+                        bool vert_ruby = false;
                         if (is_ruby_table) {
+                            int wm = table_style->writing_mode;
+                            if (wm != css_wm_vertical_rl && wm != css_wm_vertical_lr) {
+                                for (ldomNode * p = elem->getParentNode(); p; p = p->getParentNode()) {
+                                    css_style_ref_t ps = p->getStyle();
+                                    if (!ps.isNull()) {
+                                        int pwm = ps->writing_mode;
+                                        if (pwm == css_wm_vertical_rl || pwm == css_wm_vertical_lr) {
+                                            wm = pwm;
+                                            break;
+                                        } else if (pwm != css_wm_inherit) {
+                                            break; // explicit non-vertical: stop
+                                        }
+                                    }
+                                }
+                            }
+                            vert_ruby = (wm == css_wm_vertical_rl || wm == css_wm_vertical_lr);
+                            // Diagnostic counters (exposed via Lua resetRubyDiag / getRubyDiagStats).
                             if (vert_ruby) {
                                 s_ruby_vert_ok++;
                             } else if (cell->col->x != 0) {
