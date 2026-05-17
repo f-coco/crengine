@@ -5872,8 +5872,12 @@ public:
             usable_overflow_x_max = x_max + usable_right_overflow;
         }
     ~FlowState() {
-        // Restore original page height (was swapped for vertical text)
-        context.setPageHeight( _saved_page_h );
+        // Restore original page height (only for vertical text where it was swapped).
+        // Calling setPageHeight() unconditionally in horizontal mode can override
+        // intermediate page-height adjustments made by nested rendering, causing
+        // different layout on platforms with different compiler optimisations (macOS/Clang).
+        if ( isVertical() )
+            context.setPageHeight( _saved_page_h );
         // Shouldn't be needed as these must have been cleared
         // by leaveBlockLevel(). But let's ensure we clean up well.
         for (int i=_floats.length()-1; i>=0; i--) {
