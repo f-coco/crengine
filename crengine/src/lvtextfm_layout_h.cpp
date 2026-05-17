@@ -537,7 +537,15 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
             }
             if ( !used_even_dist ) {
                 // Standard round-half-up block centering (also correct for base inner cells).
-                frmline->x += is_inner_vert_cell ? (extra_width + 1) / 2 : extra_width / 2;
+                // For vertical ruby inner cells with annotation longer than base (extra_width < 0):
+                // centering would give a negative shift (annotation starts above the cell top),
+                // causing the first annotation char to bleed into the character preceding the ruby
+                // group.  Clamp to 0 so the annotation starts at the cell top and overflows only
+                // downward (past the last base char) — less visually disruptive than upward bleed.
+                int center_shift = is_inner_vert_cell ? (extra_width + 1) / 2 : extra_width / 2;
+                if ( is_inner_vert_cell && center_shift < 0 )
+                    center_shift = 0;
+                frmline->x += center_shift;
             }
         }
         else if ( alignment==LTEXT_ALIGN_RIGHT ) {

@@ -54,6 +54,25 @@
 int gRenderDPI = DEF_RENDER_DPI; // if 0: old crengine behaviour: 1px/pt=1px, 1in/cm/pc...=0px
 bool gRenderScaleFontWithDPI = DEF_RENDER_SCALE_FONT_WITH_DPI;
 
+// Ruby table vertical-detection diagnostic.
+// Populated by CCRTable::renderCells() for is_ruby_table nodes.
+// vert_ok: ruby table correctly identified as vertical (vert_ruby=true).
+// vert_miss: ruby table NOT identified as vertical (vert_ruby=false) yet has
+//   cells with non-zero col->x — the bug that causes Y displacement.
+// col_x_max: the largest col->x used when vert_miss > 0.
+static int s_ruby_vert_ok   = 0;
+static int s_ruby_vert_miss = 0;
+static int s_ruby_col_x_max = 0;
+
+void lvrend_reset_ruby_diag() {
+    s_ruby_vert_ok = s_ruby_vert_miss = s_ruby_col_x_max = 0;
+}
+void lvrend_get_ruby_diag(int *ok_out, int *miss_out, int *col_x_max_out) {
+    *ok_out       = s_ruby_vert_ok;
+    *miss_out     = s_ruby_vert_miss;
+    *col_x_max_out = s_ruby_col_x_max;
+}
+
 int scaleForRenderDPI( int value ) {
     // if gRenderDPI == 0 or 96, use value as is (1px = 1px)
     if (gRenderDPI && gRenderDPI != BASE_CSS_DPI) {
@@ -1857,6 +1876,19 @@ public:
                         bool vert_ruby = is_ruby_table &&
                             (table_style->writing_mode == css_wm_vertical_rl ||
                              table_style->writing_mode == css_wm_vertical_lr);
+                        // Diagnostic: track whether vertical ruby tables are
+                        // correctly detected.  table_style->writing_mode may be
+                        // css_wm_inherit (0) for inherited writing-mode, making
+                        // vert_ruby=false even when the document is vertical.
+                        if (is_ruby_table) {
+                            if (vert_ruby) {
+                                s_ruby_vert_ok++;
+                            } else if (cell->col->x != 0) {
+                                s_ruby_vert_miss++;
+                                if (cell->col->x > s_ruby_col_x_max)
+                                    s_ruby_col_x_max = cell->col->x;
+                            }
+                        }
                         if (vert_ruby) {
                             fmt.setX(0);  // same inline-start for all cells
                             fmt.setY(0);  // block separation via frmline->height in Draw()
