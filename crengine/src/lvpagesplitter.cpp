@@ -51,6 +51,7 @@ static LVRendPageContext * main_context = NULL;
 LVRendPageContext::LVRendPageContext(LVRendPageList * pageList, int pageHeight, int docFontSize, bool gatherLines)
     : callback(NULL), totalFinalBlocks(0)
     , renderedFinalBlocks(0), lastPercent(-1), page_list(pageList), page_h(pageHeight)
+    , vert_split_page_h(0)
     , doc_font_size(docFontSize), gather_lines(gatherLines), current_flow(0), max_flow(0), current_flow_empty(false)
     , footNotes(64), curr_note(NULL)
 {
@@ -1326,16 +1327,21 @@ void LVRendPageContext::split()
 {
     if ( !page_list )
         return;
+    // Use the vertical-mode page-split stride (= page_width) when set, so
+    // pages break at every screen-width of horizontal advance instead of
+    // page_h (which is the column-length, used by the text formatter).
+    int split_page_h = getEffectivePageHeight();
     #ifdef DEBUG_PAGESPLIT
-        printf("PS: splitting lines into pages, page height=%d\n", page_h);
+        printf("PS: splitting lines into pages, page height=%d (vert_split=%d)\n",
+               split_page_h, vert_split_page_h);
     #endif
 
 #ifndef USE_LEGACY_PAGESPLITTER
-    PageSplitState2 s(page_list, lines, page_h, doc_font_size);
+    PageSplitState2 s(page_list, lines, split_page_h, doc_font_size);
     s.splitToPages();
 
 #else
-    PageSplitState s(page_list, page_h, doc_font_size);
+    PageSplitState s(page_list, split_page_h, doc_font_size);
 
     int lineCount = lines.length();
 

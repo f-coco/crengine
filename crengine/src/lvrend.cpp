@@ -3628,6 +3628,12 @@ void renderFinalBlock( ldomNode * enode, LFormattedText * txform, RenderRectAcce
         if ( style->word_break > css_wb_break_word ) { // break-all or keep-all (break-word is handled as normal)
             flags |= LTEXT_HAS_EXTRA;
         }
+        if ( style->text_combine_upright != css_tcu_none ) { // tate-chu-yoko
+            flags |= LTEXT_IS_TCY;
+        }
+        if ( style->text_emphasis_style != css_tes_none ) { // 圏点/傍点
+            flags |= LTEXT_HAS_EXTRA;
+        }
 
         // Now, process styles that may differ between inline nodes, and
         // are needed to display any children text node.
@@ -5605,8 +5611,10 @@ private:
         int l_y;
         int in_y_min;
         int in_y_max;
+        int c_x;  // horizontal flow position (for vertical text)
+        int l_x;  // horizontal level start (for vertical text)
         bool avoid_pb_inside;
-        void reset(int dir, lInt32 langNodeIdx, int xmin, int xmax, int overxmin, int overxmax, int ly, int iymin, int iymax, bool avoidpbinside) {
+        void reset(int dir, lInt32 langNodeIdx, int xmin, int xmax, int overxmin, int overxmax, int ly, int iymin, int iymax, bool avoidpbinside, int cx=0, int lx=0) {
             direction = dir;
             lang_node_idx = langNodeIdx;
             x_min = xmin;
@@ -5616,9 +5624,11 @@ private:
             l_y = ly;
             in_y_min = iymin;
             in_y_max = iymax;
+            c_x = cx;
+            l_x = lx;
             avoid_pb_inside = avoidpbinside;
         }
-        BlockShift(int dir, lInt32 langNodeIdx, int xmin, int xmax, int overxmin, int overxmax, int ly, int iymin, int iymax, bool avoidpbinside) :
+        BlockShift(int dir, lInt32 langNodeIdx, int xmin, int xmax, int overxmin, int overxmax, int ly, int iymin, int iymax, bool avoidpbinside, int cx=0, int lx=0) :
                 direction(dir),
                 lang_node_idx(langNodeIdx),
                 x_min(xmin),
@@ -5628,6 +5638,8 @@ private:
                 l_y(ly),
                 in_y_min(iymin),
                 in_y_max(iymax),
+                c_x(cx),
+                l_x(lx),
                 avoid_pb_inside(avoidpbinside)
                 { }
     };
@@ -5685,12 +5697,17 @@ private:
     LVPtrVector<BlockFloat>  _floats;
     int  rend_flags;
     int  page_height; // just needed to avoid excessive bogus margins and heights
+    int  page_width;  // page width for vertical text page splitting
     int  level;       // current level
     int  o_width;     // initial original container width
+    int  writing_mode; // css_wm_horizontal_tb, css_wm_vertical_rl, css_wm_vertical_lr
     int  c_y;         // current y relative to formatting context top (our absolute y for us here)
     int  l_y;         // absolute y at which current level started
     int  in_y_min;    // min/max children content abs y (for floats in current or inner levels
     int  in_y_max;    //   that overflow this level height)
+    int  c_x;         // current x for vertical flow (right-to-left accumulation)
+    int  l_x;         // x at which current level started (for vertical text)
+    int  _saved_page_h; // original context page_h, restored in destructor
     int  x_min;       // current left min x
     int  x_max;       // current right max x
     int  usable_overflow_x_min;  // current left and right x usable for glyph overflows and hanging punctuation,
@@ -5721,17 +5738,23 @@ private:
 
 public:
     FlowState( LVRendPageContext & ctx, int width, int usable_left_overflow, int usable_right_overflow,
-                            int rendflags, int dir=REND_DIRECTION_UNSET, lInt32 langNodeIdx=0 ):
+                            int rendflags, int dir=REND_DIRECTION_UNSET, lInt32 langNodeIdx=0,
+                            int writingMode=1, int pageWidth=0 ):
         direction(dir),
         lang_node_idx(langNodeIdx),
         context(ctx),
         rend_flags(rendflags),
+        page_width(pageWidth),
         level(0),
         o_width(width),
+        writing_mode(writingMode),
         c_y(0),
         l_y(0),
         in_y_min(0),
         in_y_max(0),
+        c_x(0),
+        l_x(0),
+        _saved_page_h(ctx.getPageHeight()),
         x_min(0),
         x_max(width),
         baseline_req(REQ_BASELINE_NOT_NEEDED),
@@ -5764,10 +5787,20 @@ public:
             }
             top_clear_level = is_main_flow ? 1 : 2; // see resetFloatsLevelToTopLevel()
             page_height = context.getPageHeight();
+            // For vertical text, tell the page splitter to break at every
+            // page_width of horizontal advance.  Use the dedicated
+            // setVerticalSplitPageHeight() so the context's page_h (used by
+            // the text formatter as column LENGTH) stays unchanged — only
+            // the page-split stride is overridden.
+            if ( (writing_mode == css_wm_vertical_rl || writing_mode == css_wm_vertical_lr) && page_width > 0 ) {
+                context.setVerticalSplitPageHeight( page_width );
+            }
             usable_overflow_x_min = x_min - usable_left_overflow;
             usable_overflow_x_max = x_max + usable_right_overflow;
         }
     ~FlowState() {
+        // Restore original page height (was swapped for vertical text)
+        context.setPageHeight( _saved_page_h );
         // Shouldn't be needed as these must have been cleared
         // by leaveBlockLevel(). But let's ensure we clean up well.
         for (int i=_floats.length()-1; i>=0; i--) {
@@ -5812,6 +5845,25 @@ public:
     }
     int getPageHeight() {
         return page_height;
+    }
+    bool isVertical() {
+        return writing_mode == css_wm_vertical_rl || writing_mode == css_wm_vertical_lr;
+    }
+    /// Get the flow advance: c_x for vertical (horizontal progression), c_y for horizontal (vertical progression)
+    int getCurrentFlowAdvance() {
+        if ( isVertical() )
+            return c_x;
+        return c_y;
+    }
+    /// Get the flow advance relative to current level start
+    int getCurrentFlowRelativeAdvance() {
+        if ( isVertical() )
+            return c_x - l_x;
+        return c_y - l_y;
+    }
+    /// For vertical text: get the X offset from right edge for block positioning
+    int getCurrentRelativeX() {
+        return c_x;  // accumulated horizontal offset from right edge
     }
     LVRendPageContext * getPageContext() {
         return &context;
@@ -5960,7 +6012,8 @@ public:
     }
 
     void addSpaceToContext( int starty, int endy, int line_h,
-            bool split_avoid_before, bool split_avoid_inside, bool split_avoid_after ) {
+            bool split_avoid_before, bool split_avoid_inside, bool split_avoid_after,
+            bool skip_float_checks=false ) {
         // Add vertical space by adding multiple lines of height line_h
         // (as an alternative to adding a single huge line), ensuring
         // given split_avoid flags, and avoiding split on the floats met
@@ -5971,7 +6024,7 @@ public:
         // Ensure avoid_pb_inside
         if ( avoid_pb_inside_just_toggled_off ) {
             avoid_pb_inside_just_toggled_off = false;
-            if ( !split_avoid_before && !hasFloatRunningAtY(starty) ) {
+            if ( !split_avoid_before && (skip_float_checks || !hasFloatRunningAtY(starty)) ) {
                 // Previous added line may have RN_SPLIT_AFTER_AVOID, but
                 // we want to allow a split between it and this new line:
                 // just add an empty line to cancel the split avoid
@@ -6012,7 +6065,7 @@ public:
                 flags |= RN_SPLIT_AFTER_AVOID;
             if ( split_avoid_inside && !is_first & !is_last )
                 flags |= RN_SPLIT_BEFORE_AVOID | RN_SPLIT_AFTER_AVOID;
-            if ( hasFloatRunningAtY(y0) )
+            if ( !skip_float_checks && hasFloatRunningAtY(y0) )
                 flags |= RN_SPLIT_BEFORE_AVOID;
             flags |= line_dir_flag;
             context.AddLine(y0, y1, flags);
@@ -6031,9 +6084,15 @@ public:
             // but we want to allow a split between it and this new
             // line or the coming pushed vertical margin:
             // just add an empty line to cancel the split avoid
-            if ( !(flags & RN_SPLIT_BEFORE_AVOID) && !hasFloatRunningAtY(c_y) ) {
-                context.AddLine( c_y, c_y, RN_SPLIT_BOTH_AUTO|line_dir_flag );
-                last_split_after_flag = RN_SPLIT_AUTO;
+            if ( !(flags & RN_SPLIT_BEFORE_AVOID) ) {
+                if ( isVertical() || !hasFloatRunningAtY(c_y) ) {
+                    if ( isVertical() ) {
+                        context.AddLine( c_x, c_x, RN_SPLIT_BOTH_AUTO|line_dir_flag );
+                    } else {
+                        context.AddLine( c_y, c_y, RN_SPLIT_BOTH_AUTO|line_dir_flag );
+                    }
+                    last_split_after_flag = RN_SPLIT_AUTO;
+                }
             }
         }
         if ( avoid_pb_inside ) {
@@ -6057,14 +6116,25 @@ public:
         // Most often for content lines, lvtextfm.cpp's LVFormatter will
         // have already checked for float (via BlockFloatFootprint), so
         // avoid calling hasFloatRunningAtY() when not needed
-        if ( !(flags & RN_SPLIT_BEFORE_AVOID) && hasFloatRunningAtY(c_y) )
+        // (skip float checks entirely for vertical mode)
+        if ( !isVertical() && !(flags & RN_SPLIT_BEFORE_AVOID) && hasFloatRunningAtY(c_y) )
             flags |= RN_SPLIT_BEFORE_AVOID;
         flags |= line_dir_flag;
-        context.AddLine( c_y, c_y + height, flags );
+        // For vertical text: use c_x for page splitting (horizontal progression right-to-left)
+        if ( isVertical() ) {
+            context.AddLine( c_x, c_x + height, flags );
+            c_x += height;
+            // Also update c_y for compatibility with Y-axis tracking
+            c_y += height;
+            if ( c_y > in_y_max )
+                in_y_max = c_y;
+        } else {
+            context.AddLine( c_y, c_y + height, flags );
+            moveDown( height );
+        }
         last_split_after_flag = RN_GET_SPLIT_AFTER(flags);
         if ( !is_padding )
             seen_content_since_page_split = true;
-        moveDown( height );
         if ( vm_disabled ) // Re-enable it now that some real content has been seen
             enableVerticalMargin();
         if ( baseline_req != REQ_BASELINE_NOT_NEEDED ) {
@@ -6112,7 +6182,20 @@ public:
             // but this has to be done if not done by pushVerticalMargin()
             resetFloatsLevelToTopLevel();
         }
-        addSpaceToContext( c_y, c_y + height, line_h, split_avoid_before, split_avoid_inside, split_avoid_after);
+        // For vertical text: use c_x for page splitting
+        if ( isVertical() ) {
+            addSpaceToContext( c_x, c_x + height, line_h, split_avoid_before, split_avoid_inside, split_avoid_after, true);
+            c_x += height;
+            c_y += height;
+            if ( c_y > in_y_max )
+                in_y_max = c_y;
+            // Do NOT call moveDown() here: c_x and c_y are already advanced above.
+            // moveDown() only advances c_y, which would double-count the height
+            // and diverge c_y from c_x, causing page-boundary/draw mismatches.
+        } else {
+            addSpaceToContext( c_y, c_y + height, line_h, split_avoid_before, split_avoid_inside, split_avoid_after);
+            moveDown( height );
+        }
         last_split_after_flag = split_avoid_after ? RN_SPLIT_AVOID : RN_SPLIT_AUTO;
         if ( !seen_content_since_page_split ) {
             // Assume that if split_avoid_inside is not set, this space
@@ -6122,7 +6205,6 @@ public:
                 seen_content_since_page_split = true;
             }
         }
-        moveDown( height );
         if ( vm_disabled ) // Re-enable it now that some real content has been seen
             enableVerticalMargin();
     }
@@ -6330,7 +6412,11 @@ public:
         if (is_main_flow && margin < 0) { // can only happen if ALLOW_NEGATIVE_COLLAPSED_MARGINS
             // We're moving backward and don't know what was before and what's
             // coming next. Add an empty line to avoid a split there.
-            context.AddLine( c_y, c_y, RN_SPLIT_BOTH_AVOID|line_dir_flag );
+            if ( isVertical() ) {
+                context.AddLine( c_x, c_x, RN_SPLIT_BOTH_AVOID|line_dir_flag );
+            } else {
+                context.AddLine( c_y, c_y, RN_SPLIT_BOTH_AVOID|line_dir_flag );
+            }
         }
         else if (is_main_flow) {
             // When this is called, whether we have some positive resulting vertical
@@ -6442,11 +6528,11 @@ public:
                     flags &= ~RN_SPLIT_AFTER_ALWAYS;
                     flags |= RN_SPLIT_AFTER_AVOID;
                 }
-                if ( hasFloatRunningAtY(c_y, margin) ) {
+                if ( !isVertical() && hasFloatRunningAtY(c_y, margin) ) {
                     // Don't discard margin, or we would discard some part of a float
                     flags &= ~RN_SPLIT_DISCARD_AT_START;
                 }
-                if ( hasFloatRunningAtY(c_y) ) {
+                if ( !isVertical() && hasFloatRunningAtY(c_y) ) {
                     // Avoid a split
                     flags &= ~RN_SPLIT_BEFORE_ALWAYS;
                     flags |= RN_SPLIT_BEFORE_AVOID;
@@ -6456,7 +6542,11 @@ public:
                     // prevent our RN_SPLIT_ALWAYS to have effect.
                     // It seems that per-specs, the SPLIT_ALWAYS should win.
                     // So, kill the SPLIT_AVOID with an empty line.
-                    context.AddLine( c_y, c_y, RN_SPLIT_BOTH_AUTO|line_dir_flag );
+                    if ( isVertical() ) {
+                        context.AddLine( c_x, c_x, RN_SPLIT_BOTH_AUTO|line_dir_flag );
+                    } else {
+                        context.AddLine( c_y, c_y, RN_SPLIT_BOTH_AUTO|line_dir_flag );
+                    }
                     // Note: keeping the RN_SPLIT_AVOID could help avoiding
                     // consecutive page splits in some normal cases (we send
                     // SPLIT_BEFORE_ALWAYS with SPLIT_AFTER_AVOID, and top
@@ -6467,7 +6557,13 @@ public:
                     // hasn't been reset.
                 }
                 flags |= line_dir_flag;
-                context.AddLine( c_y, c_y + margin, flags );
+                // For vertical text: use c_x for page splitting
+                if ( isVertical() ) {
+                    context.AddLine( c_x, c_x + margin, flags );
+                    c_x += margin;
+                } else {
+                    context.AddLine( c_y, c_y + margin, flags );
+                }
                 // Note: we don't use AddSpace, a margin does not have to be arbitrarily
                 // splitted, RN_SPLIT_DISCARD_AT_START ensures it does not continue
                 // on next page.
@@ -6598,12 +6694,12 @@ public:
         if ( _shifts.length() <= level ) {
             _shifts.push( new BlockShift( direction, lang_node_idx,
                                     x_min, x_max, usable_overflow_x_min, usable_overflow_x_max,
-                                    l_y, in_y_min, in_y_max, avoid_pb_inside ) );
+                                    l_y, in_y_min, in_y_max, avoid_pb_inside, c_x, l_x ) );
         }
         else {
             _shifts[level]->reset( direction, lang_node_idx,
                                     x_min, x_max, usable_overflow_x_min, usable_overflow_x_max,
-                                    l_y, in_y_min, in_y_max, avoid_pb_inside );
+                                    l_y, in_y_min, in_y_max, avoid_pb_inside, c_x, l_x );
         }
         direction = dir;
         if (langNodeIdx != -1)
@@ -6617,6 +6713,10 @@ public:
         l_y = c_y;
         in_y_min = c_y;
         in_y_max = c_y;
+        // For vertical text, save horizontal flow position
+        if ( isVertical() ) {
+            l_x = c_x;
+        }
         level++;
         // Don't disable any upper avoid_pb_inside
         if ( avoid_pb ) {
@@ -6640,6 +6740,13 @@ public:
         l_y = prev->l_y;
         in_y_min = in_y_min < prev->in_y_min ? in_y_min : prev->in_y_min; // keep sublevel's one if smaller
         in_y_max = in_y_max > prev->in_y_max ? in_y_max : prev->in_y_max; // keep sublevel's one if larger
+        // For vertical text, restore l_x (level start) but NOT c_x.
+        // c_x must keep accumulating through nested blocks, just as c_y does
+        // in horizontal mode. Restoring c_x would cause siblings after a
+        // nested erm_block to AddLine at wrong (reset) positions.
+        if ( isVertical() ) {
+            l_x = prev->l_x;
+        }
         if ( prev->avoid_pb_inside != avoid_pb_inside )
             avoid_pb_inside_just_toggled_off = true;
         avoid_pb_inside = prev->avoid_pb_inside;
@@ -9223,13 +9330,71 @@ int renderBlockElement(LVRendPageContext & context, ldomNode * enode, int x, int
             int usable_left_overflow, int usable_right_overflow, int direction, int * baseline, lUInt32 rend_flags )
 {
     if ( BLOCK_RENDERING(rend_flags, ENHANCED) ) {
+        // Extract writing mode from node style for vertical text support.
+        // The root node we're called on (typically a DocFragment/document root)
+        // doesn't usually have writing-mode set — it's only declared on <body>
+        // (e.g. via the user's `body { writing-mode: vertical-rl }` style tweak).
+        // CSS writing-mode is INHERITED, but ldomNode::getStyle() on the root
+        // returns the root's own (default-horizontal) style, not body's.
+        // So we walk a few levels down looking for the first body element with
+        // a vertical writing-mode, and use it for the page-splitter setup.
+        int writing_mode = enode->getStyle()->writing_mode;
+        // crengine stores the CSS specified value, not the cascaded value:
+        // for elements that inherit writing-mode (the common case for the
+        // document root and body), this returns css_wm_inherit (=0) even
+        // when the document is rendered vertically.  As a result the page
+        // splitter never received the vertical page_width and produced
+        // pages of size m_dy (screen height) instead of m_dx (screen width),
+        // making content past column ~(m_dx-margin) invisible on every page
+        // and leaving a "missing content between pages" gap.
+        // Workaround: when the root's writing_mode is not vertical, walk
+        // descendants looking for any element whose stored writing_mode
+        // resolved to vertical_rl/lr (cascade does resolve `inherit` for
+        // elements that the CSS engine processed for layout — typically
+        // inline-rendered descendants of body).
+        if (writing_mode != css_wm_vertical_rl && writing_mode != css_wm_vertical_lr) {
+            ldomNode * stack[16];
+            int depths[16];
+            int sp = 0;
+            stack[sp] = enode;
+            depths[sp] = 0;
+            sp++;
+            int max_visited = 64;
+            while (sp > 0 && max_visited-- > 0) {
+                sp--;
+                ldomNode * n = stack[sp];
+                int d = depths[sp];
+                if (!n || !n->isElement()) continue;
+                css_style_ref_t ns = n->getStyle();
+                if (!ns.isNull()) {
+                    int wm = ns->writing_mode;
+                    if (wm == css_wm_vertical_rl || wm == css_wm_vertical_lr) {
+                        writing_mode = wm;
+                        break;
+                    }
+                }
+                if (d >= 6) continue;
+                int cnt = n->getChildCount();
+                for (int i = 0; i < cnt && sp < 15; i++) {
+                    ldomNode * c = n->getChildNode(i);
+                    if (c && c->isElement()) {
+                        stack[sp] = c;
+                        depths[sp] = d + 1;
+                        sp++;
+                    }
+                }
+            }
+        }
+        int page_width = (writing_mode == css_wm_vertical_rl || writing_mode == css_wm_vertical_lr)
+                         ? enode->getDocument()->getPageWidth() : 0;
+
         // Create a flow state (aka "block formatting context") for the rendering
         // of this block and all its children.
         // (We are called when rendering the root node, and when rendering each float
         // met along walking the root node hierarchy - and when meeting a new float
         // in a float, etc...)
         FlowState flow( context, width, usable_left_overflow, usable_right_overflow, rend_flags,
-                                direction, TextLangMan::getLangNodeIndex(enode) );
+                                direction, TextLangMan::getLangNodeIndex(enode), writing_mode, page_width );
         flow.moveDown(y);
         if (baseline != NULL) {
             flow.setRequestedBaselineType(*baseline);
@@ -9240,8 +9405,8 @@ int renderBlockElement(LVRendPageContext & context, ldomNode * enode, int x, int
             // if needed with inline-table.)
             *baseline = flow.getBaselineAbsoluteY(enode);
         }
-        // The block height is c_y when we are done
-        return flow.getCurrentAbsoluteY();
+        // The block height (or width for vertical text) is the flow advance when we are done
+        return flow.getCurrentFlowAdvance();
     }
     else {
         // (Legacy rendering does not support direction)
@@ -10603,19 +10768,17 @@ void DrawDocument( LVDrawBuf & drawbuf, ldomNode * enode, int x0, int y0, int dx
                     if ( bookmarks && bookmarks->length()) { // internal crengine bookmarked text highlights
                         nbookmarks = new ldomMarkedRangeList( bookmarks, rc );
                     }
+                    int draw_x = doc_x+x0 + padding_left;
+                    int draw_y = doc_y+y0 + padding_top;
                     if ( marks && marks->length() ) { // "native highlighting" of a selection in progress
                         // Keep marks that are part of the top and bottom overflows
                         lvRect crop_rc = lvRect(rc);
                         crop_rc.top -= fmt.getTopOverflow();
                         crop_rc.bottom += fmt.getBottomOverflow();
                         ldomMarkedRangeList nmarks( marks, rc, &crop_rc );
-                        // DrawBackgroundImage(enode, drawbuf, x0, y0, doc_x, doc_y, fmt.getWidth(), fmt.getHeight());
-                        // Draw regular text with currently marked highlights
-                        txform->Draw( &drawbuf, doc_x+x0 + padding_left, doc_y+y0 + padding_top, &nmarks, nbookmarks );
+                        txform->Draw( &drawbuf, draw_x, draw_y, &nmarks, nbookmarks );
                     } else {
-                        // DrawBackgroundImage(enode, drawbuf, x0, y0, doc_x, doc_y, fmt.getWidth(), fmt.getHeight());
-                        // Draw regular text, no marks
-                        txform->Draw( &drawbuf, doc_x+x0 + padding_left, doc_y+y0 + padding_top, marks, nbookmarks );
+                        txform->Draw( &drawbuf, draw_x, draw_y, marks, nbookmarks );
                     }
                     if (nbookmarks)
                         delete nbookmarks;
@@ -11219,6 +11382,9 @@ void setNodeStyle( ldomNode * enode, css_style_ref_t parent_style, LVFontRef par
     UPDATE_STYLE_FIELD( caption_side, css_cs_inherit );
     UPDATE_STYLE_FIELD( ruby_position, css_rp_inherit );
     UPDATE_STYLE_FIELD( border_collapse, css_border_c_inherit );
+    // Vertical text: writing-mode and text-orientation are inherited per CSS spec
+    UPDATE_STYLE_FIELD( writing_mode, css_wm_inherit );
+    UPDATE_STYLE_FIELD( text_orientation, css_to_inherit );
 
     // Firefox and Webkit/Chromium reset text-align: to 'start' for table if it originates from
     // the HTML align= attribute (eg: <center><table>):
