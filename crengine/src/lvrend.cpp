@@ -5780,7 +5780,6 @@ private:
     int  in_y_max;    //   that overflow this level height)
     int  c_x;         // current x for vertical flow (right-to-left accumulation)
     int  l_x;         // x at which current level started (for vertical text)
-    int  _saved_page_h; // original context page_h, restored in destructor
     int  x_min;       // current left min x
     int  x_max;       // current right max x
     int  usable_overflow_x_min;  // current left and right x usable for glyph overflows and hanging punctuation,
@@ -5827,7 +5826,6 @@ public:
         in_y_max(0),
         c_x(0),
         l_x(0),
-        _saved_page_h(ctx.getPageHeight()),
         x_min(0),
         x_max(width),
         baseline_req(REQ_BASELINE_NOT_NEEDED),
@@ -5872,12 +5870,6 @@ public:
             usable_overflow_x_max = x_max + usable_right_overflow;
         }
     ~FlowState() {
-        // Restore original page height (only for vertical text where it was swapped).
-        // Calling setPageHeight() unconditionally in horizontal mode can override
-        // intermediate page-height adjustments made by nested rendering, causing
-        // different layout on platforms with different compiler optimisations (macOS/Clang).
-        if ( isVertical() )
-            context.setPageHeight( _saved_page_h );
         // Shouldn't be needed as these must have been cleared
         // by leaveBlockLevel(). But let's ensure we clean up well.
         for (int i=_floats.length()-1; i>=0; i--) {
