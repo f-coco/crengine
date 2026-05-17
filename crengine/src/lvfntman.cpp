@@ -1171,6 +1171,97 @@ static inline void drawGlyphItem(LVDrawBuf * buf, int x, int y,
         buf->Draw(x, y, item->bmp, item->bmp_width, item->bmp_height, palette);
 }
 
+// Returns true for characters that need explicit 90° CW rotation when
+// drawn in vertical-rl mode (CSS text-orientation: mixed).
+//
+// CJK, Hiragana, Katakana, and Fullwidth/Halfwidth Forms are naturally
+// upright (or substituted via +vert) and therefore NOT rotated.
+// All other scripts (Latin, Greek, Cyrillic, digits, ASCII punctuation …)
+// are "horizontal" scripts and must be laid sideways in vertical text.
+//
+// DrawTextString for vertical mode calls HarfBuzz in LTR for non-TTB fonts,
+// so glyph_info[i].codepoint == nominal (no +vert substitution) holds for
+// these characters, and the rotation branch is entered.
+static bool needsVerticalRotation90CW(lChar32 c)
+{
+    // --- Horizontal-script characters: ROTATE ---
+
+    // ASCII printable (letters, digits, punctuation — everything except space)
+    if (c >= 0x0021 && c <= 0x007E) return true;
+    // Latin-1 Supplement printable + Latin Extended-A/B
+    if (c >= 0x00A1 && c <= 0x024F) return true;
+    // IPA Extensions, Spacing Modifier Letters, Combining Diacritical Marks
+    if (c >= 0x0250 && c <= 0x036F) return true;
+    // Greek and Coptic
+    if (c >= 0x0370 && c <= 0x03FF) return true;
+    // Cyrillic
+    if (c >= 0x0400 && c <= 0x04FF) return true;
+
+    // Special Japanese horizontal marks (already in use by existing code):
+    switch (c) {
+        case 0x30FC: // ー KATAKANA-HIRAGANA PROLONGED SOUND MARK
+        case 0x301C: // 〜 WAVE DASH
+        case 0xFF5E: // ～ FULLWIDTH TILDE
+        case 0x2014: // — EM DASH
+        case 0x2015: // ― HORIZONTAL BAR
+        case 0xFF0D: // － FULLWIDTH HYPHEN-MINUS
+        case 0x2025: // ‥ TWO DOT LEADER
+        case 0x2026: // … HORIZONTAL ELLIPSIS
+            return true;
+        default:
+            break;
+    }
+
+    // --- CJK / East Asian scripts: do NOT rotate ---
+    // These are upright in vertical text (use +vert or natural vertical form).
+    // Hiragana U+3040–309F, Katakana U+30A0–30FF (handled above or +vert)
+    if (c >= 0x2E80 && c <= 0x9FFF) return false; // CJK radicals … CJK Unified
+    if (c >= 0xAC00 && c <= 0xD7A3) return false; // Hangul syllables
+    if (c >= 0xF900 && c <= 0xFAFF) return false; // CJK Compat Ideographs
+    if (c >= 0xFF00 && c <= 0xFFEF) return false; // Halfwidth / Fullwidth Forms
+    if (c >= 0x20000)               return false; // CJK Extension B–F, etc.
+
+    return false;
+}
+
+// Draw a glyph rotated 90° clockwise into buf.
+// Used as a fallback when the font lacks a +vert OpenType substitution for
+// characters that need vertical orientation (e.g. ー drawn as a horizontal
+// dash must become a vertical bar).
+// Only works for 8-bit grayscale glyphs (bmp_pixelformat != 4).
+// The visual centre of the glyph is preserved at the original (glyph_x, glyph_y)
+// position, keeping it centred in its em-square column.
+static void drawGlyphItemRotated90CW(LVDrawBuf * buf, int glyph_x, int glyph_y,
+        LVFontGlyphCacheItem * item, const lUInt32 * palette)
+{
+    int orig_w = item->bmp_width;
+    int orig_h = item->bmp_height;
+    if (orig_w <= 0 || orig_h <= 0)
+        return;
+    // After 90° CW rotation the dimensions are swapped.
+    int rot_w = orig_h;
+    int rot_h = orig_w;
+    // Use a stack buffer for glyphs up to 64×64 px; heap otherwise.
+    lUInt8 stack_buf[64 * 64];
+    lUInt8 * rot = (rot_w * rot_h <= (int)sizeof(stack_buf))
+                 ? stack_buf : new lUInt8[rot_w * rot_h];
+    // 90° CW: dst[ny][nx] = src[orig_h - 1 - nx][ny]
+    // Use bmp_pitch (row stride) for source indexing; it may exceed bmp_width.
+    int src_pitch = item->bmp_pitch > 0 ? item->bmp_pitch : orig_w;
+    const lUInt8 * src = item->bmp;
+    for (int ny = 0; ny < rot_h; ny++) {
+        for (int nx = 0; nx < rot_w; nx++) {
+            rot[ny * rot_w + nx] = src[(orig_h - 1 - nx) * src_pitch + ny];
+        }
+    }
+    // Keep the visual centre of the bitmap at the same screen position.
+    int adj_x = glyph_x + (orig_w - rot_w) / 2;
+    int adj_y = glyph_y + (orig_h - rot_h) / 2;
+    buf->Draw(adj_x, adj_y, rot, rot_w, rot_h, palette);
+    if (rot != stack_buf)
+        delete[] rot;
+}
+
 // Each LVFontGlyphCacheItem is put in 2 caches:
 // - the LVFontLocalGlyphCache LVFreeTypeFace->_glyph_cache of the
 //   font it comes from
@@ -1820,7 +1911,7 @@ public:
         }
         return false;
     }
-    void setupHBFeatures() {
+    void setupHBFeatures(bool is_vertical = false) {
         _hb_features.clear();
         if ( _kerningMode == KERNING_MODE_HARFBUZZ ) {
             // We reserve 2 for those we're adding now, +2 for possibly added CSS font features
@@ -1830,6 +1921,11 @@ public:
             // HarfBuzz features for full text shaping
             addHBFeature("+kern");  // font kerning
             addHBFeature("+liga");  // ligatures
+            // Vertical text: enable vertical glyph substitution
+            if ( is_vertical ) {
+                addHBFeature("+vert");  // enable vertical glyph substitution
+                addHBFeature("+vrt2");  // newer vertical feature
+            }
         }
         else if (_kerningMode == KERNING_MODE_HARFBUZZ_LIGHT) {
             // We reserve 22 for those we're adding now. We won't add any anymore
@@ -1865,7 +1961,7 @@ public:
             addHBFeature("-dnom");  // Denominator: Converts to appropriate fraction denominator form, invoked by frac
             addHBFeature("-rand");  // Replaces character with random forms (meant to simulate handwriting)
             addHBFeature("-trak");  // Tracking (?)
-            addHBFeature("-vert");  // Vertical (?)
+            // Note: -vert is not disabled here - vertical text handling requires KERNING_MODE_HARFBUZZ
             // Especially needed with FreeSerif and french texts: -ccmp
             // Especially needed with Fedra Serif and "The", "Thuringe": -calt
             // These tweaks seem fragile (adding here +smcp to experiment with small caps would break FreeSerif again).
@@ -2838,7 +2934,9 @@ public:
             // If we are provided with direction and hints, let harfbuzz know
             if ( hints ) {
                 if ( hints & LFNT_HINT_DIRECTION_KNOWN ) {
-                    if ( hints & LFNT_HINT_DIRECTION_IS_RTL )
+                    if ( hints & LFNT_HINT_DIRECTION_IS_TTB )
+                        hb_buffer_set_direction(_hb_buffer, HB_DIRECTION_TTB);
+                    else if ( hints & LFNT_HINT_DIRECTION_IS_RTL )
                         hb_buffer_set_direction(_hb_buffer, HB_DIRECTION_RTL);
                     else
                         hb_buffer_set_direction(_hb_buffer, HB_DIRECTION_LTR);
@@ -2869,14 +2967,20 @@ public:
             // todo: it should be applied half-before/half-after each grapheme
             // cf in *some* minikin repositories: libs/minikin/Layout.cpp
 
+            // Setup HarfBuzz features with vertical text support if needed
+            bool is_vertical_hb = (hints & LFNT_HINT_IS_VERTICAL) != 0;
+            setupHBFeatures(is_vertical_hb);
+
             // Shape
             hb_shape(_hb_font, _hb_buffer, _hb_features.ptr(), (unsigned int)_hb_features.length());
 
             // Harfbuzz has guessed and set a direction even if we did not provide one.
             #ifdef DEBUG_MEASURE_TEXT
             bool is_rtl = false;
+            bool is_ttb = false;
             #endif
-            if ( hb_buffer_get_direction(_hb_buffer) == HB_DIRECTION_RTL ) {
+            hb_direction_t hb_dir = hb_buffer_get_direction(_hb_buffer);
+            if ( hb_dir == HB_DIRECTION_RTL ) {
                 #ifdef DEBUG_MEASURE_TEXT
                 is_rtl = true;
                 #endif
@@ -2892,6 +2996,18 @@ public:
                 // But hb_buffer_reverse_clusters() is required to have the clusters
                 // ordered as our text indices, so we can map them back to our text.
                 hb_buffer_reverse_clusters(_hb_buffer);
+            }
+            else if ( hb_dir == HB_DIRECTION_TTB ) {
+                #ifdef DEBUG_MEASURE_TEXT
+                is_ttb = true;
+                #endif
+                // TTB (top-to-bottom) text: do NOT reverse the buffer.
+                // Unlike RTL, HarfBuzz does NOT invert its buffer for TTB —
+                // glyphs are already in top-to-bottom logical order with
+                // monotonically increasing cluster values.  Calling
+                // hb_buffer_reverse_clusters() here was wrong: it reversed
+                // the correct ordering, making m_advance[0..N-2] = 0 and
+                // piling all advance on the last character.
             }
 
             glyph_count = hb_buffer_get_length(_hb_buffer);
@@ -2916,6 +3032,9 @@ public:
             #endif
 
             // We need to set widths and flags on our original text.
+            // For vertical text (TTB), we use y_advance instead of x_advance.
+            bool is_vertical = (hints & LFNT_HINT_IS_VERTICAL) != 0;
+
             // hb_shape has modified buffer to contain glyphs, and text
             // and buffer may desync (because of clusters, ligatures...)
             // in both directions in a same run.
@@ -3018,16 +3137,35 @@ public:
                                 // And go on with the found glyph now that we fixed what was before
                             }
                             // Glyph found in this font
-                            if ( glyph_pos[hg].x_advance )
-                                advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance + _synth_weight_strength);
+                            if ( is_vertical ) {
+                                if ( glyph_pos[hg].y_advance )
+                                    // y_advance is negative for TTB; use absolute value for width accumulation
+                                    advance = abs(FONT_METRIC_TO_PX(glyph_pos[hg].y_advance));
+                                else if ( glyph_pos[hg].x_advance )
+                                    // Font has no vertical metrics (no vmtx table).
+                                    // Fall back to x_advance for vertical layout.
+                                    advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance);
+                            }
+                            else {
+                                if ( glyph_pos[hg].x_advance )
+                                    advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance + _synth_weight_strength);
+                            }
                         }
                         else {
                             #ifdef DEBUG_MEASURE_TEXT
                                 printf("(glyph not found) ");
                             #endif
                             // Keep the advance of .notdef/tofu in case there is no fallback font to correct them
-                            if ( glyph_pos[hg].x_advance )
-                                advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance + _synth_weight_strength);
+                            if ( is_vertical ) {
+                                if ( glyph_pos[hg].y_advance )
+                                    advance = abs(FONT_METRIC_TO_PX(glyph_pos[hg].y_advance));
+                                else if ( glyph_pos[hg].x_advance )
+                                    advance = abs(FONT_METRIC_TO_PX(glyph_pos[hg].x_advance));
+                            }
+                            else {
+                                if ( glyph_pos[hg].x_advance )
+                                    advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance + _synth_weight_strength);
+                            }
                             if ( t_notdef_start < 0 ) {
                                 t_notdef_start = t;
                             }
@@ -4102,6 +4240,13 @@ public:
                     letter_spacing = 0;
             }
 
+            // For vertical text, ensure +vert/+vrt2 OpenType features are active so
+            // that glyph substitutions (ー→vertical bar, etc.) are applied during drawing.
+            // We call setupHBFeatures() here rather than at construction time because
+            // measureText() may have changed _hb_features since the last DrawTextString call.
+            bool is_vertical_draw = (flags & LFNT_HINT_IS_VERTICAL) != 0;
+            setupHBFeatures(is_vertical_draw);
+
             // Shape
             hb_shape(_hb_font, _hb_buffer, _hb_features.ptr(), (unsigned int)_hb_features.length());
 
@@ -4303,67 +4448,131 @@ public:
                                             item->origin_x + FONT_METRIC_TO_PX(glyph_pos[i].x_offset), w);
                                 #endif
                                 if ( flags & LFNT_HINT_CJK_ALTERED_WIDTH ) {
-                                    int orig_width = width;
-                                    if ( flags & LFNT_HINT_CJK_SCALED_WIDTH ) {
-                                        // We want the below positionning to work inside the unscaled original glyph width
-                                        // (this feels like the most natural way to handle this, but may not look optimal
-                                        // when there are multiple consecutive opening/closing such flexible cjk chars)
-                                        int cjk_width_scale_percent = target_w; // We've passed it via this unused param
-                                        x += (w * cjk_width_scale_percent / 100 - w) / 2;
-                                        width = width * 100 / cjk_width_scale_percent;
+                                    // In vertical-rl mode, x is the column's screen-X position (fixed for all
+                                    // glyphs in the column).  The x-shifting logic below is designed for
+                                    // horizontal text and must not run for vertical text — it would shift the
+                                    // glyph out of its column or clip it against the wrong boundary.
+                                    // The font's +vert feature already handles punctuation placement in
+                                    // vertical mode; for fonts without +vert the glyph stays at its natural
+                                    // horizontal position within the column.
+                                    if ( !is_vertical_draw ) {
+                                        int orig_width = width;
+                                        if ( flags & LFNT_HINT_CJK_SCALED_WIDTH ) {
+                                            // We want the below positionning to work inside the unscaled original glyph width
+                                            // (this feels like the most natural way to handle this, but may not look optimal
+                                            // when there are multiple consecutive opening/closing such flexible cjk chars)
+                                            int cjk_width_scale_percent = target_w; // We've passed it via this unused param
+                                            x += (w * cjk_width_scale_percent / 100 - w) / 2;
+                                            width = width * 100 / cjk_width_scale_percent;
+                                        }
+                                        // We got x and have w of a fullwidth CJK char, normally some punctuation
+                                        // char whose blackbox is narrow and smaller or equal to half its width.
+                                        // But the position of this blackbox may depends on the opening/closing
+                                        // punctuation status, and on the language requested (Simplified Chinese
+                                        // get punctuations left- or right-anchored in the glyph, while Traditional
+                                        // Chinese may get them centered in the glyph). We only know about the glyph
+                                        // returned by the font here, so we should try to guess how to shift the
+                                        // drawing to get this glyph to look alright in half of w at the original x.
+                                        if ( item->origin_x + item->bmp_width <= w/2 ) {
+                                            // Glyph fully in the left half part (ie. Simplified Chinese closing punctuation)
+                                            // Nothing to tweak.
+                                        }
+                                        else if ( item->origin_x >= w/2 ) {
+                                            // Glyph fully in the right half part (ie. Simplified Chinese opening punctuation)
+                                            x += width - w;
+                                        }
+                                        else if ( item->origin_x <= w*1/5 && w - item->origin_x - item->bmp_width >= w*2/5) {
+                                            // With some fonts (ie. SimSun), some left/right glyphs may leak slightly over
+                                            // the middle: do a few more checks to catch these and handle them as above.
+                                            // Glyph mostly in the left half part: nothing to tweak
+                                        }
+                                        else if ( item->origin_x >= w*2/5 && w - item->origin_x - item->bmp_width <= w*1/5) {
+                                            // Glyph mostly in the rightly half part
+                                            x += width - w;
+                                        }
+                                        else {
+                                            // Glyph overlapping the middle of the glyph (ie. Traditional Chinese opening
+                                            // or closing punctuation), so probably centered in its glyph.
+                                            // We want to keep it centered in the provided width.
+                                            x += (width - w) / 2;
+                                        }
+                                        width = orig_width; // restore it in case we tweaked it
+                                        // We draw such CJK glyph one by one, so make sure the 'x += w' just below
+                                        // gives x=x0+width, which is necessary to correctly draw any underline
+                                        w = x0 + width - x;
+                                        // Note: no thought given about what we should do if non-zero letter_spacing
                                     }
-                                    // We got x and have w of a fullwidth CJK char, normally some punctuation
-                                    // char whose blackbox is narrow and smaller or equal to half its width.
-                                    // But the position of this blackbox may depends on the opening/closing
-                                    // punctuation status, and on the language requested (Simplified Chinese
-                                    // get punctuations left- or right-anchored in the glyph, while Traditional
-                                    // Chinese may get them centered in the glyph). We only know about the glyph
-                                    // returned by the font here, so we should try to guess how to shift the
-                                    // drawing to get this glyph to look alright in half of w at the original x.
-                                    if ( item->origin_x + item->bmp_width <= w/2 ) {
-                                        // Glyph fully in the left half part (ie. Simplified Chinese closing punctuation)
-                                        // Nothing to tweak.
-                                    }
-                                    else if ( item->origin_x >= w/2 ) {
-                                        // Glyph fully in the right half part (ie. Simplified Chinese opening punctuation)
-                                        x += width - w;
-                                    }
-                                    else if ( item->origin_x <= w*1/5 && w - item->origin_x - item->bmp_width >= w*2/5) {
-                                        // With some fonts (ie. SimSun), some left/right glyphs may leak slightly over
-                                        // the middle: do a few more checks to catch these and handle them as above.
-                                        // Glyph mostly in the left half part: nothing to tweak
-                                    }
-                                    else if ( item->origin_x >= w*2/5 && w - item->origin_x - item->bmp_width <= w*1/5) {
-                                        // Glyph mostly in the rightly half part
-                                        x += width - w;
-                                    }
-                                    else {
-                                        // Glyph overlapping the middle of the glyph (ie. Traditional Chinese opening
-                                        // or closing punctuation), so probably centered in its glyph.
-                                        // We want to keep it centered in the provided width.
-                                        x += (width - w) / 2;
-                                    }
-                                    width = orig_width; // restore it in case we tweaked it
-                                    // We draw such CJK glyph one by one, so make sure the 'x += w' just below
-                                    // gives x=x0+width, which is necessary to correctly draw any underline
-                                    w = x0 + width - x;
-                                    // Note: no thought given about what we should do if non-zero letter_spacing
                                 }
                                 else if ( flags & LFNT_HINT_CJK_SCALED_WIDTH ) {
-                                    // We need to shift x by half of what was added for scaling.
-                                    // (We could use 'width', which should usually be the glyph 'w' scaled, but we
-                                    // don't, as it may have been increased by overlap correction.)
-                                    int cjk_width_scale_percent = target_w; // We've passed it via this unused param
-                                    x += (w * cjk_width_scale_percent / 100 - w) / 2;
-                                    // We draw such CJK glyph one by one, so also make sure the 'x += w' just below
-                                    // gives x=x0+width, which is necessary to correctly draw any underline
-                                    w = x0 + width - x;
+                                    if ( !is_vertical_draw ) {
+                                        // We need to shift x by half of what was added for scaling.
+                                        // (We could use 'width', which should usually be the glyph 'w' scaled, but we
+                                        // don't, as it may have been increased by overlap correction.)
+                                        int cjk_width_scale_percent = target_w; // We've passed it via this unused param
+                                        x += (w * cjk_width_scale_percent / 100 - w) / 2;
+                                        // We draw such CJK glyph one by one, so also make sure the 'x += w' just below
+                                        // gives x=x0+width, which is necessary to correctly draw any underline
+                                        w = x0 + width - x;
+                                    }
                                 }
-                                drawGlyphItem(buf,
-                                          x + item->origin_x + FONT_METRIC_TO_PX(glyph_pos[i].x_offset),
-                                          y + _baseline - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset),
-                                          item, palette);
-                                x += w;
+                                // In vertical-rl mode, some characters need explicit 90° CW rotation
+                                // when the font has no +vert glyph substitution for them.
+                                // Detect substitution: if +vert changed the glyph ID from the cmap
+                                // nominal, the font already provides a vertical form — draw normally.
+                                // If glyph ID is unchanged (no substitution), rotate explicitly.
+                                int gx = x + item->origin_x + FONT_METRIC_TO_PX(glyph_pos[i].x_offset);
+                                int gy = y + _baseline - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset);
+                                // In vertical-rl, the glyph must not start above its slot top (y).
+                                // Unusual bearing metrics or HarfBuzz TTB y_offset can push gy < y,
+                                // causing the glyph to bleed into the character above.  Clamp here;
+                                // the bottom is guarded separately by vert_skip_draw in Draw().
+                                if (is_vertical_draw && gy < y)
+                                    gy = y;
+                                bool did_rotate = false;
+                                if (is_vertical_draw && item->bmp_pixelformat != 4) {
+                                    lUInt32 cluster = glyph_info[i].cluster;
+                                    if (cluster < (lUInt32)len && needsVerticalRotation90CW(text[cluster])) {
+                                        hb_codepoint_t nominal = 0;
+                                        bool has_nominal = hb_font_get_glyph(_hb_font, text[cluster], 0, &nominal) != 0;
+                                        // Rotate only when cmap lookup succeeds AND +vert left the glyph unchanged.
+                                        if (has_nominal && nominal != 0 && glyph_info[i].codepoint == nominal) {
+                                            // For the rotation fallback, horizontal-mode gx/gy centres the
+                                            // glyph at the horizontal baseline — wrong for vertical-rl.
+                                            // Instead, centre the pre-rotation bitmap in the em-square slot.
+                                            //
+                                            // drawGlyphItemRotated90CW internally applies:
+                                            //   adj_x = rot_gx + (bmp_w - bmp_h) / 2
+                                            //   adj_y = rot_gy + (bmp_h - bmp_w) / 2
+                                            //
+                                            // We want:
+                                            //   adj_x = x + (_size - bmp_h) / 2   (centred in column width)
+                                            //   adj_y = max(y, y + (_size - bmp_w) / 2)  (centred in slot,
+                                            //             but never above slot top when bmp_w > _size)
+                                            //
+                                            // Back-solving:
+                                            //   rot_gx = x + (_size - bmp_w) / 2
+                                            //   rot_gy = adj_y - (bmp_h - bmp_w) / 2
+                                            int rot_gx = x + (_size - item->bmp_width)  / 2;
+                                            // Ideal centre: adj_y = y + (_size - bmp_w)/2
+                                            // When bmp_w > _size this is < y → bleed above. Clamp to y.
+                                            int adj_y = y + (_size - item->bmp_width) / 2;
+                                            if (adj_y < y) adj_y = y;
+                                            int rot_gy = adj_y - (item->bmp_height - item->bmp_width) / 2;
+                                            drawGlyphItemRotated90CW(buf, rot_gx, rot_gy, item, palette);
+                                            did_rotate = true;
+                                        }
+                                    }
+                                }
+                                if (!did_rotate)
+                                    drawGlyphItem(buf, gx, gy, item, palette);
+                                // In vertical-rl mode, glyphs within a multi-char word advance
+                                // downward (screen Y direction), not rightward.  Using x += w
+                                // would place successive glyphs in adjacent columns instead of
+                                // stacking them in the same column.
+                                if (is_vertical_draw)
+                                    y += w;
+                                else
+                                    x += w;
                             }
                         }
                         #ifdef DEBUG_DRAW_TEXT

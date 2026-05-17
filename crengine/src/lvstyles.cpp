@@ -44,7 +44,7 @@ lUInt32 calcHash(font_ref_t & f)
 lUInt32 calcHash(css_style_rec_t & rec)
 {
     if ( !rec.hash )
-        rec.hash = ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((
+        rec.hash = ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((
          + (lUInt32)rec.important[0]) * 31
          + (lUInt32)rec.important[1]) * 31
          + (lUInt32)rec.important[2]) * 31
@@ -118,6 +118,10 @@ lUInt32 calcHash(css_style_rec_t & rec)
          + (lUInt32)rec.caption_side) * 31
          + (lUInt32)rec.ruby_position) * 31
          + (lUInt32)rec.cr_hint.pack()) * 31
+         + (lUInt32)rec.writing_mode) * 31
+         + (lUInt32)rec.text_orientation) * 31
+         + (lUInt32)rec.text_combine_upright) * 31
+         + (lUInt32)rec.text_emphasis_style) * 31
          + (lUInt32)rec.font_name.getHash()
          + (lUInt32)rec.background_image.getHash()
          + (lUInt32)rec.content.getHash());
@@ -193,6 +197,10 @@ bool operator == (const css_style_rec_t & r1, const css_style_rec_t & r2)
            r1.float_ == r2.float_&&
            r1.clear == r2.clear&&
            r1.direction == r2.direction&&
+           r1.writing_mode == r2.writing_mode&&
+           r1.text_orientation == r2.text_orientation&&
+           r1.text_combine_upright == r2.text_combine_upright&&
+           r1.text_emphasis_style == r2.text_emphasis_style&&
            r1.visibility == r2.visibility&&
            r1.line_break == r2.line_break&&
            r1.word_break == r2.word_break&&
@@ -396,6 +404,10 @@ bool css_style_rec_t::serialize( SerialBuf & buf )
     ST_PUT_ENUM(float_);
     ST_PUT_ENUM(clear);
     ST_PUT_ENUM(direction);
+    ST_PUT_ENUM(writing_mode);
+    ST_PUT_ENUM(text_orientation);
+    ST_PUT_ENUM(text_combine_upright);
+    ST_PUT_ENUM(text_emphasis_style);
     ST_PUT_ENUM(visibility);
     ST_PUT_ENUM(line_break);
     ST_PUT_ENUM(word_break);
@@ -471,6 +483,10 @@ bool css_style_rec_t::deserialize( SerialBuf & buf )
     ST_GET_ENUM(css_float_t, float_);
     ST_GET_ENUM(css_clear_t, clear);
     ST_GET_ENUM(css_direction_t, direction);
+    ST_GET_ENUM(css_writing_mode_t, writing_mode);
+    ST_GET_ENUM(css_text_orientation_t, text_orientation);
+    ST_GET_ENUM(css_text_combine_upright_t, text_combine_upright);
+    ST_GET_ENUM(css_text_emphasis_style_t, text_emphasis_style);
     ST_GET_ENUM(css_visibility_t, visibility);
     ST_GET_ENUM(css_line_break_t, line_break);
     ST_GET_ENUM(css_word_break_t, word_break);

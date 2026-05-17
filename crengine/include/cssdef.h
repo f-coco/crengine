@@ -346,6 +346,45 @@ enum css_direction_t {
     css_dir_rtl
 };
 
+/// writing-mode property values
+enum css_writing_mode_t {
+    css_wm_inherit,
+    css_wm_horizontal_tb,
+    css_wm_vertical_rl,
+    css_wm_vertical_lr
+};
+
+/// text-orientation property values
+enum css_text_orientation_t {
+    css_to_inherit,
+    css_to_mixed,
+    css_to_upright,
+    css_to_sideways
+};
+
+/// text-combine-upright property values (tate-chu-yoko)
+enum css_text_combine_upright_t {
+    css_tcu_none,       // default: no combining
+    css_tcu_all,        // combine all characters
+    css_tcu_digits,     // combine digit runs
+};
+
+/// text-emphasis-style property values (圏点/傍点)
+enum css_text_emphasis_style_t {
+    css_tes_none = 0,      // none (default)
+    css_tes_filled_dot,    // filled dot   ●
+    css_tes_open_dot,      // open dot     ○
+    css_tes_filled_circle, // filled circle (alias for dot in CSS spec)
+    css_tes_open_circle,   // open circle
+    css_tes_filled_sesame, // filled sesame ﹅ (traditional Japanese 傍点)
+    css_tes_open_sesame,   // open sesame   ﹆
+    css_tes_filled_dc,     // filled double-circle ◉
+    css_tes_open_dc,       // open double-circle ◎
+    css_tes_filled_tri,    // filled triangle ▲
+    css_tes_open_tri,      // open triangle △
+    css_tes_inherit = 31,
+};
+
 /// visibility property values
 enum css_visibility_t {
     css_v_inherit,

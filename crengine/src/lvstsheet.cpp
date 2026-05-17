@@ -130,6 +130,14 @@ enum css_decl_code {
     cssd_float,
     cssd_clear,
     cssd_direction,
+    cssd_writing_mode,
+    cssd_text_orientation,
+    cssd_text_combine_upright,
+    cssd_text_combine_upright2,
+    cssd_text_combine_upright3,
+    cssd_text_emphasis,
+    cssd_text_emphasis2,
+    cssd_text_emphasis3,
     cssd_visibility,
     cssd_line_break,
     cssd_line_break2,
@@ -241,6 +249,14 @@ static const char * css_decl_name[] = {
     "float",
     "clear",
     "direction",
+    "writing-mode",
+    "text-orientation",
+    "text-combine-upright",
+    "-epub-text-combine",
+    "-webkit-text-combine",
+    "text-emphasis",
+    "-webkit-text-emphasis",
+    "-epub-text-emphasis",
     "visibility",
     "line-break",
     "-epub-line-break",
@@ -3090,6 +3106,46 @@ static const char * css_dir_names[] =
     NULL
 };
 
+// writing-mode value names
+static const char * css_wm_names[] =
+{
+    "", // css_wm_inherit
+    "horizontal-tb",
+    "vertical-rl",
+    "vertical-lr",
+    NULL
+};
+
+// text-emphasis shape keyword names (圏点/傍点)
+// Ordered to match css_text_emphasis_style_t enum
+static const char * css_tes_shape_names[] = {
+    "dot",           // maps to css_tes_filled_dot (filled is default)
+    "circle",        // maps to css_tes_filled_circle
+    "sesame",        // maps to css_tes_filled_sesame
+    "double-circle", // maps to css_tes_filled_dc
+    "triangle",      // maps to css_tes_filled_tri
+    NULL
+};
+
+// text-combine-upright value names (tate-chu-yoko)
+static const char * css_tcu_names[] =
+{
+    "none",     // css_tcu_none
+    "all",      // css_tcu_all
+    "digits",   // css_tcu_digits
+    NULL
+};
+
+// text-orientation value names
+static const char * css_to_names[] =
+{
+    "", // css_to_inherit
+    "mixed",
+    "upright",
+    "sideways",
+    NULL
+};
+
 // visibility value names
 static const char * css_v_names[] =
 {
@@ -4664,6 +4720,60 @@ bool LVCssDeclaration::parse( const char * &decl, bool higher_importance, lxmlDo
                 IF_g_SET_n_AND_break(true, css_dir_inherit, css_dir_ltr);
                 n = parse_name( decl, css_dir_names, -1 );
                 break;
+            case cssd_writing_mode:
+                IF_g_SET_n_AND_break(true, css_wm_inherit, css_wm_horizontal_tb);
+                n = parse_name( decl, css_wm_names, -1 );
+                break;
+            case cssd_text_orientation:
+                IF_g_SET_n_AND_break(true, css_to_inherit, css_to_mixed);
+                n = parse_name( decl, css_to_names, -1 );
+                break;
+            case cssd_text_combine_upright:
+            case cssd_text_combine_upright2: // -epub-text-combine
+            case cssd_text_combine_upright3: // -webkit-text-combine
+                prop_code = cssd_text_combine_upright;
+                IF_g_SET_n_AND_break(false, css_tcu_none, css_tcu_none);
+                // -epub-text-combine / -webkit-text-combine: "horizontal" maps to "all"
+                if ( strncmp(decl, "horizontal", 10) == 0 ) {
+                    next_token(decl);
+                    n = css_tcu_all;
+                } else {
+                    n = parse_name( decl, css_tcu_names, -1 );
+                    // "digits N" — skip optional count (2-4), treat same as "digits"
+                    if ( n == css_tcu_digits )
+                        next_token(decl);
+                }
+                break;
+            case cssd_text_emphasis:
+            case cssd_text_emphasis2: // -webkit-text-emphasis
+            case cssd_text_emphasis3: // -epub-text-emphasis
+                // text-emphasis shorthand: parse style keywords, skip color
+                // Stores only the style (color support omitted for simplicity)
+                prop_code = cssd_text_emphasis;
+                IF_g_SET_n_AND_break(true, css_tes_inherit, css_tes_none);
+                {
+                    // Parse optional "filled" / "open" modifier then shape
+                    bool is_open = false;
+                    if ( strncmp(decl, "filled", 6) == 0 && (decl[6] < 'a' || decl[6] > 'z') ) {
+                        next_token(decl); skip_spaces(decl);
+                    } else if ( strncmp(decl, "open", 4) == 0 && (decl[4] < 'a' || decl[4] > 'z') ) {
+                        is_open = true;
+                        next_token(decl); skip_spaces(decl);
+                    }
+                    int shape = parse_name( decl, css_tes_shape_names, -1 );
+                    if ( shape >= 0 ) {
+                        // shape: 0=dot 1=circle 2=sesame 3=double-circle 4=triangle
+                        // filled: css_tes_filled_dot=1, open: css_tes_open_dot=2
+                        n = 1 + shape * 2 + (is_open ? 1 : 0);
+                    } else if ( strncmp(decl, "none", 4) == 0 && (decl[4] < 'a' || decl[4] > 'z') ) {
+                        n = css_tes_none;
+                        next_token(decl);
+                    } else {
+                        // "filled" or "open" alone → default shape = sesame for CJK
+                        n = is_open ? css_tes_open_sesame : css_tes_filled_sesame;
+                    }
+                }
+                break;
             case cssd_visibility:
                 IF_g_SET_n_AND_break(true, css_v_inherit, css_v_visible);
                 n = parse_name( decl, css_v_names, -1 );
@@ -5408,6 +5518,24 @@ void LVCssDeclaration::apply( css_style_rec_t * style, const ldomNode * node ) c
         case cssd_direction:
             style->Apply( (css_direction_t) *p++, &style->direction, imp_bit_direction, is_important );
             // inherited in CSS specs, but not needed for us as we handle it at rendering time
+            break;
+        case cssd_writing_mode:
+            {
+                css_writing_mode_t wm_val = (css_writing_mode_t) *p++;
+                style->Apply( wm_val, &style->writing_mode, imp_bit_writing_mode, is_important );
+                style->flags |= STYLE_REC_FLAG_INHERITABLE_APPLIED;
+            }
+            break;
+        case cssd_text_orientation:
+            style->Apply( (css_text_orientation_t) *p++, &style->text_orientation, imp_bit_text_orientation, is_important );
+            style->flags |= STYLE_REC_FLAG_INHERITABLE_APPLIED;
+            break;
+        case cssd_text_combine_upright:
+            style->Apply( (css_text_combine_upright_t) *p++, &style->text_combine_upright, imp_bit_text_combine_upright, is_important );
+            break;
+        case cssd_text_emphasis:
+            style->Apply( (css_text_emphasis_style_t) *p++, &style->text_emphasis_style, imp_bit_text_emphasis_style, is_important );
+            style->flags |= STYLE_REC_FLAG_INHERITABLE_APPLIED;
             break;
         case cssd_visibility:
             style->Apply( (css_visibility_t) *p++, &style->visibility, imp_bit_visibility, is_important );
@@ -7322,6 +7450,8 @@ bool LVStyleSheet::parseAndAdvance( const char * &str, bool useragent_sheet, lSt
     }
     LVCssSelector * selector = NULL;
     LVCssSelector * prev_selector;
+    int err_count = 0;
+    int rule_count = 0;
     for (;*str;)
     {
         // new rule
@@ -7358,6 +7488,7 @@ bool LVStyleSheet::parseAndAdvance( const char * &str, bool useragent_sheet, lSt
             if ( !decl->parse( str, useragent_sheet, _doc, codeBase ) )
             {
                 err = true;
+                err_count++;
             }
             else
             {
@@ -7371,6 +7502,7 @@ bool LVStyleSheet::parseAndAdvance( const char * &str, bool useragent_sheet, lSt
                     if ( decl->isPresentationalHint() )
                         p->setIsPresentationalHint(true);
                 }
+                rule_count++;
             }
             break;
         }
