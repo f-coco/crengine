@@ -17,6 +17,25 @@ void ltext_get_vert_bleed(int *count_out, int *max_px_out) {
     *max_px_out = ltext_vert_bleed_max_px;
 }
 
+// Vertical-rl inline-box clip diagnostic.
+// When Draw() processes a ruby/inline-box word in vertical mode it switches the
+// buffer's clip to content_overflow_clip before calling DrawDocument.  If
+// content_overflow_clip.right != the outer clip.right, ruby and plain text use
+// different column anchors and appear misaligned.
+// Reset via ltext_reset_vert_ib_clip_diag(); read via ltext_get_vert_ib_clip_diag().
+int ltext_vert_ib_outer_clip_right = -1;  // clip.right seen by the OUTER Draw
+int ltext_vert_ib_inner_clip_right = -1;  // content_overflow_clip.right for inner Draw
+
+void ltext_reset_vert_ib_clip_diag() {
+    ltext_vert_ib_outer_clip_right = -1;
+    ltext_vert_ib_inner_clip_right = -1;
+}
+
+void ltext_get_vert_ib_clip_diag(int *outer_out, int *inner_out) {
+    *outer_out = ltext_vert_ib_outer_clip_right;
+    *inner_out = ltext_vert_ib_inner_clip_right;
+}
+
     /// align line: add or reduce widths of spaces to achieve desired text alignment
 void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alignment, int rightIndent=0, bool hasInlineBoxes=false ) {
         // Fetch current line x offset and max width
@@ -3250,6 +3269,13 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                 if ( draw_extra_info ) {
                     restore_orig_clip = true;
                     buf->GetClipRect( &origClip );
+                    // Diagnostic: record origClip.right (= the drawPageTo clip.right)
+                    // and content_overflow_clip.right.  In vertical-rl, both must be
+                    // equal so ruby inline boxes and plain text use the same column anchor.
+                    if ( is_vertical ) {
+                        ltext_vert_ib_outer_clip_right = origClip.right;
+                        ltext_vert_ib_inner_clip_right = draw_extra_info->content_overflow_clip.right;
+                    }
                     buf->SetClipRect( &draw_extra_info->content_overflow_clip );
                 }
             }
