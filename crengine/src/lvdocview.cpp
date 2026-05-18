@@ -2023,7 +2023,16 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 	// We don't really need to enforce left and right clipping of page margins:
 	// this allows glyphs that need to (like 'J' at start of line or 'f' at
 	// end of line with some fonts) to not be cut by this clipping.
-	clip.right = pageRect->left + pageRect->width();
+	if ( isVerticalText() ) {
+		// In vertical-rl, clip.right is the anchor for column positions:
+		// line_x = clip.right - doc_y.  Apply the right margin here so the
+		// first column is inset from the screen right edge by m_pageMargins.right.
+		// _page_width = m_dx - margins.left - margins.right, so
+		// clip.left = clip.right - _page_width = margins.left automatically.
+		clip.right = pageRect->right - m_pageMargins.right;
+	} else {
+		clip.right = pageRect->left + pageRect->width();
+	}
 	if ( isVerticalText() ) {
 		// In vertical-rl, the column-progression direction is the SCREEN-X
 		// axis (right-to-left).  The page covers c_x ∈ [page.start,
@@ -2750,11 +2759,12 @@ bool LVDocView::windowToDocPoint(lvPoint & pt, bool pullInPageArea) {
 				// In our Y=X coordinate-swap rendering:
 				//   screen_x identifies the column → doc_y (horizontal column position)
 				//   screen_y identifies character position within column → doc_x
-				// Inverse of docToWindowPoint: doc_x = screen_y - draw_x0
-				// where draw_x0 = rc->top = pageRect.top + margin.top + headerHeight.
+				// page_right matches drawPageTo's clip.right = rc->right - m_pageMargins.right,
+				// keeping windowToDocPoint and docToWindowPoint consistent with each other.
 				int screen_x = pt.x;
 				int screen_y = pt.y;
-				pt.y = page_y + (rc->right - screen_x);
+				int page_right = rc->right - m_pageMargins.right;
+				pt.y = page_y + (page_right - screen_x);
 				pt.x = screen_y - rc->top;
 				return true;
 			}
