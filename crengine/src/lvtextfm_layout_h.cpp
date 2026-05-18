@@ -3538,9 +3538,20 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         //   => y0_inline = x + node_y
                         // x0_inline carries the vertical (Y-screen) position:
                         //   y_child = x0_inline = y + node_x (vertical offset + parent top)
-                        x0 = y + node_x;
+                        //
+                        // Apply the same vert_min_next_x clamping as regular chars.
+                        // node_x = frmline->x + word->x; recover word->x to clamp it.
+                        // Without this, a ruby group can start 1-2px before the preceding
+                        // character ends when the layout TTB advance < draw effective_width.
+                        {
+                            int ib_word_x = node_x - frmline->x;
+                            int clamped_ib_x = ib_word_x < vert_min_next_x ? vert_min_next_x : ib_word_x;
+                            x0 = y + frmline->x + clamped_ib_x;
+                            vert_min_next_x = clamped_ib_x + (int)word->width;
+                            vert_prev_plain_y0 = x0;
+                            doc_x_ib = 0 - (frmline->x + clamped_ib_x);
+                        }
                         y0 = x + node_y;
-                        doc_x_ib = 0 - node_x;
                         doc_y_ib = 0 - node_y;
                         // (Bleed detection removed — all approaches produced false
                         // positives.  See investigation notes in CLAUDE.md.
@@ -3643,9 +3654,18 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                     drawFlags |= WORD_FLAGS_TO_FNT_FLAGS(word->flags);
                     // In vertical-rl/lr mode, signal to DrawTextString that vertical OpenType
                     // features (+vert/+vrt2) should be applied, substituting glyphs like ー→|.
-                    // TCY words are drawn horizontally even in vertical mode.
-                    if (is_vertical && !(word->flags & LTEXT_WORD_IS_TCY))
+                    // TCY words and non-CJK (Latin etc.) words are drawn horizontally.
+                    // For non-CJK words, we render horizontally then rotate 90° CW as a block.
+                    bool word_is_latin_in_vertical = is_vertical
+                        && !(word->flags & LTEXT_WORD_IS_TCY)
+                        && !(word->flags & LTEXT_WORD_IS_CJK)
+                        && !(word->flags & LTEXT_WORD_IS_FLEXIBLE_WIDTH_CJK)
+                        && !(word->flags & LTEXT_WORD_IS_IMAGE)
+                        && !(word->flags & LTEXT_WORD_IS_INLINE_BOX);
+                    if (is_vertical && !(word->flags & LTEXT_WORD_IS_TCY) && !word_is_latin_in_vertical)
                         drawFlags |= LFNT_HINT_IS_VERTICAL;
+                    if (word_is_latin_in_vertical)
+                        drawFlags |= LFNT_HINT_RENDER_ROTATE_FOR_VERTICAL;
                     // For debugging, to visually see overlap/italic correction:
                     // if (word->flags & LTEXT_WORD__AVAILABLE_BIT_16__ ) drawFlags |= LTEXT_TD_OVERLINE;
                     int x0, y0, w, h;
@@ -3679,6 +3699,25 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             vert_min_next_x = clamped_x + em;
                             vert_prev_plain_y0 = y0;
                             if (y_slot_start + em > clip.bottom)
+                                vert_skip_draw = true;
+                        } else if (word_is_latin_in_vertical) {
+                            // Non-CJK word (Latin etc.) in vertical column:
+                            // render horizontally then rotate 90° CW as a single block.
+                            // After rotation the block is font_height wide and word->width tall.
+                            int font_h = font->getHeight();
+                            int word_w = (int)word->width;
+                            int clamped_x = word->x;
+                            if (clamped_x < vert_min_next_x)
+                                clamped_x = vert_min_next_x;
+                            // Center the rotated block (height=font_h) within the column width
+                            x0 = line_x - frmline->height + (frmline->height - font_h) / 2;
+                            // Vertical start of the block in the column
+                            y0 = y + frmline->x + clamped_x;
+                            // Advance column by the word's full horizontal width
+                            vert_min_next_x = clamped_x + word_w;
+                            vert_prev_plain_y0 = y0;
+                            // Skip draw if the word starts past the column bottom
+                            if (y0 >= clip.bottom)
                                 vert_skip_draw = true;
                         } else if (is_vertical) {
                             // For vertical-rl: line_x is the column's RIGHT edge.
