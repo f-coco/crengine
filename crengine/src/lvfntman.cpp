@@ -4245,6 +4245,14 @@ public:
             // We call setupHBFeatures() here rather than at construction time because
             // measureText() may have changed _hb_features since the last DrawTextString call.
             bool is_vertical_draw = (flags & LFNT_HINT_IS_VERTICAL) != 0;
+            // render+rotate mode: draw horizontally into temp buffer, then rotate 90° CW
+            bool is_render_rotate = (flags & LFNT_HINT_RENDER_ROTATE_FOR_VERTICAL) != 0;
+            int rr_word_w = width;  // horizontal pixel width of the word (passed via width param)
+            int rr_font_h = _height;
+            lUInt8 * rr_buf = NULL;
+            if (is_render_rotate && rr_word_w > 0 && rr_font_h > 0) {
+                rr_buf = new lUInt8[rr_word_w * rr_font_h]();
+            }
             setupHBFeatures(is_vertical_draw);
 
             // Shape
@@ -4559,8 +4567,30 @@ public:
                                         }
                                     }
                                 }
-                                if (!did_rotate)
-                                    drawGlyphItem(buf, gx, gy, item, palette);
+                                if (!did_rotate) {
+                                    if (rr_buf) {
+                                        // render+rotate mode: composite glyph alpha into temp buffer
+                                        // x0=x (word start, const), y=y_param (top of em-box, const in horizontal mode)
+                                        int tx = gx - x0;  // relative x in temp buffer
+                                        int ty = gy - y;   // relative y (0 = top of em-box)
+                                        int bw = item->bmp_width;
+                                        int bh = item->bmp_height;
+                                        int pitch = item->bmp_pitch > 0 ? item->bmp_pitch : bw;
+                                        for (int py = 0; py < bh; py++) {
+                                            int by = ty + py;
+                                            if (by < 0 || by >= rr_font_h) continue;
+                                            for (int px = 0; px < bw; px++) {
+                                                int bx = tx + px;
+                                                if (bx < 0 || bx >= rr_word_w) continue;
+                                                lUInt8 a = item->bmp[py * pitch + px];
+                                                lUInt8 & dst = rr_buf[by * rr_word_w + bx];
+                                                if (a > dst) dst = a;
+                                            }
+                                        }
+                                    } else {
+                                        drawGlyphItem(buf, gx, gy, item, palette);
+                                    }
+                                }
                                 // In vertical-rl mode, glyphs within a multi-char word advance
                                 // downward (screen Y direction), not rightward.  Using x += w
                                 // would place successive glyphs in adjacent columns instead of
@@ -4608,6 +4638,21 @@ public:
                 }
             }
 
+            // render+rotate: rotate the temp alpha buffer 90° CW and blit to main buf
+            if (rr_buf) {
+                int rot_w = rr_font_h;
+                int rot_h = rr_word_w;
+                lUInt8 * rot_buf = new lUInt8[rot_w * rot_h]();
+                for (int ny = 0; ny < rot_h; ny++) {
+                    for (int nx = 0; nx < rot_w; nx++) {
+                        rot_buf[ny * rot_w + nx] = rr_buf[(rr_font_h - 1 - nx) * rr_word_w + ny];
+                    }
+                }
+                buf->Draw(x0, y, rot_buf, rot_w, rot_h, palette);
+                delete[] rot_buf;
+                delete[] rr_buf;
+                rr_buf = NULL;
+            }
         } // _kerningMode == KERNING_MODE_HARFBUZZ
         else if (_kerningMode == KERNING_MODE_HARFBUZZ_LIGHT) {
             struct LVCharTriplet triplet;
@@ -4848,7 +4893,6 @@ public:
                 previous = ch_glyph_index;
             }
         }
-
     #if USE_HARFBUZZ==1
         } // else fallback to the non harfbuzz code
     #endif
