@@ -3580,20 +3580,25 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             int ib_word_x = node_x - frmline->x;
                             int clamped_ib_x = ib_word_x < vert_min_next_x ? vert_min_next_x : ib_word_x;
                             int clamp_delta = clamped_ib_x - ib_word_x;  // ≥ 0
+                            // P14 overlap diagnostic: save the OLD vert_min_next_x
+                            // (= end of the preceding character) BEFORE updating it.
+                            // After update, vert_min_next_x = end of THIS inline box.
+                            int preceding_end = y + (int)frmline->x + vert_min_next_x;
                             x0 = y + node_x + clamp_delta;  // draw_x_rb = y + frmline->x + clamped_ib_x
                             vert_min_next_x = clamped_ib_x + (int)word->width;
                             vert_prev_plain_y0 = x0;
                             doc_x_ib = 0 - node_x;  // anchor to original node_x
+                            // draw_x_inner = x0 + doc_x_ib + node_x = y + node_x + clamp_delta
+                            // (DrawDocument accumulates doc_x += inline_box.getX() = node_x).
+                            // If draw_x_inner < preceding_end, ruby overlaps the char above.
+                            int draw_x_inner = x0 + doc_x_ib + node_x;
+                            if ( draw_x_inner < preceding_end ) {
+                                ltext_vert_bleed_count++;
+                                int overlap_px = preceding_end - draw_x_inner;
+                                if ( overlap_px > ltext_vert_bleed_max_px )
+                                    ltext_vert_bleed_max_px = overlap_px;
+                            }
                         }
-                        y0 = x + node_y;
-                        doc_y_ib = 0 - node_y;
-                        // (Bleed detection removed — all approaches produced false
-                        // positives.  See investigation notes in CLAUDE.md.
-                        // Counter infrastructure kept: ltext_vert_bleed_count /
-                        // ltext_vert_bleed_max_px / ltext_reset_vert_bleed() /
-                        // ltext_get_vert_bleed() are still compiled and exposed
-                        // to Lua via doc._document:resetVertBleedCounters() /
-                        // getVertBleedStats() for future use.)
                     } else {
                         x0 = x + node_x;
                         y0 = y + node_y;
