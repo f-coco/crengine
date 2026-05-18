@@ -1921,10 +1921,11 @@ public:
             // HarfBuzz features for full text shaping
             addHBFeature("+kern");  // font kerning
             addHBFeature("+liga");  // ligatures
-            // Vertical text: enable vertical glyph substitution
+            // Vertical text: enable vertical glyph substitution and kerning
             if ( is_vertical ) {
                 addHBFeature("+vert");  // enable vertical glyph substitution
                 addHBFeature("+vrt2");  // newer vertical feature
+                addHBFeature("+vkrn"); // vertical kerning (e.g. spacing around 。/、)
             }
         }
         else if (_kerningMode == KERNING_MODE_HARFBUZZ_LIGHT) {

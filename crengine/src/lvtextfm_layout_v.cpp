@@ -5,6 +5,25 @@
 // Forward declarations (defined in lvtextfm_layout_h.cpp)
 void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fragment_t * para, bool first, bool last, bool preFormattedOnly, bool isLastPara, bool hasInlineBoxes );
 
+// Returns true if 'ch' is a Japanese/CJK sentence-end character that must not
+// start a new column (行頭禁則) and should hang at the bottom of the current
+// column (ぶら下がり) instead.
+static inline bool isVerticalHangingChar(lChar32 ch) {
+    switch (ch) {
+        case 0x3001: // 、IDEOGRAPHIC COMMA (読点)
+        case 0x3002: // 。IDEOGRAPHIC FULL STOP (句点)
+        case 0x30FB: // ・KATAKANA MIDDLE DOT
+        case 0xFF01: // ！FULLWIDTH EXCLAMATION MARK
+        case 0xFF0C: // ，FULLWIDTH COMMA
+        case 0xFF0E: // ．FULLWIDTH FULL STOP
+        case 0xFF1F: // ？FULLWIDTH QUESTION MARK
+        case 0x2026: // … HORIZONTAL ELLIPSIS
+            return true;
+        default:
+            return false;
+    }
+}
+
 // Step 2: Wrapper that delegates word placement to addLineHorizontal,
 // then patches frmline coordinates for vertical layout.
 //
@@ -237,6 +256,20 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                 int char_count_adv = (i - pos + 1) * avg_char_advance + avg_char_advance / 2 + inline_box_extra;
                 if ( y + fmt->m_advance[i]-w0 >= maxHeight + spaceReduceWidth
                         || y + char_count_adv > maxHeight + spaceReduceWidth ) {
+                    // ぶら下がり (行末句読点ぶら下がり): if the overflowing character is a
+                    // sentence-end punctuation that must not start a new column (行頭禁則),
+                    // include it in the current column and stop here.  The glyph will draw
+                    // at the column bottom with its ink in the upper portion of the em-square
+                    // (where +vert places 。/、), so it remains fully visible even though the
+                    // trailing blank of the em-square may be clipped at clip.bottom.
+                    if ( fmt->m_hanging_punctuation && isVerticalHangingChar(fmt->m_text[i]) ) {
+                        int prev_adv = char_count_adv - avg_char_advance;
+                        if ( y + prev_adv <= maxHeight + spaceReduceWidth ) {
+                            lastNormalWrap = i;  // include this char in current column
+                            i++;
+                            break;
+                        }
+                    }
                     if ( (flags & LCHAR_IS_SPACE) && (flags & LCHAR_ALLOW_WRAP_AFTER) )
                         grabbedExceedingSpace = true;
                     else if ( flags & LCHAR_IS_CJK && lastNormalWrap < i-1 ) {
