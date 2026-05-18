@@ -2761,11 +2761,14 @@ bool LVDocView::windowToDocPoint(lvPoint & pt, bool pullInPageArea) {
 			if (isVerticalText()) {
 				// Vertical-rl/lr: screen coordinates are swapped relative to document layout.
 				// page_right mirrors drawPageTo's clip.right = rc->right - m_pageMargins.right.
+				// draw_x0 mirrors drawPageTo's draw_x0 = clip.top = rc->top + margin.top + header.
+				// Both must match docToWindowPoint for a consistent round-trip.
 				int screen_x = pt.x;
 				int screen_y = pt.y;
 				int page_right = rc->right - m_pageMargins.right;
+				int draw_x0 = rc->top + m_pageMargins.top + getPageHeaderHeight();
 				pt.y = page_y + (page_right - screen_x);
-				pt.x = screen_y - rc->top;
+				pt.x = screen_y - draw_x0;
 				return true;
 			}
 			pt.x -= rc->left;
