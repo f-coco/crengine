@@ -4536,6 +4536,7 @@ public:
                                 // the bottom is guarded separately by vert_skip_draw in Draw().
                                 if (is_vertical_draw && gy < y)
                                     gy = y;
+
                                 bool did_rotate = false;
                                 if (is_vertical_draw && item->bmp_pixelformat != 4) {
                                     lUInt32 cluster = glyph_info[i].cluster;

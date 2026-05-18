@@ -3544,12 +3544,20 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         // Without this, a ruby group can start 1-2px before the preceding
                         // character ends when the layout TTB advance < draw effective_width.
                         {
+                            // node_x = frmline->x + word->x  (set in first pass)
+                            // draw_x_rb = x0 + doc_x_ib + node.getX()
+                            //           = x0 - doc_x_offset + node_x
+                            // To clamp draw_x_rb to vert_min_next_x, we must NOT use
+                            // clamped_ib_x in doc_x_ib (it would cancel the x0 shift).
+                            // Instead, shift x0 by the clamping delta while keeping
+                            // doc_x_ib anchored to the original node_x.
                             int ib_word_x = node_x - frmline->x;
                             int clamped_ib_x = ib_word_x < vert_min_next_x ? vert_min_next_x : ib_word_x;
-                            x0 = y + frmline->x + clamped_ib_x;
+                            int clamp_delta = clamped_ib_x - ib_word_x;  // ≥ 0
+                            x0 = y + node_x + clamp_delta;  // draw_x_rb = y + frmline->x + clamped_ib_x
                             vert_min_next_x = clamped_ib_x + (int)word->width;
                             vert_prev_plain_y0 = x0;
-                            doc_x_ib = 0 - (frmline->x + clamped_ib_x);
+                            doc_x_ib = 0 - node_x;  // anchor to original node_x
                         }
                         y0 = x + node_y;
                         doc_y_ib = 0 - node_y;
