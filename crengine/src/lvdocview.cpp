@@ -2075,7 +2075,11 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 	draw_extra_info.content_overflow_clip.top = headerHeight;
 	draw_extra_info.content_overflow_clip.bottom = fullRect.bottom; // will be reduced if footnotes
 	draw_extra_info.content_overflow_clip.left = fullRect.left;
-	draw_extra_info.content_overflow_clip.right = fullRect.right;
+	// For vertical-rl, content_overflow_clip.right must match clip.right so that
+	// inline boxes (ruby groups) use the same column anchor as plain text.
+	draw_extra_info.content_overflow_clip.right = isVerticalText()
+		? pageRect->right - m_pageMargins.right
+		: fullRect.right;
 
 	if (hasTwoVisiblePages) {
 		// Don't trust pageRects and their tweaked middle margin
