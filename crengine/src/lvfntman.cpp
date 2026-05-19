@@ -89,6 +89,25 @@ static void ft_error_trace(const char *where, const char *call, FT_Error error) 
     fprintf(stderr, "CRE: %s: %s failed: %s\n", where, call, errstr);
 }
 
+// Vertical glyph-Y diagnostic.
+// Records the accumulated (gy − y) offset applied to each non-rotated vertical
+// glyph draw.  With the correct formula (gy = y − y_offset) this sum is ≈ 0.
+// With the broken formula (gy = y + _baseline − origin_y − y_offset) it is a
+// large positive value (~1/5 em × n_glyphs).
+// Reset via lfnt_reset_vert_gy_diag(); read via lfnt_get_vert_gy_diag().
+int lfnt_vert_gy_offset_sum = 0;
+int lfnt_vert_gy_count      = 0;
+
+void lfnt_reset_vert_gy_diag() {
+    lfnt_vert_gy_offset_sum = 0;
+    lfnt_vert_gy_count      = 0;
+}
+
+void lfnt_get_vert_gy_diag(int *count_out, int *sum_out) {
+    *count_out = lfnt_vert_gy_count;
+    *sum_out   = lfnt_vert_gy_offset_sum;
+}
+
 // Note: y are inverted as the glyphs shapes are in a mirrored coordinates system
 static void SVGGlyphsCollector_svg_move_to(hb_draw_funcs_t *, SVGGlyphsCollector *collector, hb_draw_state_t *,
                                         float to_x, float to_y, void *) {
@@ -4544,6 +4563,11 @@ public:
                                 // Clamp: glyph must not start above its slot top in vertical mode.
                                 if (is_vertical_draw && gy < y)
                                     gy = y;
+                                // Diagnostic: record gy − y offset for vertical non-rotated draws.
+                                if (is_vertical_draw) {
+                                    lfnt_vert_gy_offset_sum += (gy - y);
+                                    lfnt_vert_gy_count++;
+                                }
 
                                 bool did_rotate = false;
                                 if (is_vertical_draw && item->bmp_pixelformat != 4) {
