@@ -499,8 +499,31 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
             else {
                 if ( wrapPos < lastNormalWrap )
                     wrapPos = lastNormalWrap;
-                if ( wrapPos < 0 )
-                    wrapPos = i-1;
+                if ( wrapPos < 0 ) {
+                    // Emergency break: no wrap opportunity found in the column.
+                    // Before breaking mid-word, try to find the start of the
+                    // current Latin word so we can push the whole word to the
+                    // next column.  libunibreak marks AL×AL (e.g. inside
+                    // "answer") as prohibited, leaving no lastNormalWrap within
+                    // the word.  If the word starts after pos (there are chars
+                    // before it in this column), breaking just before the word
+                    // keeps the word intact.  If the word starts at pos
+                    // (nothing precedes it), we cannot push it back and fall
+                    // through to the per-character emergency break.
+                    int word_start = i;
+                    while ( word_start > pos ) {
+                        lUInt16 prev_flags = fmt->m_flags[word_start - 1];
+                        if ( (prev_flags & LCHAR_IS_CJK)
+                                || (prev_flags & LCHAR_IS_SPACE)
+                                || (prev_flags & LCHAR_IS_OBJECT) )
+                            break;
+                        word_start--;
+                    }
+                    if ( word_start > pos )
+                        wrapPos = word_start - 1;   // break before the Latin word
+                    else
+                        wrapPos = i - 1;            // nothing before the word; split mid-word
+                }
                 #if (USE_LIBUNIBREAK!=1)
                 if ( wrapPos <= upSkipPos ) {
                     wrapPos = upSkipPos+1;
