@@ -251,11 +251,18 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                 //    effective_width = max(word->width, font_size) spacing.  When TTB advances
                 //    are slightly smaller than font_size, the draw positions accumulate faster
                 //    than m_advance predicts, placing glyphs past clip.bottom.
+                //    IMPORTANT: only apply this safety check for CJK characters.  For Latin
+                //    characters in vertical mode, m_advance is computed from HarfBuzz x_advance
+                //    (fallback when vmtx is absent), so the actual advance IS m_advance.
+                //    Using avg_char_advance (≈ em_size from CJK chars) for Latin chars
+                //    (x_advance ≈ em/3) inflates char_count_adv by ~3×, causing premature
+                //    column breaks inside Latin words (e.g. "answ|er" in "answer").
                 // For inline boxes (ruby groups), o.width > avg_char_advance: inline_box_extra
                 // carries the excess so char_count_adv correctly reflects total column depth.
+                bool is_cjk_char = (fmt->m_flags[i] & LCHAR_IS_CJK) != 0;
                 int char_count_adv = (i - pos + 1) * avg_char_advance + avg_char_advance / 2 + inline_box_extra;
                 if ( y + fmt->m_advance[i]-w0 >= maxHeight + spaceReduceWidth
-                        || y + char_count_adv > maxHeight + spaceReduceWidth ) {
+                        || (is_cjk_char && y + char_count_adv > maxHeight + spaceReduceWidth) ) {
                     // ぶら下がり (行末句読点ぶら下がり): if the overflowing character is a
                     // sentence-end punctuation that must not start a new column (行頭禁則),
                     // include it in the current column and stop here.  The glyph will draw
