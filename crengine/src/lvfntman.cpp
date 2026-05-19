@@ -90,22 +90,36 @@ static void ft_error_trace(const char *where, const char *call, FT_Error error) 
 }
 
 // Vertical glyph-Y diagnostic.
-// Records the accumulated (gy − y) offset applied to each non-rotated vertical
-// glyph draw.  With the correct formula (gy = y − y_offset) this sum is ≈ 0.
-// With the broken formula (gy = y + _baseline − origin_y − y_offset) it is a
-// large positive value (~1/5 em × n_glyphs).
+// Records (gy − y) for each non-rotated vertical glyph draw.
+// The consistent formula gy = y + (_baseline − origin_y) − y_offset gives a
+// near-constant offset for all full-width CJK glyphs (≈ |descender|, 4-10 px).
+// A formula that removes the (_baseline − origin_y) term (like gy = y − y_offset)
+// gives avg ≈ 0 but HIGH VARIANCE because y_offset differs per character
+// (e.g. punctuation vs kanji), producing irregular inter-character spacing.
+// Tracks: sum for average, sum-of-squares for variance, min/max for spread.
 // Reset via lfnt_reset_vert_gy_diag(); read via lfnt_get_vert_gy_diag().
-int lfnt_vert_gy_offset_sum = 0;
-int lfnt_vert_gy_count      = 0;
+int lfnt_vert_gy_count       = 0;
+int lfnt_vert_gy_sum         = 0;
+int lfnt_vert_gy_sum_sq      = 0;  // for variance: E[x^2] - E[x]^2
+int lfnt_vert_gy_min         = 0x7fffffff;
+int lfnt_vert_gy_max         = -0x7fffffff;
 
 void lfnt_reset_vert_gy_diag() {
-    lfnt_vert_gy_offset_sum = 0;
-    lfnt_vert_gy_count      = 0;
+    lfnt_vert_gy_count  = 0;
+    lfnt_vert_gy_sum    = 0;
+    lfnt_vert_gy_sum_sq = 0;
+    lfnt_vert_gy_min    = 0x7fffffff;
+    lfnt_vert_gy_max    = -0x7fffffff;
 }
 
-void lfnt_get_vert_gy_diag(int *count_out, int *sum_out) {
-    *count_out = lfnt_vert_gy_count;
-    *sum_out   = lfnt_vert_gy_offset_sum;
+// Returns count, sum, sum_of_squares, min, max of (gy − y).
+void lfnt_get_vert_gy_diag(int *count_out, int *sum_out, int *sum_sq_out,
+                            int *min_out,   int *max_out) {
+    *count_out  = lfnt_vert_gy_count;
+    *sum_out    = lfnt_vert_gy_sum;
+    *sum_sq_out = lfnt_vert_gy_sum_sq;
+    *min_out    = lfnt_vert_gy_count > 0 ? lfnt_vert_gy_min : 0;
+    *max_out    = lfnt_vert_gy_count > 0 ? lfnt_vert_gy_max : 0;
 }
 
 // Note: y are inverted as the glyphs shapes are in a mirrored coordinates system
@@ -4550,28 +4564,34 @@ public:
                                 // If glyph ID is unchanged (no substitution), rotate explicitly.
                                 int gx = x + item->origin_x + FONT_METRIC_TO_PX(glyph_pos[i].x_offset);
                                 // Glyph Y position:
-                                // Horizontal: y is line_y; use horizontal baseline + bearing.
-                                // Vertical:   y is the slot top (TTB pen position = advance start).
-                                //   Skip the horizontal _baseline − origin_y term (wrong axis).
-                                //   Keep HarfBuzz y_offset: it encodes the font's intended glyph
-                                //   placement within the advance slot (e.g. centering punctuation).
-                                //   gy = y − y_offset  matches sbox.y (slot top) for y_offset = 0
-                                //   (typical full-width CJK), and correctly shifts punctuation etc.
+                                // Both horizontal and vertical use:
+                                //   gy = y + _baseline - origin_y - y_offset
+                                //
+                                // This formula produces visually uniform inter-character spacing
+                                // because (_baseline − origin_y) is approximately constant for all
+                                // full-width CJK characters in a given font (≈ |descender|, typically
+                                // 4-8 px).  Using y − y_offset alone (without the constant term)
+                                // causes irregular spacing because y_offset varies per character.
+                                //
+                                // The consequence is that the highlight sbox (at slot top = y) sits
+                                // (_baseline − origin_y) pixels above the rendered glyph.  This is a
+                                // known limitation: closing the gap requires font-metric queries that
+                                // are not available in the coordinate-conversion layer.
                                 //
                                 // Rotation (Latin/etc without +vert) uses its own correct_y below
                                 // and does NOT read gy.
-                                int gy = is_vertical_draw
-                                    ? (y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset))
-                                    : (y + _baseline - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset));
+                                int gy = y + _baseline - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset);
                                 // Clamp: glyph must not start above its slot top in vertical mode.
                                 if (is_vertical_draw && gy < y)
                                     gy = y;
-                                // Diagnostic: record gy − y for vertical non-rotated draws.
-                                // Correct formula (gy = y − y_offset): avg ≈ 0 (y_offset ≈ 0 for CJK).
-                                // Broken formula (_baseline − origin_y):  avg ≈ +1/5 em.
+                                // Diagnostic: record (gy − y) for vertical non-rotated draws.
                                 if (is_vertical_draw) {
-                                    lfnt_vert_gy_offset_sum += (gy - y);
+                                    int d = gy - y;
                                     lfnt_vert_gy_count++;
+                                    lfnt_vert_gy_sum    += d;
+                                    lfnt_vert_gy_sum_sq += d * d;
+                                    if (d < lfnt_vert_gy_min) lfnt_vert_gy_min = d;
+                                    if (d > lfnt_vert_gy_max) lfnt_vert_gy_max = d;
                                 }
 
                                 bool did_rotate = false;
