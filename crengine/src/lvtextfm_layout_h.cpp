@@ -3931,21 +3931,30 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             */
                         }
                     }
-                    if (!vert_skip_draw) font->DrawTextString(
-                        buf,
-                        x0,
-                        y0,
-                        str,
-                        word->t.len,
-                        '?',
-                        NULL,
-                        flgHyphen,
-                        srcline->lang_cfg,
-                        drawFlags,
-                        srcline->letter_spacing + word->added_letter_spacing,
-                        word->width,
-                        text_decoration_back_gap,
-                        w, h);
+                    {
+                        int _adv = !vert_skip_draw ? font->DrawTextString(
+                            buf,
+                            x0,
+                            y0,
+                            str,
+                            word->t.len,
+                            '?',
+                            NULL,
+                            flgHyphen,
+                            srcline->lang_cfg,
+                            drawFlags,
+                            srcline->letter_spacing + word->added_letter_spacing,
+                            word->width,
+                            text_decoration_back_gap,
+                            w, h) : 0;
+                        // For word_is_latin_in_vertical, DrawTextString returns the
+                        // actual horizontal (x_advance) width, which may be smaller
+                        // than word->width (TTB y_advance) for fonts with full-em vmtx.
+                        // Update vert_min_next_x so the next char follows directly
+                        // without a blank gap.
+                        if (word_is_latin_in_vertical && _adv > 0)
+                            vert_min_next_x = (vert_min_next_x - (int)word->width) + _adv;
+                    }
                     // Draw 圏点/傍点 (text-emphasis marks) in vertical mode
                     if ( is_vertical && !vert_skip_draw && (srcline->flags & LTEXT_HAS_EXTRA) ) {
                         int em_style = getLTextExtraProperty(srcline, LTEXT_EXTRA_CSS_TEXT_EMPHASIS);

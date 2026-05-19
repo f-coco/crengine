@@ -4699,7 +4699,15 @@ public:
             // render+rotate: rotate the temp alpha buffer 90° CW and blit to main buf
             if (rr_buf) {
                 int rot_w = rr_font_h;
-                int rot_h = rr_word_w;
+                // Use the actual horizontal extent drawn (x - x0) instead of rr_word_w
+                // (= word->width = TTB y_advance).  For fonts with vmtx (e.g. NotoSerifJP),
+                // y_advance = full em per glyph so rr_word_w > actual x_advance.  Drawing
+                // only fills the first (x - x0) columns; blitting the full rr_word_w
+                // would append a blank strip after the last glyph, making 'r' appear as a
+                // tiny stub at the edge of the block rather than as a full glyph within it.
+                int actual_w = x - x0;
+                if (actual_w <= 0) actual_w = rr_word_w;  // fallback (empty word, degenerate)
+                int rot_h = actual_w;
                 lUInt8 * rot_buf = new lUInt8[rot_w * rot_h]();
                 for (int ny = 0; ny < rot_h; ny++) {
                     for (int nx = 0; nx < rot_w; nx++) {
