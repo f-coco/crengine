@@ -2723,6 +2723,7 @@ bool LVDocView::windowToDocPoint(lvPoint & pt, bool pullInPageArea) {
 	} else {
 		// PAGES mode
 		int page = getCurPage(true);
+		int page_rect_idx = 0;  // index into m_pageRects (0 or 1); set to 1 when on right page
 		lvRect * rc = NULL;
 		lvRect page1(m_pageRects[0]);
 		int headerHeight = getPageHeaderHeight();
@@ -2764,24 +2765,20 @@ bool LVDocView::windowToDocPoint(lvPoint & pt, bool pullInPageArea) {
 			if (page2.isPointInside(pt)) {
 				rc = &page2;
 				page++;
+				page_rect_idx = 1;
 			}
 		}
 		if (rc && page >= 0 && page < m_pages.length()) {
 			int page_y = m_pages[page]->start;
 			if (isVerticalText()) {
 				// Vertical-rl: screen ↔ doc coordinate swap.
-				// rc->right = m_pageRects[0].right - m_pageMargins.right (page1 has margin subtracted once).
-				// vertPageRight() needs the original pageRect, so reconstruct it from rc.
-				// Since rc.right = pageRect.right - margin.right, pageRect.right = rc->right + margin.right.
-				// We pass a temporary rect with the original (non-adjusted) dimensions.
+				// Use m_pageRects[page_rect_idx] directly so vertPageRight() receives
+				// the original (non-adjusted) rect — no margin reconstruction needed.
 				int screen_x = pt.x;
 				int screen_y = pt.y;
-				lvRect origRect( rc->left  - m_pageMargins.left,
-				                 rc->top   - m_pageMargins.top - getPageHeaderHeight(),
-				                 rc->right + m_pageMargins.right,
-				                 rc->bottom + m_pageMargins.bottom );
-				int page_right = vertPageRight( origRect, m_pages[page]->height );
-				int draw_x0 = rc->top + m_pageMargins.top + getPageHeaderHeight();
+				int page_right = vertPageRight( m_pageRects[page_rect_idx],
+				                                m_pages[page]->height );
+				int draw_x0 = m_pageRects[page_rect_idx].top + m_pageMargins.top + headerHeight;
 				pt.y = page_y + (page_right - screen_x);
 				pt.x = screen_y - draw_x0;
 				return true;
