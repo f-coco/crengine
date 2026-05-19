@@ -107,7 +107,7 @@ extern const int gDOMVersionCurrent = DOM_VERSION_CURRENT;
 //         has strut = outer col_w; centering (col_w-em)/2 now applied inside
 //         the ruby block, and vert_y_adjust = -annotation_h is line-spacing-
 //         independent, keeping the base char centred at all line spacings.
-#define FORMATTING_VERSION_ID 0x0044
+#define FORMATTING_VERSION_ID 0x004C
 
 #ifndef DOC_DATA_COMPRESSION_LEVEL
 /// data compression level (0=no compression, 1=fast compressions, 3=normal compression)
@@ -21499,11 +21499,17 @@ int ldomNode::renderFinalBlock(  LFormattedTextRef & frmtext, RenderRectAccessor
     // the inner content in that context.
     // This page_h we provide to f->Format() is only used to enforce a max height to images
     int page_h = getDocument()->getPageHeight();
+    int full_page_h = page_h;  // original page height before bvo reduction
     // Vertical-rl: reduce page_h by the block's accumulated inline-start offset so
     // processParagraphVertical() does not place characters past clip.bottom.
     // With Option C (CSSLogical in renderBlockElementEnhanced), getX() stores the
     // inline-start content edge (CSS padding-top for vertical-rl), so bvo is
     // naturally 0 for typical body content that has no CSS padding-top/border-top.
+    //
+    // NOTE: the reduction is correct ONLY for the first column of the paragraph
+    // (which starts at bvo from the top).  Columns 2+ start at the page top and
+    // should use the full page_h.  full_page_height carries that unreduced value
+    // so processParagraphVertical can apply it to non-first columns.
     {
         css_writing_mode_t wm = getStyle()->writing_mode;
         if (css_wm_is_vertical(wm)) {
@@ -21511,12 +21517,29 @@ int ldomNode::renderFinalBlock(  LFormattedTextRef & frmtext, RenderRectAccessor
             int bvo = fmt->getX();
             bvo += measureBorder(this, L.brdIS());   // inline-start border (border-top)
             bvo += lengthToPx(this, getStyle()->padding[L.padIS()], fmt->getWidth());  // padding-top
-            for (ldomNode* cur = getParentNode(); cur != NULL && cur->isElement(); cur = cur->getParentNode())
+            for (ldomNode* cur = getParentNode(); cur != NULL && cur->isElement(); cur = cur->getParentNode()) {
+                // Stop accumulating bvo when we hit the ruby inline box.
+                // Its getX() encodes the Y position of the ruby group in the outer
+                // column; including it would reduce page_h for ruby table cells,
+                // causing base characters to wrap into separate columns and appear
+                // side-by-side (horizontal) instead of stacked vertically.
+                if (cur->getNodeId() == el_inlineBox) {
+                    ldomNode * p = cur->getParentNode();
+                    if (p) {
+                        css_style_ref_t ps = p->getStyle();
+                        if (!ps.isNull() && ps->display == css_d_ruby)
+                            break;
+                    }
+                }
                 bvo += RenderRectAccessor(cur).getX();
+            }
             if (bvo > 0 && bvo < page_h)
                 page_h -= bvo;
         }
     }
+    // Store the unreduced page height so processParagraphVertical can use it
+    // for columns 2+ (which start at the page top, not at bvo).
+    f->GetBuffer()->full_page_height = (lUInt16)full_page_h;
     // Save or restore outer floats footprint (it is only provided
     // when rendering the document - when this is called to draw the
     // node, or search for text and links, we need to get it from
