@@ -2025,14 +2025,8 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 	// end of line with some fonts) to not be cut by this clipping.
 	if ( isVerticalText() ) {
 		// In vertical-rl, clip.right is the column anchor: line_x = clip.right - doc_y.
-		// page.height = N * strut_height ≤ _page_width = m_dx - margins.left - margins.right.
-		// The unused fraction (_page_width - page.height) would otherwise accumulate on the
-		// left, making the left visual gap wider than the right.  Distribute it equally by
-		// shifting clip.right inward by half the remainder, centering the text block.
-		int page_width = pageRect->width() - m_pageMargins.left - m_pageMargins.right;
-		int centering_offset = (page_width - height) / 2;
-		if ( centering_offset < 0 ) centering_offset = 0;
-		clip.right = pageRect->right - m_pageMargins.right - centering_offset;
+		// vertPageRight() centers the text block so left and right gaps are equal.
+		clip.right = vertPageRight( *pageRect, height );
 	} else {
 		clip.right = pageRect->left + pageRect->width();
 	}
@@ -2650,6 +2644,19 @@ void LVDocView::Draw(LVDrawBuf & drawbuf, int position, int page, bool rotate, b
 
 /// Returns true if the document root body uses vertical-rl or vertical-lr writing mode.
 /// Phase 1: checks the body element only. Mixed-mode documents (Phase 2) not yet supported.
+/// In vertical-rl mode, columns are anchored at clip.right = page_right.
+/// page.height = N × strut ≤ page_width, so the remainder accumulates on the
+/// left.  Distribute it equally by shifting the anchor inward by half the gap.
+/// All three callers (drawPageTo, docToWindowPoint, windowToDocPoint) use this
+/// function so the formula lives in exactly one place.
+int LVDocView::vertPageRight( const lvRect & pageRect, int page_content_height ) const {
+    int page_right = pageRect.right - m_pageMargins.right;
+    int page_width = pageRect.width() - m_pageMargins.left - m_pageMargins.right;
+    int centering_offset = (page_width - page_content_height) / 2;
+    if ( centering_offset < 0 ) centering_offset = 0;
+    return page_right - centering_offset;
+}
+
 bool LVDocView::isVerticalText() const {
     // Detect vertical text by checking the body element's writing-mode style
     // (most reliable; works regardless of cover pages or page-list layout).
@@ -2762,20 +2769,18 @@ bool LVDocView::windowToDocPoint(lvPoint & pt, bool pullInPageArea) {
 		if (rc && page >= 0 && page < m_pages.length()) {
 			int page_y = m_pages[page]->start;
 			if (isVerticalText()) {
-				// Vertical-rl/lr: screen coordinates are swapped relative to document layout.
-				// page_right mirrors drawPageTo's clip.right = m_pageRects.right - margin.right - centering.
-				// rc->right = m_pageRects[0].right - m_pageMargins.right (page1 has margin subtracted).
-				// draw_x0 mirrors drawPageTo's clip.top = rc->top + margin.top + header.
+				// Vertical-rl: screen ↔ doc coordinate swap.
+				// rc->right = m_pageRects[0].right - m_pageMargins.right (page1 has margin subtracted once).
+				// vertPageRight() needs the original pageRect, so reconstruct it from rc.
+				// Since rc.right = pageRect.right - margin.right, pageRect.right = rc->right + margin.right.
+				// We pass a temporary rect with the original (non-adjusted) dimensions.
 				int screen_x = pt.x;
 				int screen_y = pt.y;
-				// Centering offset: same formula as drawPageTo.
-				// m_pageRects[0].right - rc->right == m_pageMargins.right (since rc = page1).
-				int page_width = (rc->right - rc->left);  // text area width (margins already removed)
-				int content_height = m_pages[page]->height;
-				int centering_offset = (page_width - content_height) / 2;
-				if ( centering_offset < 0 ) centering_offset = 0;
-				// rc->right = m_pageRects[0].right - margin.right, so no extra margin subtraction.
-				int page_right = rc->right - centering_offset;
+				lvRect origRect( rc->left  - m_pageMargins.left,
+				                 rc->top   - m_pageMargins.top - getPageHeaderHeight(),
+				                 rc->right + m_pageMargins.right,
+				                 rc->bottom + m_pageMargins.bottom );
+				int page_right = vertPageRight( origRect, m_pages[page]->height );
 				int draw_x0 = rc->top + m_pageMargins.top + getPageHeaderHeight();
 				pt.y = page_y + (page_right - screen_x);
 				pt.x = screen_y - draw_x0;
@@ -2832,11 +2837,9 @@ bool LVDocView::docToWindowPoint(lvPoint & pt, bool isRectBottom, bool fitToPage
                 if (index >= 0) {
                     if (isVerticalText()) {
                         // Vertical-rl: reverse of windowToDocPoint vertical swap.
-                        // page_right mirrors drawPageTo's clip.right = rect.right - margin.right - centering.
-                        int page_width = m_pageRects[index].width() - m_pageMargins.left - m_pageMargins.right;
-                        int centering_offset = (page_width - m_pages[page + index]->height) / 2;
-                        if ( centering_offset < 0 ) centering_offset = 0;
-                        int page_right  = m_pageRects[index].right  - m_pageMargins.right - centering_offset;
+                        // vertPageRight() mirrors drawPageTo's clip.right (margin + centering).
+                        int page_right = vertPageRight( m_pageRects[index],
+                                                        m_pages[page + index]->height );
                         int page_left   = m_pageRects[index].left   + m_pageMargins.left;
                         int page_top    = m_pageRects[index].top    + m_pageMargins.top;
                         int page_bottom = m_pageRects[index].bottom - m_pageMargins.bottom;

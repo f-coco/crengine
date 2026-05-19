@@ -622,6 +622,13 @@ public:
     /// Phase 1: document-level flag only; mixed horizontal/vertical elements not yet supported.
     /// TODO (Phase 2): per-element writing mode for mixed-mode documents.
     bool isVerticalText() const;
+    /// In vertical-rl mode, returns the screen-X anchor for columns on a given page:
+    ///   page_right = pageRect.right - margin.right - centering_offset
+    /// where centering_offset = max(0, (page_width - page.height) / 2) distributes
+    /// the unused fraction of _page_width equally on both sides.
+    /// drawPageTo, docToWindowPoint, and windowToDocPoint all call this so the
+    /// formula lives in exactly one place.
+    int vertPageRight( const lvRect & pageRect, int page_content_height ) const;
 #if CR_INTERNAL_PAGE_ORIENTATION==1
     /// sets rotate angle
     void SetRotateAngle( cr_rotate_angle_t angle );
