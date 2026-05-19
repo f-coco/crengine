@@ -4549,25 +4549,26 @@ public:
                                 // nominal, the font already provides a vertical form — draw normally.
                                 // If glyph ID is unchanged (no substitution), rotate explicitly.
                                 int gx = x + item->origin_x + FONT_METRIC_TO_PX(glyph_pos[i].x_offset);
-                                // SINGLE SOURCE OF TRUTH for vertical glyph Y:
-                                //   gy = y   (slot top = character advance start)
+                                // Glyph Y position:
+                                // Horizontal: y is line_y; use horizontal baseline + bearing.
+                                // Vertical:   y is the slot top (TTB pen position = advance start).
+                                //   Skip the horizontal _baseline − origin_y term (wrong axis).
+                                //   Keep HarfBuzz y_offset: it encodes the font's intended glyph
+                                //   placement within the advance slot (e.g. centering punctuation).
+                                //   gy = y − y_offset  matches sbox.y (slot top) for y_offset = 0
+                                //   (typical full-width CJK), and correctly shifts punctuation etc.
                                 //
-                                // Both the rendered glyph (gy, used below for buf->Draw) and the
-                                // highlight sbox (docToWindowPoint: screen_y = doc_x + draw_x0, where
-                                // doc_x = frmline->x + word->x = same slot top) reference this value.
-                                // Neither applies a horizontal baseline adjustment in vertical mode.
-                                //
-                                // For horizontal text the classic formula is used instead:
-                                //   gy = y + _baseline - origin_y - y_offset
-                                //
-                                // Rotation (Latin/etc without +vert) is handled in the block below
-                                // using its own correct_y formula and does NOT use gy.
+                                // Rotation (Latin/etc without +vert) uses its own correct_y below
+                                // and does NOT read gy.
                                 int gy = is_vertical_draw
-                                    ? y
+                                    ? (y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset))
                                     : (y + _baseline - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset));
+                                // Clamp: glyph must not start above its slot top in vertical mode.
+                                if (is_vertical_draw && gy < y)
+                                    gy = y;
                                 // Diagnostic: record gy − y for vertical non-rotated draws.
-                                // With the correct formula (gy = y) this is always 0.
-                                // With the broken formula (_baseline−origin_y) it is ~1/5 em > 0.
+                                // Correct formula (gy = y − y_offset): avg ≈ 0 (y_offset ≈ 0 for CJK).
+                                // Broken formula (_baseline − origin_y):  avg ≈ +1/5 em.
                                 if (is_vertical_draw) {
                                     lfnt_vert_gy_offset_sum += (gy - y);
                                     lfnt_vert_gy_count++;
