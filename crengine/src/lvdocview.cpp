@@ -2024,12 +2024,15 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 	// this allows glyphs that need to (like 'J' at start of line or 'f' at
 	// end of line with some fonts) to not be cut by this clipping.
 	if ( isVerticalText() ) {
-		// In vertical-rl, clip.right is the anchor for column positions:
-		// line_x = clip.right - doc_y.  Apply the right margin so the first
-		// column is inset from the screen right edge by m_pageMargins.right.
-		// _page_width = m_dx - margins.left - margins.right, so a full page gives
-		// clip.left = clip.right - _page_width = margins.left (symmetric).
-		clip.right = pageRect->right - m_pageMargins.right;
+		// In vertical-rl, clip.right is the column anchor: line_x = clip.right - doc_y.
+		// page.height = N * strut_height ≤ _page_width = m_dx - margins.left - margins.right.
+		// The unused fraction (_page_width - page.height) would otherwise accumulate on the
+		// left, making the left visual gap wider than the right.  Distribute it equally by
+		// shifting clip.right inward by half the remainder, centering the text block.
+		int page_width = pageRect->width() - m_pageMargins.left - m_pageMargins.right;
+		int centering_offset = (page_width - height) / 2;
+		if ( centering_offset < 0 ) centering_offset = 0;
+		clip.right = pageRect->right - m_pageMargins.right - centering_offset;
 	} else {
 		clip.right = pageRect->left + pageRect->width();
 	}
@@ -2760,12 +2763,19 @@ bool LVDocView::windowToDocPoint(lvPoint & pt, bool pullInPageArea) {
 			int page_y = m_pages[page]->start;
 			if (isVerticalText()) {
 				// Vertical-rl/lr: screen coordinates are swapped relative to document layout.
-				// page_right mirrors drawPageTo's clip.right = rc->right - m_pageMargins.right.
-				// draw_x0 mirrors drawPageTo's draw_x0 = clip.top = rc->top + margin.top + header.
-				// Both must match docToWindowPoint for a consistent round-trip.
+				// page_right mirrors drawPageTo's clip.right = m_pageRects.right - margin.right - centering.
+				// rc->right = m_pageRects[0].right - m_pageMargins.right (page1 has margin subtracted).
+				// draw_x0 mirrors drawPageTo's clip.top = rc->top + margin.top + header.
 				int screen_x = pt.x;
 				int screen_y = pt.y;
-				int page_right = rc->right - m_pageMargins.right;
+				// Centering offset: same formula as drawPageTo.
+				// m_pageRects[0].right - rc->right == m_pageMargins.right (since rc = page1).
+				int page_width = (rc->right - rc->left);  // text area width (margins already removed)
+				int content_height = m_pages[page]->height;
+				int centering_offset = (page_width - content_height) / 2;
+				if ( centering_offset < 0 ) centering_offset = 0;
+				// rc->right = m_pageRects[0].right - margin.right, so no extra margin subtraction.
+				int page_right = rc->right - centering_offset;
 				int draw_x0 = rc->top + m_pageMargins.top + getPageHeaderHeight();
 				pt.y = page_y + (page_right - screen_x);
 				pt.x = screen_y - draw_x0;
@@ -2822,8 +2832,11 @@ bool LVDocView::docToWindowPoint(lvPoint & pt, bool isRectBottom, bool fitToPage
                 if (index >= 0) {
                     if (isVerticalText()) {
                         // Vertical-rl: reverse of windowToDocPoint vertical swap.
-                        // page_right mirrors drawPageTo's clip.right = rect.right - m_pageMargins.right.
-                        int page_right  = m_pageRects[index].right  - m_pageMargins.right;
+                        // page_right mirrors drawPageTo's clip.right = rect.right - margin.right - centering.
+                        int page_width = m_pageRects[index].width() - m_pageMargins.left - m_pageMargins.right;
+                        int centering_offset = (page_width - m_pages[page + index]->height) / 2;
+                        if ( centering_offset < 0 ) centering_offset = 0;
+                        int page_right  = m_pageRects[index].right  - m_pageMargins.right - centering_offset;
                         int page_left   = m_pageRects[index].left   + m_pageMargins.left;
                         int page_top    = m_pageRects[index].top    + m_pageMargins.top;
                         int page_bottom = m_pageRects[index].bottom - m_pageMargins.bottom;
