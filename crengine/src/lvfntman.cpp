@@ -4530,11 +4530,18 @@ public:
                                 // nominal, the font already provides a vertical form — draw normally.
                                 // If glyph ID is unchanged (no substitution), rotate explicitly.
                                 int gx = x + item->origin_x + FONT_METRIC_TO_PX(glyph_pos[i].x_offset);
-                                int gy = y + _baseline - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset);
-                                // In vertical-rl, the glyph must not start above its slot top (y).
-                                // Unusual bearing metrics or HarfBuzz TTB y_offset can push gy < y,
-                                // causing the glyph to bleed into the character above.  Clamp here;
-                                // the bottom is guarded separately by vert_skip_draw in Draw().
+                                // Horizontal text: y is line_y, glyph top = baseline + bearing.
+                                // Vertical text:   y is the slot top (character advance start).
+                                //   The horizontal _baseline − origin_y adjustment places glyphs
+                                //   relative to the horizontal baseline, which is irrelevant in
+                                //   vertical TTB layout and shifts the glyph DOWN from the slot top
+                                //   by (_baseline − origin_y) pixels — producing the visible ~1/5 em
+                                //   misalignment between the rendered glyph and its sbox.
+                                //   Use only HarfBuzz's y_offset (vertical metrics) instead.
+                                int gy = is_vertical_draw
+                                    ? (y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset))
+                                    : (y + _baseline - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset));
+                                // Clamp: glyph must not start above its slot top in vertical mode.
                                 if (is_vertical_draw && gy < y)
                                     gy = y;
 
