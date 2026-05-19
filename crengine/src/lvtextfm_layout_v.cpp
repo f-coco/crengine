@@ -530,6 +530,24 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                     }
                 }
             }
+            // 行頭禁則 wrap-back (追い込み): 閉じ括弧 (」）】〕 etc.) must not start a column.
+            // If the first char of the next column is a closing bracket, pull the break
+            // back by one so the bracket follows normal text into the next column.
+            if ( lastMandatoryWrap < 0 && endp > pos + 1 && endp < fmt->m_length ) {
+                if ( getCJKCharType(fmt->m_text[endp]) == cjkt_closing_bracket ) {
+                    wrapPos--;
+                    endp--;
+                }
+            }
+            // 行末禁則: 開き括弧 (「（【〔 etc.) must not end a column.
+            // If the last char of the current column is an opening bracket, pull the
+            // break back by one so the bracket leads off the next column instead.
+            if ( lastMandatoryWrap < 0 && wrapPos > pos ) {
+                if ( getCJKCharType(fmt->m_text[wrapPos]) == cjkt_opening_bracket ) {
+                    wrapPos--;
+                    endp--;
+                }
+            }
             #endif
 
             // CJK punctuation handling at line boundaries (same as horizontal, per jlreq)
