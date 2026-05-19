@@ -1814,7 +1814,7 @@ void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fr
                     TR("addLine - word(%d, %d) x=%d (%d..%d)[%d] |%s|", wstart, i, frmline->width, wstart>0 ? fmt->m_advance[wstart-1] : 0, fmt->m_advance[i-1], word->width, LCSTR(lString32(fmt->m_text+wstart, i-wstart)));
                     // TCY (tate-chu-yoko): in vertical mode, each TCY span occupies exactly 1em
                     if ( (srcline->flags & LTEXT_IS_TCY)
-                         && (fmt->m_writing_mode == css_wm_vertical_rl || fmt->m_writing_mode == css_wm_vertical_lr) ) {
+                         && (css_wm_is_vertical(fmt->m_writing_mode)) ) {
                         int em = font->getSize();
                         word->width = em;
                         word->min_width = em;
@@ -2333,7 +2333,7 @@ void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fr
         // ruby base character (positioned at the box's left edge) would appear shifted
         // right relative to plain characters (which sit at column_left).  Iterate
         // through the words to find the actual max inline-box height instead.
-        if ( fmt->m_writing_mode == css_wm_vertical_rl || fmt->m_writing_mode == css_wm_vertical_lr ) {
+        if ( css_wm_is_vertical(fmt->m_writing_mode) ) {
             // Column width is always strut_height regardless of inline box (ruby) height.
             // Per JLReq, ruby annotations overhang into the inter-column gap rather than
             // inflating the column.  The inter-column gap (strut - em) is wide enough to
@@ -3237,7 +3237,7 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
     lvRect clip;
     buf->GetClipRect( &clip );
     const lChar32 * str;
-    bool is_vertical = (m_pbuffer->writing_mode == css_wm_vertical_rl || m_pbuffer->writing_mode == css_wm_vertical_lr);
+    bool is_vertical = (css_wm_is_vertical(m_pbuffer->writing_mode));
     if (is_vertical) {
         // DrawDocument passes (actual_Y, actual_X) as (x, y) due to the Y=X
         // coordinate mapping used throughout the rendering/page-split pipeline.

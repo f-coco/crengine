@@ -21506,7 +21506,7 @@ int ldomNode::renderFinalBlock(  LFormattedTextRef & frmtext, RenderRectAccessor
     // naturally 0 for typical body content that has no CSS padding-top/border-top.
     {
         css_writing_mode_t wm = getStyle()->writing_mode;
-        if (wm == css_wm_vertical_rl || wm == css_wm_vertical_lr) {
+        if (css_wm_is_vertical(wm)) {
             CSSLogical L(wm);
             int bvo = fmt->getX();
             bvo += measureBorder(this, L.brdIS());   // inline-start border (border-top)

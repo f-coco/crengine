@@ -1984,6 +1984,7 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 	int start = page.start;
 	int height = page.height;
 	int headerHeight = getPageHeaderHeight();
+	bool is_vert = isVerticalText();  // cache: called multiple times in this function
 	//CRLog::trace("drawPageTo(%d,%d)", start, height);
 
 	// pageRect is actually the full draw buffer, except in 2-page mode where
@@ -2013,7 +2014,7 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 	// the column's text off-screen.  Use the full page rect (minus bottom
 	// margin) instead — columns are still sized by the text formatter's
 	// page_height (= _page_height), which fits the screen.
-	if ( isVerticalText() ) {
+	if ( is_vert ) {
 		clip.bottom = pageRect->bottom - m_pageMargins.bottom;
 	} else {
 		clip.bottom = pageRect->top + m_pageMargins.top + height + headerHeight;
@@ -2023,14 +2024,14 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 	// We don't really need to enforce left and right clipping of page margins:
 	// this allows glyphs that need to (like 'J' at start of line or 'f' at
 	// end of line with some fonts) to not be cut by this clipping.
-	if ( isVerticalText() ) {
+	if ( is_vert ) {
 		// In vertical-rl, clip.right is the column anchor: line_x = clip.right - doc_y.
 		// vertPageRight() centers the text block so left and right gaps are equal.
 		clip.right = vertPageRight( *pageRect, height );
 	} else {
 		clip.right = pageRect->left + pageRect->width();
 	}
-	if ( isVerticalText() ) {
+	if ( is_vert ) {
 		// In vertical-rl, the column-progression direction is the SCREEN-X
 		// axis (right-to-left).  The page covers c_x ∈ [page.start,
 		// page.start + page.height).  When DrawDocument descends a block
@@ -2074,7 +2075,7 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 	draw_extra_info.content_overflow_clip.left = fullRect.left;
 	// For vertical-rl, content_overflow_clip.right must match clip.right so that
 	// inline boxes (ruby groups) use the same column anchor as plain text.
-	draw_extra_info.content_overflow_clip.right = isVerticalText()
+	draw_extra_info.content_overflow_clip.right = is_vert
 		? clip.right  // matches drawPageTo's clip.right
 		: fullRect.right;
 
@@ -2671,7 +2672,7 @@ bool LVDocView::isVerticalText() const {
                     css_style_ref_t style = root->getStyle();
                     if (!style.isNull()) {
                         int wm = style->writing_mode;
-                        if (wm == css_wm_vertical_rl || wm == css_wm_vertical_lr) {
+                        if (css_wm_is_vertical(wm)) {
                             return true;
                         }
                         if (wm == css_wm_horizontal_tb) {

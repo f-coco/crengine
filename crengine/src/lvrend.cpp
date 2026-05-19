@@ -1883,12 +1883,12 @@ public:
                         bool vert_ruby = false;
                         if (is_ruby_table) {
                             int wm = table_style->writing_mode;
-                            if (wm != css_wm_vertical_rl && wm != css_wm_vertical_lr) {
+                            if (!css_wm_is_vertical(wm)) {
                                 for (ldomNode * p = elem->getParentNode(); p; p = p->getParentNode()) {
                                     css_style_ref_t ps = p->getStyle();
                                     if (!ps.isNull()) {
                                         int pwm = ps->writing_mode;
-                                        if (pwm == css_wm_vertical_rl || pwm == css_wm_vertical_lr) {
+                                        if (css_wm_is_vertical(pwm)) {
                                             wm = pwm;
                                             break;
                                         } else if (pwm != css_wm_inherit) {
@@ -1897,7 +1897,7 @@ public:
                                     }
                                 }
                             }
-                            vert_ruby = (wm == css_wm_vertical_rl || wm == css_wm_vertical_lr);
+                            vert_ruby = (css_wm_is_vertical(wm));
                             // Diagnostic counters (exposed via Lua resetRubyDiag / getRubyDiagStats).
                             if (vert_ruby) {
                                 s_ruby_vert_ok++;
@@ -5863,7 +5863,7 @@ public:
             // setVerticalSplitPageHeight() so the context's page_h (used by
             // the text formatter as column LENGTH) stays unchanged — only
             // the page-split stride is overridden.
-            if ( (writing_mode == css_wm_vertical_rl || writing_mode == css_wm_vertical_lr) && page_width > 0 ) {
+            if ( (css_wm_is_vertical(writing_mode)) && page_width > 0 ) {
                 context.setVerticalSplitPageHeight( page_width );
             }
             usable_overflow_x_min = x_min - usable_left_overflow;
@@ -5916,7 +5916,7 @@ public:
         return page_height;
     }
     bool isVertical() {
-        return writing_mode == css_wm_vertical_rl || writing_mode == css_wm_vertical_lr;
+        return css_wm_is_vertical(writing_mode);
     }
     /// Get the flow advance: c_x for vertical (horizontal progression), c_y for horizontal (vertical progression)
     int getCurrentFlowAdvance() {
@@ -9425,7 +9425,7 @@ int renderBlockElement(LVRendPageContext & context, ldomNode * enode, int x, int
         // resolved to vertical_rl/lr (cascade does resolve `inherit` for
         // elements that the CSS engine processed for layout — typically
         // inline-rendered descendants of body).
-        if (writing_mode != css_wm_vertical_rl && writing_mode != css_wm_vertical_lr) {
+        if (!css_wm_is_vertical(writing_mode)) {
             ldomNode * stack[16];
             int depths[16];
             int sp = 0;
@@ -9441,7 +9441,7 @@ int renderBlockElement(LVRendPageContext & context, ldomNode * enode, int x, int
                 css_style_ref_t ns = n->getStyle();
                 if (!ns.isNull()) {
                     int wm = ns->writing_mode;
-                    if (wm == css_wm_vertical_rl || wm == css_wm_vertical_lr) {
+                    if (css_wm_is_vertical(wm)) {
                         writing_mode = wm;
                         break;
                     }
@@ -9458,7 +9458,7 @@ int renderBlockElement(LVRendPageContext & context, ldomNode * enode, int x, int
                 }
             }
         }
-        int page_width = (writing_mode == css_wm_vertical_rl || writing_mode == css_wm_vertical_lr)
+        int page_width = (css_wm_is_vertical(writing_mode))
                          ? enode->getDocument()->getPageWidth() : 0;
 
         // Create a flow state (aka "block formatting context") for the rendering

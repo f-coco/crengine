@@ -2009,7 +2009,7 @@ public:
                     lUInt32 hints = 0;
                     if ( start == 0 ) hints |= LFNT_HINT_BEGINS_PARAGRAPH;
                     if ( i == m_length ) hints |= LFNT_HINT_ENDS_PARAGRAPH;
-                    if ( m_writing_mode == css_wm_vertical_rl || m_writing_mode == css_wm_vertical_lr ) {
+                    if ( css_wm_is_vertical(m_writing_mode) ) {
                         hints |= LFNT_HINT_IS_VERTICAL;
                         hints |= LFNT_HINT_DIRECTION_KNOWN;
                         hints |= LFNT_HINT_DIRECTION_IS_TTB;
@@ -2020,7 +2020,7 @@ public:
                             hints |= LFNT_HINT_DIRECTION_IS_RTL;
                     }
                     int max_width_for_measure = 0x7FFF; //pbuffer->width,
-                    if ( m_writing_mode == css_wm_vertical_rl || m_writing_mode == css_wm_vertical_lr ) {
+                    if ( css_wm_is_vertical(m_writing_mode) ) {
                         max_width_for_measure = m_pbuffer->page_height;
                     }
                     int chars_measured = lastFont->measureText(
@@ -2708,7 +2708,7 @@ public:
                 // We do not need to go thru processParagraph*() to handle an embedded block
                 // (bogus block element children of an inline element): we have a dedicated
                 // handler for it.
-                bool is_vertical = (m_writing_mode == css_wm_vertical_rl || m_writing_mode == css_wm_vertical_lr);
+                bool is_vertical = (css_wm_is_vertical(m_writing_mode));
                 if ( i == start + 1 && m_pbuffer->srctext[start].flags & LTEXT_SRC_IS_OBJECT
                                     && m_pbuffer->srctext[start].o.objflags & LTEXT_OBJECT_IS_EMBEDDED_BLOCK ) {
                     // Embedded block among inlines had been surrounded by LTEXT_FLAG_NEWLINE,

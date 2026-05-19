@@ -353,6 +353,13 @@ enum css_writing_mode_t {
     css_wm_vertical_rl,
     css_wm_vertical_lr
 };
+/// Returns true for any vertical writing mode (vertical-rl or vertical-lr).
+/// Use instead of repeating (wm == css_wm_vertical_rl || wm == css_wm_vertical_lr).
+/// Accepts both css_writing_mode_t and int (some structs store it as int).
+template<typename T>
+inline bool css_wm_is_vertical(T wm) {
+    return wm == (T)css_wm_vertical_rl || wm == (T)css_wm_vertical_lr;
+}
 
 /// text-orientation property values
 enum css_text_orientation_t {
