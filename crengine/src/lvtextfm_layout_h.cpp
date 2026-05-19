@@ -7,6 +7,25 @@
 int ltext_vert_bleed_count = 0;
 int ltext_vert_bleed_max_px = 0;
 
+// Vertical-rl ruby column-position diagnostic.
+// In the inline-box draw path, y0 must equal (x + node_y) so that the inner
+// Draw() places the ruby base column at the correct screen-X position.
+// Accumulate |y0_actual - y0_expected| across all ruby IB draws on a page;
+// a non-zero sum means ruby groups are displaced in the column direction.
+// Reset via ltext_reset_vert_ruby_y0(); read via ltext_get_vert_ruby_y0().
+int ltext_vert_ruby_y0_count = 0;        // number of ruby IB DrawDocument calls
+int ltext_vert_ruby_y0_total_error = 0;  // sum of |y0_actual - y0_expected|
+
+void ltext_reset_vert_ruby_y0() {
+    ltext_vert_ruby_y0_count = 0;
+    ltext_vert_ruby_y0_total_error = 0;
+}
+
+void ltext_get_vert_ruby_y0(int *count_out, int *total_error_out) {
+    *count_out       = ltext_vert_ruby_y0_count;
+    *total_error_out = ltext_vert_ruby_y0_total_error;
+}
+
 void ltext_reset_vert_bleed() {
     ltext_vert_bleed_count = 0;
     ltext_vert_bleed_max_px = 0;
@@ -3588,6 +3607,27 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             vert_min_next_x = clamped_ib_x + (int)word->width;
                             vert_prev_plain_y0 = x0;
                             doc_x_ib = 0 - node_x;  // anchor to original node_x
+                            // y0 must be x + node_y so the inner Draw places the ruby
+                            // base column at the correct screen-X offset.
+                            // Without this assignment, y0 is uninitialized (≈ 0 on
+                            // the stack), causing all ruby groups to draw at column
+                            // clip.right − annot_width regardless of their accumulated
+                            // column advance node_y → displaced N columns right.
+                            // y0 = x + node_y: places the inner Draw at the correct
+                            // column offset so the ruby base column lands at
+                            //   clip.right − node_y − annot_width.
+                            // doc_y_ib = −node_y: cancels inline_box.getY()=node_y
+                            // in DrawDocument so children see doc_y = 0 at this level.
+                            y0 = x + node_y;
+                            doc_y_ib = 0 - node_y;
+                            // Diagnostic: |y0_actual - y0_expected| (always 0 after fix).
+                            {
+                                int expected_y0 = x + node_y;
+                                int err = y0 - expected_y0;
+                                if (err < 0) err = -err;
+                                ltext_vert_ruby_y0_total_error += err;
+                                ltext_vert_ruby_y0_count++;
+                            }
                             // draw_x_inner = x0 + doc_x_ib + node_x = y + node_x + clamp_delta
                             // (DrawDocument accumulates doc_x += inline_box.getX() = node_x).
                             // If draw_x_inner < preceding_end, ruby overlaps the char above.
