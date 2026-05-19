@@ -651,7 +651,30 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
             // Now that we have the final x of each word, we can update
             // the RenderRectAccessor x/y of each word that is a inlineBox
             // (needed to correctly draw highlighted text in them).
+            //
+            // In vertical mode we also mirror the vert_min_next_x clamping that
+            // Draw() applies at render time.  Without this, getRect() returns the
+            // pre-clamp layout position, causing sbox.y to sit above the rendered
+            // glyph by clamp_delta (≈ 1/5 em when the ruby group nearly touches
+            // the preceding character).
+            bool is_vert_frmline = (fmt->m_pbuffer->writing_mode == css_wm_vertical_rl ||
+                                    fmt->m_pbuffer->writing_mode == css_wm_vertical_lr);
+            int vert_layout_min_x = 0;  // mirrors vert_min_next_x in Draw()
             for ( int i=0; i<frmline->word_count; i++ ) {
+                formatted_word_t * wi = &frmline->words[i];
+                if ( is_vert_frmline && !(wi->flags & LTEXT_WORD_IS_INLINE_BOX) ) {
+                    // Plain / space word: advance vert_layout_min_x past it.
+                    src_text_fragment_t * si = &fmt->m_pbuffer->srctext[wi->src_text_index];
+                    if ( si->t.font ) {
+                        LVFont * fi = (LVFont *)si->t.font;
+                        int font_sz = fi->getSize();
+                        int eff_w   = ((int)wi->width > font_sz) ? (int)wi->width : font_sz;
+                        int next_x  = wi->x + eff_w;
+                        if ( next_x > vert_layout_min_x )
+                            vert_layout_min_x = next_x;
+                    }
+                    continue;
+                }
                 if ( frmline->words[i].flags & LTEXT_WORD_IS_INLINE_BOX ) {
                     formatted_word_t * word = &frmline->words[i];
                     src_text_fragment_t * srcline = &fmt->m_pbuffer->srctext[word->src_text_index];
@@ -659,16 +682,32 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
                     RenderRectAccessor node_fmt( node );
                     bool vert_mode = (fmt->m_pbuffer->writing_mode == css_wm_vertical_rl ||
                                       fmt->m_pbuffer->writing_mode == css_wm_vertical_lr);
-                    if ( RENDER_RECT_HAS_FLAG(node_fmt, BOX_IS_POSITIONNED) )
+                    if ( RENDER_RECT_HAS_FLAG(node_fmt, BOX_IS_POSITIONNED) ) {
+                        if ( is_vert_frmline ) {
+                            // Still advance vert_layout_min_x even if already positioned.
+                            int clamped_x = node_fmt.getX() - frmline->x;
+                            int nx = clamped_x + (int)word->width;
+                            if ( nx > vert_layout_min_x ) vert_layout_min_x = nx;
+                        }
                         continue;
+                    }
                     RENDER_RECT_SET_FLAG(node_fmt, BOX_IS_POSITIONNED);
-                    node_fmt.setX( frmline->x + word->x );
+                    if ( is_vert_frmline ) {
+                        // Apply the same clamping that Draw() will use at render time
+                        // so getRect() returns the rendered (not pre-clamp) position.
+                        int ib_word_x    = word->x;
+                        int clamped_ib_x = (ib_word_x < vert_layout_min_x)
+                                           ? vert_layout_min_x : ib_word_x;
+                        node_fmt.setX( frmline->x + clamped_ib_x );
+                        vert_layout_min_x = clamped_ib_x + (int)word->width;
+                    } else {
+                        node_fmt.setX( frmline->x + word->x );
+                    }
                     // In vertical mode, Y encodes the horizontal offset from the right edge.
                     // Baseline alignment (a vertical concept in horizontal text) must not be
                     // applied as a horizontal shift; doing so displaces ruby base characters
                     // rightward by (baseline - ruby_baseline). Use frmline->y directly.
-                    bool is_vert = (fmt->m_pbuffer->writing_mode == css_wm_vertical_rl ||
-                                    fmt->m_pbuffer->writing_mode == css_wm_vertical_lr);
+                    bool is_vert = vert_mode;
                     // For vertical mode: position the ruby block so the annotation
                     // overhangs to the right of the column (per JLReq) for all
                     // line-spacing values.
