@@ -107,7 +107,7 @@ extern const int gDOMVersionCurrent = DOM_VERSION_CURRENT;
 //         has strut = outer col_w; centering (col_w-em)/2 now applied inside
 //         the ruby block, and vert_y_adjust = -annotation_h is line-spacing-
 //         independent, keeping the base char centred at all line spacings.
-#define FORMATTING_VERSION_ID 0x0043
+#define FORMATTING_VERSION_ID 0x0044
 
 #ifndef DOC_DATA_COMPRESSION_LEVEL
 /// data compression level (0=no compression, 1=fast compressions, 3=normal compression)
