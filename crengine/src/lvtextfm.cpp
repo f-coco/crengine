@@ -2374,6 +2374,12 @@ public:
                         m_srcs[start]->o.width = advance; // word->width uses o.width for frmline advance
                         m_srcs[start]->o.height = height;
                         m_srcs[start]->o.baseline = baseline;
+                        // Store the actual column depth (render_w) in letter_spacing so the
+                        // draw code can detect visual overlap with the next character.
+                        // Only for ruby inline boxes in vertical mode; does NOT change o.width
+                        // or m_advance, so column splitting is unaffected.
+                        if (is_ruby_inline_pre && vert_inline_box)
+                            m_srcs[start]->letter_spacing = (lInt16)render_w;
                         lastWidth += advance;
                         m_advance[start] = lastWidth;
                         // This object could be a small bullet, and we might want to ensure locked

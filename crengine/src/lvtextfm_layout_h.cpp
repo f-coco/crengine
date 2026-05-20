@@ -3667,7 +3667,17 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             int preceding_end = y + (int)frmline->x + vert_min_next_x;
                             x0 = y + node_x + clamp_delta;  // draw_x_rb = y + frmline->x + clamped_ib_x
                             vert_min_next_x = clamped_ib_x + (int)word->width;
-                            vert_prev_plain_y0 = x0;
+                            // Track inline box position so the NEXT plain character is
+                            // checked against the inline box's actual visual depth.
+                            // letter_spacing stores render_w (set by measureText for ruby
+                            // groups in vertical mode); fall back to declared word->width.
+                            {
+                                int ib_actual_depth = (srcline->letter_spacing > 0)
+                                    ? (int)srcline->letter_spacing
+                                    : (int)word->width;
+                                vert_prev_plain_y0 = y + (int)frmline->x + clamped_ib_x;
+                                vert_prev_effective_width = ib_actual_depth;
+                            }
                             doc_x_ib = 0 - node_x;  // anchor to original node_x
                             // y0 must be x + node_y so the inner Draw places the ruby
                             // base column at the correct screen-X offset.
