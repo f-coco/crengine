@@ -649,7 +649,15 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
                     if ( si->t.font ) {
                         LVFont * fi = (LVFont *)si->t.font;
                         int font_sz = fi->getSize();
-                        int eff_w   = ((int)wi->width > font_sz) ? (int)wi->width : font_sz;
+                        // CJK punctuation has compressed TTB advances but occupies a full
+                        // font_size slot visually — enforce font_size as minimum.
+                        // Non-CJK words (Latin, space) use the actual advance so that
+                        // vert_layout_min_x matches the draw's vert_min_next_x tracking.
+                        // Without this, a U+0020 space before an inline box creates a gap
+                        // of (font_size - space_advance) above the box.
+                        bool is_cjk = (wi->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_FLEXIBLE_WIDTH_CJK)) != 0;
+                        int eff_w   = is_cjk ? (((int)wi->width > font_sz) ? (int)wi->width : font_sz)
+                                             : (int)wi->width;
                         int next_x  = wi->x + eff_w;
                         if ( next_x > vert_layout_min_x )
                             vert_layout_min_x = next_x;

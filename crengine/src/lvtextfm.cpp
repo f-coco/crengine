@@ -2239,6 +2239,11 @@ public:
                         int base_char_count_pre = 0;
                         int annot_char_count_pre = 0;
                         int annot_font_size_pre = 0;
+                        // Actual horizontal advance of base text (for Latin chars in vertical ruby).
+                        // getCharWidth() returns the horizontal advance of each glyph; summing these
+                        // gives the visual column depth when the word is rendered rotated 90°.
+                        // For CJK chars getCharWidth ≈ font_size, so this is a no-op for CJK ruby.
+                        int base_horiz_advance_pre = 0;
                         // Only apply ruby-specific logic when this inlineBox wraps a ruby table.
                         bool is_ruby_inline_pre = vert_inline_box
                             && node->getParentNode()
@@ -2282,8 +2287,15 @@ public:
                                     }
                                 } else {
                                     lString32 t = rbox2->getText();
-                                    for (int k = 0; k < t.length(); k++)
-                                        if (t[k] > 0x20) base_char_count_pre++;
+                                    LVFontRef base_font = rbox2->getFont();
+                                    for (int k = 0; k < t.length(); k++) {
+                                        lChar32 c = t[k];
+                                        if (c > 0x20) {
+                                            base_char_count_pre++;
+                                            if (!base_font.isNull())
+                                                base_horiz_advance_pre += base_font->getCharWidth(c);
+                                        }
+                                    }
                                 }
                             }
                             if (base_char_count_pre < 1) base_char_count_pre = 1;
@@ -2365,21 +2377,29 @@ public:
                         int width = fmt.getWidth();
                         int height = fmt.getHeight();
                         int baseline = fmt.getBaseline();
-                        // Inline box advance = its rendered width (column depth in vertical mode,
-                        // horizontal advance in horizontal mode).  Using the actual rendered width
-                        // avoids over-estimation for Latin base text in ruby, where
-                        // base_char_count × font_size would treat each Latin letter as a full
-                        // CJK character slot and leave excessive blank space in the column.
-                        int advance = width;
+                        // For vertical ruby with Latin base text, fmt.getWidth() is TTB-based
+                        // (text formatter uses vertical TTB advances ≈ font_size per char).
+                        // The visual column depth is the horizontal advance of the base text
+                        // (the word is rendered rotated 90°), which is measured via getCharWidth().
+                        // Override advance with the measured horizontal value so that:
+                        //   o.width  → frmline layout uses visual depth (no phantom spacing)
+                        //   letter_spacing → vert_min_next_x set to visual end of the word
+                        // For CJK base text, getCharWidth ≈ font_size, so result is unchanged.
+                        int advance;
+                        if (is_ruby_inline_pre && vert_inline_box && base_horiz_advance_pre > 0) {
+                            int annot_depth = annot_char_count_pre * annot_font_size_pre;
+                            advance = base_horiz_advance_pre > annot_depth
+                                    ? base_horiz_advance_pre : annot_depth;
+                        } else {
+                            advance = width;
+                        }
                         m_srcs[start]->o.width = advance; // word->width uses o.width for frmline advance
                         m_srcs[start]->o.height = height;
                         m_srcs[start]->o.baseline = baseline;
-                        // Store the actual column depth (render_w) in letter_spacing so the
-                        // draw code can detect visual overlap with the next character.
-                        // Only for ruby inline boxes in vertical mode; does NOT change o.width
-                        // or m_advance, so column splitting is unaffected.
+                        // Store the visual column depth in letter_spacing so vert_min_next_x
+                        // in Draw() is set to the actual visual end of the inline box.
                         if (is_ruby_inline_pre && vert_inline_box)
-                            m_srcs[start]->letter_spacing = (lInt16)render_w;
+                            m_srcs[start]->letter_spacing = (lInt16)advance;
                         lastWidth += advance;
                         m_advance[start] = lastWidth;
                         // This object could be a small bullet, and we might want to ensure locked
