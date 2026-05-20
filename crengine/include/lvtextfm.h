@@ -289,6 +289,7 @@ typedef struct
    lUInt32               height;        /**< height of text fragment */
    lUInt16               width;         /**< width of text fragment */
    lUInt16               page_height;   /**< max page height */
+   lUInt16               full_page_height; /**< unreduced page height for columns 2+ */
    LVHashTable<lUInt32, lString32Collection*> * inlineboxes_links;
 
     // Each line box starts with a zero-width inline box (called "strut") with
