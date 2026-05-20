@@ -5930,9 +5930,17 @@ public:
             return c_x - l_x;
         return c_y - l_y;
     }
-    /// For vertical text: get the X offset from right edge for block positioning
-    int getCurrentRelativeX() {
-        return c_x;  // accumulated horizontal offset from right edge
+    /// Current flow position: c_x for vertical, c_y for horizontal
+    int flowPos() const { return css_wm_is_vertical(writing_mode) ? c_x : c_y; }
+    /// Advance the flow position by height (syncs c_x+c_y in vertical; calls moveDown in horizontal)
+    void advanceFlowPos(int height) {
+        if ( isVertical() ) {
+            c_x += height;
+            c_y += height;
+            if ( c_y > in_y_max ) in_y_max = c_y;
+        } else {
+            moveDown( height );
+        }
     }
     LVRendPageContext * getPageContext() {
         return &context;
@@ -6155,11 +6163,7 @@ public:
             // just add an empty line to cancel the split avoid
             if ( !(flags & RN_SPLIT_BEFORE_AVOID) ) {
                 if ( isVertical() || !hasFloatRunningAtY(c_y) ) {
-                    if ( isVertical() ) {
-                        context.AddLine( c_x, c_x, RN_SPLIT_BOTH_AUTO|line_dir_flag );
-                    } else {
-                        context.AddLine( c_y, c_y, RN_SPLIT_BOTH_AUTO|line_dir_flag );
-                    }
+                    context.AddLine( flowPos(), flowPos(), RN_SPLIT_BOTH_AUTO|line_dir_flag );
                     last_split_after_flag = RN_SPLIT_AUTO;
                 }
             }
@@ -6189,18 +6193,8 @@ public:
         if ( !isVertical() && !(flags & RN_SPLIT_BEFORE_AVOID) && hasFloatRunningAtY(c_y) )
             flags |= RN_SPLIT_BEFORE_AVOID;
         flags |= line_dir_flag;
-        // For vertical text: use c_x for page splitting (horizontal progression right-to-left)
-        if ( isVertical() ) {
-            context.AddLine( c_x, c_x + height, flags );
-            c_x += height;
-            // Also update c_y for compatibility with Y-axis tracking
-            c_y += height;
-            if ( c_y > in_y_max )
-                in_y_max = c_y;
-        } else {
-            context.AddLine( c_y, c_y + height, flags );
-            moveDown( height );
-        }
+        context.AddLine( flowPos(), flowPos() + height, flags );
+        advanceFlowPos( height );
         last_split_after_flag = RN_GET_SPLIT_AFTER(flags);
         if ( !is_padding )
             seen_content_since_page_split = true;
@@ -6251,20 +6245,11 @@ public:
             // but this has to be done if not done by pushVerticalMargin()
             resetFloatsLevelToTopLevel();
         }
-        // For vertical text: use c_x for page splitting
-        if ( isVertical() ) {
-            addSpaceToContext( c_x, c_x + height, line_h, split_avoid_before, split_avoid_inside, split_avoid_after, true);
-            c_x += height;
-            c_y += height;
-            if ( c_y > in_y_max )
-                in_y_max = c_y;
-            // Do NOT call moveDown() here: c_x and c_y are already advanced above.
-            // moveDown() only advances c_y, which would double-count the height
-            // and diverge c_y from c_x, causing page-boundary/draw mismatches.
-        } else {
-            addSpaceToContext( c_y, c_y + height, line_h, split_avoid_before, split_avoid_inside, split_avoid_after);
-            moveDown( height );
-        }
+        // skip_float_checks=true for vertical (floats not supported in vertical mode)
+        addSpaceToContext( flowPos(), flowPos() + height, line_h,
+                           split_avoid_before, split_avoid_inside, split_avoid_after,
+                           isVertical() );
+        advanceFlowPos( height );
         last_split_after_flag = split_avoid_after ? RN_SPLIT_AVOID : RN_SPLIT_AUTO;
         if ( !seen_content_since_page_split ) {
             // Assume that if split_avoid_inside is not set, this space
@@ -6481,11 +6466,7 @@ public:
         if (is_main_flow && margin < 0) { // can only happen if ALLOW_NEGATIVE_COLLAPSED_MARGINS
             // We're moving backward and don't know what was before and what's
             // coming next. Add an empty line to avoid a split there.
-            if ( isVertical() ) {
-                context.AddLine( c_x, c_x, RN_SPLIT_BOTH_AVOID|line_dir_flag );
-            } else {
-                context.AddLine( c_y, c_y, RN_SPLIT_BOTH_AVOID|line_dir_flag );
-            }
+            context.AddLine( flowPos(), flowPos(), RN_SPLIT_BOTH_AVOID|line_dir_flag );
         }
         else if (is_main_flow) {
             // When this is called, whether we have some positive resulting vertical
@@ -6590,7 +6571,7 @@ public:
                 emit_empty = false;
             }
             if ( margin > 0 || emit_empty ) {
-                if ( c_y == 0 ) {
+                if ( getCurrentFlowAdvance() == 0 ) {
                     // First margin with no content yet. Just avoid a split
                     // with futur content, so that if next content is taller
                     // than page height, we don't get an empty first page.
@@ -6611,11 +6592,7 @@ public:
                     // prevent our RN_SPLIT_ALWAYS to have effect.
                     // It seems that per-specs, the SPLIT_ALWAYS should win.
                     // So, kill the SPLIT_AVOID with an empty line.
-                    if ( isVertical() ) {
-                        context.AddLine( c_x, c_x, RN_SPLIT_BOTH_AUTO|line_dir_flag );
-                    } else {
-                        context.AddLine( c_y, c_y, RN_SPLIT_BOTH_AUTO|line_dir_flag );
-                    }
+                    context.AddLine( flowPos(), flowPos(), RN_SPLIT_BOTH_AUTO|line_dir_flag );
                     // Note: keeping the RN_SPLIT_AVOID could help avoiding
                     // consecutive page splits in some normal cases (we send
                     // SPLIT_BEFORE_ALWAYS with SPLIT_AFTER_AVOID, and top
@@ -6626,13 +6603,8 @@ public:
                     // hasn't been reset.
                 }
                 flags |= line_dir_flag;
-                // For vertical text: use c_x for page splitting
-                if ( isVertical() ) {
-                    context.AddLine( c_x, c_x + margin, flags );
-                    c_x += margin;
-                } else {
-                    context.AddLine( c_y, c_y + margin, flags );
-                }
+                context.AddLine( flowPos(), flowPos() + margin, flags );
+                if ( isVertical() ) c_x += margin;
                 // Note: we don't use AddSpace, a margin does not have to be arbitrarily
                 // splitted, RN_SPLIT_DISCARD_AT_START ensures it does not continue
                 // on next page.

@@ -25,25 +25,6 @@ void ltext_get_vert_char_overlap(int *count_out, int *max_px_out) {
     *max_px_out = ltext_vert_char_overlap_max_px;
 }
 
-// Vertical-rl ruby column-position diagnostic.
-// In the inline-box draw path, y0 must equal (x + node_y) so that the inner
-// Draw() places the ruby base column at the correct screen-X position.
-// Accumulate |y0_actual - y0_expected| across all ruby IB draws on a page;
-// a non-zero sum means ruby groups are displaced in the column direction.
-// Reset via ltext_reset_vert_ruby_y0(); read via ltext_get_vert_ruby_y0().
-int ltext_vert_ruby_y0_count = 0;        // number of ruby IB DrawDocument calls
-int ltext_vert_ruby_y0_total_error = 0;  // sum of |y0_actual - y0_expected|
-
-void ltext_reset_vert_ruby_y0() {
-    ltext_vert_ruby_y0_count = 0;
-    ltext_vert_ruby_y0_total_error = 0;
-}
-
-void ltext_get_vert_ruby_y0(int *count_out, int *total_error_out) {
-    *count_out       = ltext_vert_ruby_y0_count;
-    *total_error_out = ltext_vert_ruby_y0_total_error;
-}
-
 void ltext_reset_vert_bleed() {
     ltext_vert_bleed_count = 0;
     ltext_vert_bleed_max_px = 0;
@@ -54,24 +35,6 @@ void ltext_get_vert_bleed(int *count_out, int *max_px_out) {
     *max_px_out = ltext_vert_bleed_max_px;
 }
 
-// Vertical-rl inline-box clip diagnostic.
-// When Draw() processes a ruby/inline-box word in vertical mode it switches the
-// buffer's clip to content_overflow_clip before calling DrawDocument.  If
-// content_overflow_clip.right != the outer clip.right, ruby and plain text use
-// different column anchors and appear misaligned.
-// Reset via ltext_reset_vert_ib_clip_diag(); read via ltext_get_vert_ib_clip_diag().
-int ltext_vert_ib_outer_clip_right = -1;  // clip.right seen by the OUTER Draw
-int ltext_vert_ib_inner_clip_right = -1;  // content_overflow_clip.right for inner Draw
-
-void ltext_reset_vert_ib_clip_diag() {
-    ltext_vert_ib_outer_clip_right = -1;
-    ltext_vert_ib_inner_clip_right = -1;
-}
-
-void ltext_get_vert_ib_clip_diag(int *outer_out, int *inner_out) {
-    *outer_out = ltext_vert_ib_outer_clip_right;
-    *inner_out = ltext_vert_ib_inner_clip_right;
-}
 
     /// align line: add or reduce widths of spaces to achieve desired text alignment
 void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alignment, int rightIndent=0, bool hasInlineBoxes=false ) {
@@ -805,7 +768,7 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
     }
 
     // Forward declaration (defined later in this file)
-    int getMaxCondensedSpaceTruncationHorizontal( LVFormatter* fmt, int pos );
+    int getMaxCondensedSpaceTruncation( LVFormatter* fmt, int pos );
 
     /// split line into words, add space for width alignment
 void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fragment_t * para, bool first, bool last, bool preFormattedOnly, bool isLastPara, bool hasInlineBoxes )
@@ -1882,7 +1845,7 @@ void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fr
                         // would be too late, as reordering has been done).
                         if ( !(fmt->m_flags[i-1] & LCHAR_LOCKED_SPACING) ) {
                             word->flags |= LTEXT_WORD_CAN_ADD_SPACE_AFTER;
-                            int dw = getMaxCondensedSpaceTruncationHorizontal(fmt,i-1);
+                            int dw = getMaxCondensedSpaceTruncation(fmt,i-1);
                             if (dw>0) {
                                 word->min_width = word->width - dw;
                             }
@@ -2372,7 +2335,7 @@ void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fr
         #endif
     }
 
-int getMaxCondensedSpaceTruncationHorizontal(LVFormatter* fmt, int pos) {
+int getMaxCondensedSpaceTruncation(LVFormatter* fmt, int pos) {
         if (pos<0 || pos>=fmt->m_length || !(fmt->m_flags[pos] & LCHAR_IS_SPACE))
             return 0;
         if (fmt->m_pbuffer->min_space_condensing_percent==100)
@@ -2422,6 +2385,95 @@ int getMaxCondensedSpaceTruncationHorizontal(LVFormatter* fmt, int pos) {
                  c == 0x0022 || c == 0x0027 || c == 0x0023; // Ascii " ' #
 
     }
+
+// Shared hyphenation-break search used by both processParagraphHorizontal and
+// processParagraphVertical.  lineStart is the line's leading offset: x (accumulated
+// left indent) for horizontal, y (column top indent) for vertical.  maxExtent is
+// maxWidth or maxHeight.  wordpos is updated in-place (decremented during search).
+static void tryHyphenBreak(
+    LVFormatter* fmt, int pos, int& wordpos,
+    int lastNormalWrap, int lastMandatoryWrap,
+    int lineStart, int w0,
+    int maxExtent, int spaceReduceWidth,
+    int unusedPercent, int& lastHyphWrap)
+{
+    if ( lastMandatoryWrap >= 0 || lastNormalWrap >= fmt->m_length-1
+            || unusedPercent <= fmt->m_pbuffer->unused_space_threshold_percent )
+        return;
+    // #define DEBUG_HYPH_EXTRA_LOOPS // Uncomment for debugging loops
+    #ifdef DEBUG_HYPH_EXTRA_LOOPS
+        int debug_loop_num = 0;
+    #endif
+    int wordpos_min = lastNormalWrap > pos ? lastNormalWrap : pos;
+    while ( wordpos > wordpos_min ) {
+        if ( fmt->m_srcs[wordpos]->flags & LTEXT_SRC_IS_OBJECT ) {
+            wordpos--;
+            continue;
+        }
+        #ifdef DEBUG_HYPH_EXTRA_LOOPS
+            debug_loop_num++;
+            if (debug_loop_num > 1)
+                printf("  hyphen extra loop %d\n", debug_loop_num);
+        #endif
+        if ( !(fmt->m_srcs[wordpos]->flags & LTEXT_HYPHENATE) || (fmt->m_srcs[wordpos]->flags & LTEXT_FLAG_NOWRAP) ) {
+            wordpos = wordpos - MIN_WORD_LEN_TO_HYPHENATE;
+            continue;
+        }
+        int wstart, wend;
+        bool has_rtl;
+        lStr_findWordBounds( fmt->m_text, fmt->m_length, wordpos, wstart, wend, has_rtl );
+        if ( wend <= lastNormalWrap ) {
+            break;
+        }
+        int len = wend - wstart;
+        if ( len < MIN_WORD_LEN_TO_HYPHENATE || has_rtl ) {
+            wordpos = wstart - 1;
+            continue;
+        }
+        if ( wstart >= wordpos ) {
+            wordpos = wordpos - MIN_WORD_LEN_TO_HYPHENATE;
+            continue;
+        }
+        if ( len > MAX_WORD_SIZE )
+            len = MAX_WORD_SIZE;
+        lUInt8 * flags = (lUInt8*) (fmt->m_flags + wstart);
+        static lUInt16 widths[MAX_WORD_SIZE];
+        int wordStart_w = wstart > 0 ? fmt->m_advance[wstart-1] : 0;
+        for ( int i = 0; i < len; i++ )
+            widths[i] = fmt->m_advance[wstart+i] - wordStart_w;
+        int max_extent = maxExtent + spaceReduceWidth - (lineStart + (wordStart_w - w0));
+        int _hyphen_width = 0;
+        for ( int i = wstart; i < wend; i++ ) {
+            if ( !(fmt->m_srcs[i]->flags & LTEXT_SRC_IS_OBJECT) ) {
+                _hyphen_width = ((LVFont*)fmt->m_srcs[i]->t.font)->getHyphenWidth();
+                break;
+            }
+        }
+        if ( fmt->m_srcs[wordpos]->lang_cfg->getHyphMethod()->hyphenate(
+                fmt->m_text+wstart, len, widths, flags, _hyphen_width, max_extent, 2) ) {
+            for ( int i = 0; i < len; i++ ) {
+                if ( fmt->m_flags[wstart+i] & LCHAR_ALLOW_HYPH_WRAP_AFTER ) {
+                    if ( widths[i] + _hyphen_width > max_extent ) {
+                        TR("hyphen found, but max_extent reached at char %d", i);
+                        fmt->m_flags[wstart+i] &= ~LCHAR_ALLOW_HYPH_WRAP_AFTER;
+                    }
+                    else if ( wstart + i > pos+1 ) {
+                        if ( lastHyphWrap >= 0 )
+                            fmt->m_flags[lastHyphWrap] &= ~LCHAR_ALLOW_HYPH_WRAP_AFTER;
+                        lastHyphWrap = wstart + i;
+                    }
+                    else if ( wstart + i >= pos ) {
+                        fmt->m_flags[wstart+i] &= ~LCHAR_ALLOW_HYPH_WRAP_AFTER;
+                    }
+                }
+            }
+            if ( lastHyphWrap >= 0 )
+                break;
+        }
+        TR("no hyphen found - max_extent=%d", max_extent);
+        wordpos = wstart - 1;
+    }
+}
 
     /// Split paragraph into lines
 void processParagraphHorizontal( LVFormatter* fmt, int start, int end, bool isLastPara )
@@ -2798,7 +2850,7 @@ void processParagraphHorizontal( LVFormatter* fmt, int start, int end, bool isLa
                         ( fmt->m_flags[i] & LCHAR_IS_SPACE ) && !( fmt->m_flags[i] & LCHAR_LOCKED_SPACING ) &&
                         !(fmt->m_flags[i+1] & LCHAR_IS_SPACE) ) {
                     // Each space not followed by a space is candidate for space condensing
-                    int dw = getMaxCondensedSpaceTruncationHorizontal(fmt,i);
+                    int dw = getMaxCondensedSpaceTruncation(fmt,i);
                     if ( dw>0 )
                         spaceReduceWidth += dw;
                 }
@@ -2864,127 +2916,8 @@ void processParagraphHorizontal( LVFormatter* fmt, int start, int end, bool isLa
             // try to find a word (from where we stopped back to lastNormalWrap) to
             // hyphenate, if hyphenation is not forbidden by CSS.
             // todo: decide if we should hyphenate if bidi is happening up to now
-            if ( lastMandatoryWrap<0 && lastNormalWrap<fmt->m_length-1 && unusedPercent > fmt->m_pbuffer->unused_space_threshold_percent ) {
-                // There may be more than one word between wordpos and lastNormalWrap (or
-                // pos, the start of this line): if hyphenation is not possible with
-                // the right most one, we have to try the previous words.
-                // #define DEBUG_HYPH_EXTRA_LOOPS // Uncomment for debugging loops
-                #ifdef DEBUG_HYPH_EXTRA_LOOPS
-                    int debug_loop_num = 0;
-                #endif
-                int wordpos_min = lastNormalWrap > pos ? lastNormalWrap : pos;
-                while ( wordpos > wordpos_min ) {
-                    if ( fmt->m_srcs[wordpos]->flags & LTEXT_SRC_IS_OBJECT ) {
-                        wordpos--; // skip images & floats
-                        continue;
-                    }
-                    #ifdef DEBUG_HYPH_EXTRA_LOOPS
-                        debug_loop_num++;
-                        if (debug_loop_num > 1)
-                            printf("hyph loop #%d checking: %s\n", debug_loop_num,
-                                LCSTR(lString32(fmt->m_text+wordpos_min, i-wordpos_min+1)));
-                    #endif
-                    if ( !(fmt->m_srcs[wordpos]->flags & LTEXT_HYPHENATE) || (fmt->m_srcs[wordpos]->flags & LTEXT_FLAG_NOWRAP) ) {
-                        // The word at worpos can't be hyphenated, but it might be
-                        // allowed on some earlier word in another text node.
-                        // As this is a rare situation (they are mostly all hyphenat'able,
-                        // or none of them are), and to skip some loops, as the min size
-                        // of a word to go look for hyphenation is 4, skip by 4 chars.
-                        wordpos = wordpos - MIN_WORD_LEN_TO_HYPHENATE;
-                        continue;
-                    }
-                    // lStr_findWordBounds() will find the word contained at wordpos
-                    // (or the previous word if wordpos happens to be a space or some
-                    // punctuation) by looking only for alpha chars in fmt->m_text.
-                    int wstart, wend;
-                    bool has_rtl;
-                    lStr_findWordBounds( fmt->m_text, fmt->m_length, wordpos, wstart, wend, has_rtl );
-                    if ( wend <= lastNormalWrap ) {
-                        // We passed back lastNormalWrap: no need to look for more
-                        break;
-                    }
-                    int len = wend - wstart;
-                    if ( len < MIN_WORD_LEN_TO_HYPHENATE || has_rtl ) {
-                        // Too short word found, skip it
-                        // Also skip words containing RTL chars (so, probably full RTL words),
-                        // as we only handle drawing hyphens on the right
-                        wordpos = wstart - 1;
-                        continue;
-                    }
-                    if ( wstart >= wordpos ) {
-                        // Shouldn't happen, but let's be sure we don't get stuck
-                        wordpos = wordpos - MIN_WORD_LEN_TO_HYPHENATE;
-                        continue;
-                    }
-                    #ifdef DEBUG_HYPH_EXTRA_LOOPS
-                        if (debug_loop_num > 1)
-                            printf("  hyphenating: %s\n", LCSTR(lString32(fmt->m_text+wstart, len)));
-                    #endif
-                    #if TRACE_LINE_SPLITTING==1
-                        TR("wordBounds(%s) unusedSpace=%d wordWidth=%d",
-                                LCSTR(lString32(fmt->m_text+wstart, len)), unusedSpace, fmt->m_advance[wend]-fmt->m_advance[wstart]);
-                    #endif
-                    // We have a valid word to look for hyphenation
-                    if ( len > MAX_WORD_SIZE ) // hyphenate() stops/truncates at 64 chars
-                        len = MAX_WORD_SIZE;
-                    // ->hyphenate(), which is used by some other parts of the code,
-                    // expects a lUInt8 array. We added flagSize=1|2 so it can set the correct
-                    // flags on our upgraded (from lUInt8 to lUInt16) fmt->m_flags.
-                    lUInt8 * flags = (lUInt8*) (fmt->m_flags + wstart);
-                    // Fill static array with cumulative widths relative to word start
-                    static lUInt16 widths[MAX_WORD_SIZE];
-                    int wordStart_w = wstart>0 ? fmt->m_advance[wstart-1] : 0;
-                    for ( int i=0; i<len; i++ ) {
-                        widths[i] = fmt->m_advance[wstart+i] - wordStart_w;
-                    }
-                    int max_width = maxWidth + spaceReduceWidth - (x + (wordStart_w - w0));
-                    // In some rare cases, a word here can be made with parts from multiple text nodes.
-                    // Use the font of the first text node to compute the hyphen width, which
-                    // might then be wrong - but that will be smoothed by alignLine().
-                    // (lStr_findWordBounds() might grab objects or inlineboxes as part of
-                    // the word, so skip them when looking for a font)
-                    int _hyphen_width = 0;
-                    for ( int i=wstart; i<wend; i++ ) {
-                        if ( !(fmt->m_srcs[i]->flags & LTEXT_SRC_IS_OBJECT) ) {
-                            _hyphen_width = ((LVFont*)fmt->m_srcs[i]->t.font)->getHyphenWidth();
-                            break;
-                        }
-                    }
-                    // Use the hyph method of the source node that contains wordpos
-                    if ( fmt->m_srcs[wordpos]->lang_cfg->getHyphMethod()->hyphenate(fmt->m_text+wstart, len, widths, flags, _hyphen_width, max_width, 2) ) {
-                        // We need to reset the flag for the multiple hyphenation
-                        // opportunities we will not be using (or they could cause
-                        // spurious spaces, as a word here may be multiple words
-                        // in AddLine() if parts from different text nodes).
-                        for ( int i=0; i<len; i++ ) {
-                            if ( fmt->m_flags[wstart+i] & LCHAR_ALLOW_HYPH_WRAP_AFTER ) {
-                                if ( widths[i] + _hyphen_width > max_width ) {
-                                    TR("hyphen found, but max width reached at char %d", i);
-                                    fmt->m_flags[wstart+i] &= ~LCHAR_ALLOW_HYPH_WRAP_AFTER; // reset flag
-                                }
-                                else if ( wstart + i > pos+1 ) {
-                                    if ( lastHyphWrap >= 0 ) { // reset flag on previous candidate
-                                        fmt->m_flags[lastHyphWrap] &= ~LCHAR_ALLOW_HYPH_WRAP_AFTER;
-                                    }
-                                    lastHyphWrap = wstart + i;
-                                    // Keep looking for some other candidates in that word
-                                }
-                                else if ( wstart + i >= pos ) {
-                                    fmt->m_flags[wstart+i] &= ~LCHAR_ALLOW_HYPH_WRAP_AFTER; // reset flag
-                                }
-                                // Don't reset those < pos as they are part of previous line
-                            }
-                        }
-                        if ( lastHyphWrap >= 0 ) {
-                            // Found in this word, no need to look at previous words
-                            break;
-                        }
-                    }
-                    TR("no hyphen found - max_width=%d", max_width);
-                    // Look at previous words if any
-                    wordpos = wstart - 1;
-                }
-            }
+            tryHyphenBreak(fmt, pos, wordpos, lastNormalWrap, lastMandatoryWrap,
+                           x, w0, maxWidth, spaceReduceWidth, unusedPercent, lastHyphWrap);
 
             // Decide best position to end this line
             int wrapPos = lastHyphWrap;
@@ -3350,13 +3283,6 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                 if ( draw_extra_info ) {
                     restore_orig_clip = true;
                     buf->GetClipRect( &origClip );
-                    // Diagnostic: record origClip.right (= the drawPageTo clip.right)
-                    // and content_overflow_clip.right.  In vertical-rl, both must be
-                    // equal so ruby inline boxes and plain text use the same column anchor.
-                    if ( is_vertical ) {
-                        ltext_vert_ib_outer_clip_right = origClip.right;
-                        ltext_vert_ib_inner_clip_right = draw_extra_info->content_overflow_clip.right;
-                    }
                     buf->SetClipRect( &draw_extra_info->content_overflow_clip );
                 }
             }
@@ -3374,6 +3300,15 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
             // todo: this should better be handled as done for top/bottom border below,
             // with a flag and looking at parent nodes (and no need to pass a bgcl
             // to AddSourceLine()).
+            // In vertical-rl mode coordinates are swapped: lastWordStart/End are screen-Y
+            // values (character slot in column), line_x/frmline->height give the column
+            // screen-X extent.  fillWordBgRect dispatches to the correct geometry.
+            auto fillWordBgRect = [&](int wstart, int wend, lUInt32 color) {
+                if (is_vertical)
+                    buf->FillRect(line_x - (int)frmline->height, y + wstart, line_x, y + wend, color);
+                else
+                    buf->FillRect(wstart, y + frmline->y, wend, y + frmline->y + frmline->height, color);
+            };
             lUInt32 lastWordColor = LTEXT_COLOR_CURRENT; // meaning unset, no bgcolor yet
             int lastWordStart = -1;
             int lastWordEnd = -1;
@@ -3409,7 +3344,7 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             if ( lastWordStart!=-1 && lastWordColor!=bgcl ) {
                                 // Draw the background of a different color for previous words
                                 if ( ((lastWordColor>>24) & 0xFF) != 0xFF ) // Not reserved, not alpha=100% (not transparent)
-                                    buf->FillRect( lastWordStart, y + frmline->y, lastWordEnd, y + frmline->y + frmline->height, lastWordColor );
+                                    fillWordBgRect( lastWordStart, lastWordEnd, lastWordColor );
                                 lastWordStart = -1;
                             }
                             // Draw the background for this pad up to its padding+border, but not its margin
@@ -3419,7 +3354,7 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             lastWordEnd = x + frmline->x + word->x + word->o.height; // padding+border-right
                             lastWordColor = bgcl;
                             if ( ((lastWordColor>>24) & 0xFF) != 0xFF ) // Not reserved, not alpha=100% (not transparent)
-                                buf->FillRect( lastWordStart, y + frmline->y, lastWordEnd, y + frmline->y + frmline->height, lastWordColor );
+                                fillWordBgRect( lastWordStart, lastWordEnd, lastWordColor );
                             lastWordStart = -1;
                             lastWordEnd = -1;
                             lastWordColor = LTEXT_COLOR_CURRENT;
@@ -3429,7 +3364,7 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                                 // Draw the background of a different color for previous words
                                 if ( lastWordStart!=-1 )
                                     if ( ((lastWordColor>>24) & 0xFF) != 0xFF ) // Not reserved, not alpha=100% (not transparent)
-                                        buf->FillRect( lastWordStart, y + frmline->y, lastWordEnd, y + frmline->y + frmline->height, lastWordColor );
+                                        fillWordBgRect( lastWordStart, lastWordEnd, lastWordColor );
                                 // Next drawing will include this pad's padding+border-left
                                 lastWordColor=bgcl;
                                 lastWordStart = x + frmline->x + word->x + word->width - word->o.height;
@@ -3447,7 +3382,7 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                     if ( lastWordColor!=bgcl || lastWordStart==-1 ) {
                         if ( lastWordStart!=-1 )
                             if ( ((lastWordColor>>24) & 0xFF) != 0xFF ) // Not reserved, not alpha=100% (not transparent)
-                                buf->FillRect( lastWordStart, y + frmline->y, lastWordEnd, y + frmline->y + frmline->height, lastWordColor );
+                                fillWordBgRect( lastWordStart, lastWordEnd, lastWordColor );
                         lastWordColor=bgcl;
                         lastWordStart = x+frmline->x+word->x;
                     }
@@ -3456,7 +3391,7 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
             }
             if ( lastWordStart!=-1 ) {
                 if ( ((lastWordColor>>24) & 0xFF) != 0xFF )
-                    buf->FillRect( lastWordStart, y + frmline->y, lastWordEnd, y + frmline->y + frmline->height, lastWordColor );
+                    fillWordBgRect( lastWordStart, lastWordEnd, lastWordColor );
             }
 
             // Draw borders if we noticed there could be some
@@ -3646,18 +3581,12 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         // x0_inline carries the vertical (Y-screen) position:
                         //   y_child = x0_inline = y + node_x (vertical offset + parent top)
                         //
-                        // Apply the same vert_min_next_x clamping as regular chars.
-                        // node_x = frmline->x + word->x; recover word->x to clamp it.
-                        // Without this, a ruby group can start 1-2px before the preceding
-                        // character ends when the layout TTB advance < draw effective_width.
+                        // Clamp the inline box start to vert_min_next_x so it never
+                        // starts before the preceding character's visual end.  However,
+                        // ib_word_x (TTB-advance-based) is kept as a lower bound: if it
+                        // exceeds vert_min_next_x (which can happen when the inline box
+                        // has its own layout position further into the column), use it.
                         {
-                            // node_x = frmline->x + word->x  (set in first pass)
-                            // draw_x_rb = x0 + doc_x_ib + node.getX()
-                            //           = x0 - doc_x_offset + node_x
-                            // To clamp draw_x_rb to vert_min_next_x, we must NOT use
-                            // clamped_ib_x in doc_x_ib (it would cancel the x0 shift).
-                            // Instead, shift x0 by the clamping delta while keeping
-                            // doc_x_ib anchored to the original node_x.
                             int ib_word_x = node_x - frmline->x;
                             int clamped_ib_x = ib_word_x < vert_min_next_x ? vert_min_next_x : ib_word_x;
                             int clamp_delta = clamped_ib_x - ib_word_x;  // ≥ 0
@@ -3692,14 +3621,6 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             // in DrawDocument so children see doc_y = 0 at this level.
                             y0 = x + node_y;
                             doc_y_ib = 0 - node_y;
-                            // Diagnostic: |y0_actual - y0_expected| (always 0 after fix).
-                            {
-                                int expected_y0 = x + node_y;
-                                int err = y0 - expected_y0;
-                                if (err < 0) err = -err;
-                                ltext_vert_ruby_y0_total_error += err;
-                                ltext_vert_ruby_y0_count++;
-                            }
                             // draw_x_inner = x0 + doc_x_ib + node_x = y + node_x + clamp_delta
                             // (DrawDocument accumulates doc_x += inline_box.getX() = node_x).
                             // If draw_x_inner < preceding_end, ruby overlaps the char above.
@@ -3833,14 +3754,11 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         drawFlags |= LFNT_HINT_TRANSFORM_STRETCH;
                     }
                     else {
-                        // Regular drawing of glyphs at word position and baseline
                         if (is_vertical && (word->flags & LTEXT_WORD_IS_TCY)) {
                             // TCY (tate-chu-yoko): draw text horizontally within vertical column.
                             // The span occupies 1 em of column depth; text is centered in the column.
                             int em = font->getSize();
-                            int clamped_x = word->x;
-                            if (clamped_x < vert_min_next_x)
-                                clamped_x = vert_min_next_x;
+                            int clamped_x = (int)word->x < vert_min_next_x ? vert_min_next_x : (int)word->x;
                             // Horizontal: center the em-box within the column width
                             x0 = line_x - frmline->height + (frmline->height - em) / 2;
                             // Vertical: center font height in the 1-em slot
@@ -3854,23 +3772,16 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         } else if (word_is_latin_in_vertical) {
                             // Non-CJK word (Latin etc.) in vertical column:
                             // render horizontally then rotate 90° CW as a single block.
-                            // After rotation the block is font_height wide and word->width tall.
+                            // After rotation the block is font_height wide and _adv tall.
+                            // vert_min_next_x and vert_prev_effective_width are updated below
+                            // after DrawTextString using _adv (actual horizontal advance),
+                            // so no intermediate TTB-advance assignment is needed here.
                             int font_h = font->getHeight();
-                            int word_w = (int)word->width;
-                            int clamped_x = word->x;
-                            if (clamped_x < vert_min_next_x)
-                                clamped_x = vert_min_next_x;
                             // Center the rotated block (height=font_h) within the column width
                             x0 = line_x - frmline->height + (frmline->height - font_h) / 2;
-                            // Vertical start of the block in the column
-                            y0 = y + frmline->x + clamped_x;
-                            // Advance column by the word's full horizontal width
-                            vert_min_next_x = clamped_x + word_w;
-                            // Cap vert_min_next_x at the column height
-                            if (vert_min_next_x > clip.bottom - y)
-                                vert_min_next_x = clip.bottom - y;
+                            // Vertical start of the block: vert_min_next_x is the column position
+                            y0 = y + frmline->x + vert_min_next_x;
                             vert_prev_plain_y0 = y0;
-                            vert_prev_effective_width = word_w;  // sync with vert_min_next_x slot
                             // Skip draw if the word starts past the column bottom
                             if (y0 >= clip.bottom)
                                 vert_skip_draw = true;
@@ -3901,13 +3812,16 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                                 if ( (int)frmline->height <= strut && em < strut )
                                     x0 += (strut - em) / 2;
                             }
-                            // word->x can retrograde due to negative punctuation advances
-                            // (stored as large uint16 values causing 16-bit overflow).
-                            // Clamp to vert_min_next_x, then advance by the effective word
-                            // width (using prev normal width when punctuation has neg advance).
-                            int clamped_x = word->x;
-                            if (clamped_x < vert_min_next_x)
-                                clamped_x = vert_min_next_x;
+                            // Use vert_min_next_x as the authoritative column position.
+                            // word->x is derived from cumulative TTB y_advances; for CJK-only
+                            // text word->x == vert_min_next_x (both track em_size advances).
+                            // When Latin words precede this char, their TTB advance (full em)
+                            // inflates word->x past the actual visual position.  Using
+                            // vert_min_next_x (updated from _adv after each Latin draw) ensures
+                            // CJK chars start immediately after the Latin word's visual end.
+                            // Punctuation retrograde (large uint16 word->x) is handled naturally
+                            // because vert_min_next_x is always >= the previous slot end.
+                            int clamped_x = vert_min_next_x;
                             y0 = y + frmline->x + clamped_x;
                             // Advance vert_min_next_x by at least font_size.
                             // After the TTB-reversal fix, word->width is the accurate
@@ -4009,13 +3923,12 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         // Update vert_min_next_x so the next char follows directly
                         // without a blank gap.
                         if (word_is_latin_in_vertical && _adv > 0) {
-                            int corrected = (vert_min_next_x - (int)word->width) + _adv;
-                            // Only allow increasing vert_min_next_x, not decreasing:
-                            // a preceding inline box may have set it to a larger value that
-                            // reflects the box's actual visual depth (render_w > o.width).
-                            // Reducing it would place the next char inside the box's extent.
-                            if (corrected > vert_min_next_x)
-                                vert_min_next_x = corrected;
+                            // vert_min_next_x was left at the word's start; add _adv to advance
+                            // to the word's visual end (actual horizontal advance, not TTB).
+                            vert_min_next_x += _adv;
+                            if (vert_min_next_x > clip.bottom - y)
+                                vert_min_next_x = clip.bottom - y;
+                            vert_prev_effective_width = _adv;
                         }
                     }
                     // Draw 圏点/傍点 (text-emphasis marks) in vertical mode

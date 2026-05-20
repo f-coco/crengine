@@ -1267,6 +1267,8 @@ static bool needsVerticalRotation90CW(lChar32 c)
 static void drawGlyphItemRotated90CW(LVDrawBuf * buf, int glyph_x, int glyph_y,
         LVFontGlyphCacheItem * item, const lUInt32 * palette)
 {
+    if (item->bmp_pixelformat == 4)
+        return; // colour glyphs cannot be rotated; caller should guard against this
     int orig_w = item->bmp_width;
     int orig_h = item->bmp_height;
     if (orig_w <= 0 || orig_h <= 0)

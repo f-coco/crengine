@@ -389,7 +389,7 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                         i < fmt->m_length-1 &&
                         ( fmt->m_flags[i] & LCHAR_IS_SPACE ) && !( fmt->m_flags[i] & LCHAR_LOCKED_SPACING ) &&
                         !(fmt->m_flags[i+1] & LCHAR_IS_SPACE) ) {
-                    int dw = getMaxCondensedSpaceTruncationHorizontal(fmt,i);
+                    int dw = getMaxCondensedSpaceTruncation(fmt,i);
                     if ( dw>0 )
                         spaceReduceWidth += dw;
                 }
@@ -433,74 +433,8 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
             #endif
 
             // Hyphenation
-            if ( lastMandatoryWrap<0 && lastNormalWrap<fmt->m_length-1 && unusedPercent > fmt->m_pbuffer->unused_space_threshold_percent ) {
-                #ifdef DEBUG_HYPH_EXTRA_LOOPS
-                    int debug_loop_num = 0;
-                #endif
-                int wordpos_min = lastNormalWrap > pos ? lastNormalWrap : pos;
-                while ( wordpos > wordpos_min ) {
-                    if ( fmt->m_srcs[wordpos]->flags & LTEXT_SRC_IS_OBJECT ) {
-                        wordpos--;
-                        continue;
-                    }
-                    #ifdef DEBUG_HYPH_EXTRA_LOOPS
-                        debug_loop_num++;
-                        if (debug_loop_num > 1)
-                            printf("  hyphen extra loop %d\n", debug_loop_num);
-                    #endif
-                    int wstart, wend;
-                    bool has_rtl;
-                    lStr_findWordBounds( fmt->m_text, fmt->m_length, wordpos, wstart, wend, has_rtl );
-                    if ( wend <= lastNormalWrap ) {
-                        break;
-                    }
-                    int len = wend - wstart;
-                    if ( len < MIN_WORD_LEN_TO_HYPHENATE || has_rtl ) {
-                        wordpos = wstart - 1;
-                        continue;
-                    }
-                    if ( len > MAX_WORD_SIZE )
-                        len = MAX_WORD_SIZE;
-                    lUInt8 * flags = (lUInt8*) (fmt->m_flags + wstart);
-                    static lUInt16 widths[MAX_WORD_SIZE];
-                    int wordStart_w = wstart>0 ? fmt->m_advance[wstart-1] : 0;
-                    for ( int i=0; i<len; i++ ) {
-                        widths[i] = fmt->m_advance[wstart+i] - wordStart_w;
-                    }
-                    int max_width = maxHeight + spaceReduceWidth - (y + (wordStart_w - w0));
-                    int _hyphen_width = 0;
-                    for ( int i=wstart; i<wend; i++ ) {
-                        if ( !(fmt->m_srcs[i]->flags & LTEXT_SRC_IS_OBJECT) ) {
-                            _hyphen_width = ((LVFont*)fmt->m_srcs[i]->t.font)->getHyphenWidth();
-                            break;
-                        }
-                    }
-                    if ( fmt->m_srcs[wordpos]->lang_cfg->getHyphMethod()->hyphenate(fmt->m_text+wstart, len, widths, flags, _hyphen_width, max_width, 2) ) {
-                        for ( int i=0; i<len; i++ ) {
-                            if ( fmt->m_flags[wstart+i] & LCHAR_ALLOW_HYPH_WRAP_AFTER ) {
-                                if ( widths[i] + _hyphen_width > max_width ) {
-                                    TR("hyphen found, but max height reached at char %d", i);
-                                    fmt->m_flags[wstart+i] &= ~LCHAR_ALLOW_HYPH_WRAP_AFTER;
-                                }
-                                else if ( wstart + i > pos+1 ) {
-                                    if ( lastHyphWrap >= 0 ) {
-                                        fmt->m_flags[lastHyphWrap] &= ~LCHAR_ALLOW_HYPH_WRAP_AFTER;
-                                    }
-                                    lastHyphWrap = wstart + i;
-                                }
-                                else if ( wstart + i >= pos ) {
-                                    fmt->m_flags[wstart+i] &= ~LCHAR_ALLOW_HYPH_WRAP_AFTER;
-                                }
-                            }
-                        }
-                        if ( lastHyphWrap >= 0 ) {
-                            break;
-                        }
-                    }
-                    TR("no hyphen found - max_height=%d", max_width);
-                    wordpos = wstart - 1;
-                }
-            }
+            tryHyphenBreak(fmt, pos, wordpos, lastNormalWrap, lastMandatoryWrap,
+                           y, w0, maxHeight, spaceReduceWidth, unusedPercent, lastHyphWrap);
 
             // Decide best position to end this line
             int wrapPos = lastHyphWrap;
