@@ -3666,15 +3666,15 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             // After update, vert_min_next_x = end of THIS inline box.
                             int preceding_end = y + (int)frmline->x + vert_min_next_x;
                             x0 = y + node_x + clamp_delta;  // draw_x_rb = y + frmline->x + clamped_ib_x
-                            vert_min_next_x = clamped_ib_x + (int)word->width;
-                            // Track inline box position so the NEXT plain character is
-                            // checked against the inline box's actual visual depth.
-                            // letter_spacing stores render_w (set by measureText for ruby
-                            // groups in vertical mode); fall back to declared word->width.
+                            // Use actual vertical depth (render_w from letter_spacing) so
+                            // the next character starts after the ruby group's visual end,
+                            // preventing the "文字が被る" overlap.  Fall back to o.width if
+                            // letter_spacing was not set (non-ruby inline boxes, horizontal mode).
                             {
                                 int ib_actual_depth = (srcline->letter_spacing > 0)
                                     ? (int)srcline->letter_spacing
                                     : (int)word->width;
+                                vert_min_next_x = clamped_ib_x + ib_actual_depth;
                                 vert_prev_plain_y0 = y + (int)frmline->x + clamped_ib_x;
                                 vert_prev_effective_width = ib_actual_depth;
                             }
@@ -3848,7 +3848,7 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             y0 = y_slot_start + (em - font->getHeight()) / 2;
                             // Advance 1 em in the column direction
                             vert_min_next_x = clamped_x + em;
-                            vert_prev_plain_y0 = y0;
+                            vert_prev_plain_y0 = y_slot_start;
                             if (y_slot_start + em > clip.bottom)
                                 vert_skip_draw = true;
                         } else if (word_is_latin_in_vertical) {
@@ -3866,7 +3866,11 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             y0 = y + frmline->x + clamped_x;
                             // Advance column by the word's full horizontal width
                             vert_min_next_x = clamped_x + word_w;
+                            // Cap vert_min_next_x at the column height
+                            if (vert_min_next_x > clip.bottom - y)
+                                vert_min_next_x = clip.bottom - y;
                             vert_prev_plain_y0 = y0;
+                            vert_prev_effective_width = word_w;  // sync with vert_min_next_x slot
                             // Skip draw if the word starts past the column bottom
                             if (y0 >= clip.bottom)
                                 vert_skip_draw = true;
@@ -3923,7 +3927,7 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             // If this character's slot start (y0) is before the previous
                             // character's slot end (vert_prev_plain_y0 + vert_prev_effective_width),
                             // two characters overlap — the "文字が被る" bug.
-                            if (vert_prev_plain_y0 >= 0 && !vert_skip_draw) {
+                            if (vert_prev_plain_y0 >= 0 && !vert_skip_draw && y0 < clip.bottom) {
                                 int slot_end_prev = vert_prev_plain_y0 + vert_prev_effective_width;
                                 int overlap_px = slot_end_prev - y0;
                                 if (overlap_px > 0) {
@@ -4004,8 +4008,15 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         // than word->width (TTB y_advance) for fonts with full-em vmtx.
                         // Update vert_min_next_x so the next char follows directly
                         // without a blank gap.
-                        if (word_is_latin_in_vertical && _adv > 0)
-                            vert_min_next_x = (vert_min_next_x - (int)word->width) + _adv;
+                        if (word_is_latin_in_vertical && _adv > 0) {
+                            int corrected = (vert_min_next_x - (int)word->width) + _adv;
+                            // Only allow increasing vert_min_next_x, not decreasing:
+                            // a preceding inline box may have set it to a larger value that
+                            // reflects the box's actual visual depth (render_w > o.width).
+                            // Reducing it would place the next char inside the box's extent.
+                            if (corrected > vert_min_next_x)
+                                vert_min_next_x = corrected;
+                        }
                     }
                     // Draw 圏点/傍点 (text-emphasis marks) in vertical mode
                     if ( is_vertical && !vert_skip_draw && (srcline->flags & LTEXT_HAS_EXTRA) ) {

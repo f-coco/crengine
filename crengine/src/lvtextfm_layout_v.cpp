@@ -206,7 +206,11 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                         // A ruby inline box occupies advance = N × avg_char_advance column depth,
                         // not 1 ×.  Track the excess so char_count_adv does not undercount column
                         // usage and push body chars past clip.bottom (same class of bug as P11).
-                        int ibox_adv = fmt->m_srcs[i]->o.width; // set by measureText()
+                        // Use letter_spacing as actual vertical depth if set (ruby groups in
+                        // vertical mode store render_w there); otherwise fall back to o.width.
+                        int ibox_adv = (fmt->m_srcs[i]->letter_spacing > 0)
+                                       ? (int)fmt->m_srcs[i]->letter_spacing
+                                       : fmt->m_srcs[i]->o.width;
                         if ( ibox_adv > avg_char_advance )
                             inline_box_extra += ibox_adv - avg_char_advance;
                     }
@@ -259,9 +263,15 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                 //    column breaks inside Latin words (e.g. "answ|er" in "answer").
                 // For inline boxes (ruby groups), o.width > avg_char_advance: inline_box_extra
                 // carries the excess so char_count_adv correctly reflects total column depth.
+                // For ruby inline boxes, m_advance uses o.width (block-direction), but actual
+                // column depth is letter_spacing (render_w).  Add i_extra to condition 1.
+                int i_extra = (fmt->m_charindex[i] == INLINEBOX_CHAR_INDEX
+                               && fmt->m_srcs[i]->letter_spacing > 0)
+                              ? fmt->m_srcs[i]->letter_spacing - fmt->m_srcs[i]->o.width
+                              : 0;
                 bool is_cjk_char = (fmt->m_flags[i] & LCHAR_IS_CJK) != 0;
                 int char_count_adv = (i - pos + 1) * avg_char_advance + avg_char_advance / 2 + inline_box_extra;
-                if ( y + fmt->m_advance[i]-w0 >= maxHeight + spaceReduceWidth
+                if ( y + fmt->m_advance[i]-w0 + i_extra >= maxHeight + spaceReduceWidth
                         || (is_cjk_char && y + char_count_adv > maxHeight + spaceReduceWidth) ) {
                     // ぶら下がり (行末句読点ぶら下がり): if the overflowing character is a
                     // sentence-end punctuation that must not start a new column (行頭禁則),
