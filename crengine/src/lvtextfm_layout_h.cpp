@@ -656,8 +656,7 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
                         // Without this, a U+0020 space before an inline box creates a gap
                         // of (font_size - space_advance) above the box.
                         bool is_cjk = (wi->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_FLEXIBLE_WIDTH_CJK)) != 0;
-                        int eff_w   = is_cjk ? (((int)wi->width > font_sz) ? (int)wi->width : font_sz)
-                                             : (int)wi->width;
+                        int eff_w   = (is_cjk && (int)wi->width < font_sz) ? font_sz : (int)wi->width;
                         int next_x  = wi->x + eff_w;
                         if ( next_x > vert_layout_min_x )
                             vert_layout_min_x = next_x;

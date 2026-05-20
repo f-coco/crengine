@@ -2288,11 +2288,12 @@ public:
                                 } else {
                                     lString32 t = rbox2->getText();
                                     LVFontRef base_font = rbox2->getFont();
+                                    bool has_font = !base_font.isNull();
                                     for (int k = 0; k < t.length(); k++) {
                                         lChar32 c = t[k];
                                         if (c > 0x20) {
                                             base_char_count_pre++;
-                                            if (!base_font.isNull())
+                                            if (has_font)
                                                 base_horiz_advance_pre += base_font->getCharWidth(c);
                                         }
                                     }
@@ -2304,11 +2305,12 @@ public:
                         } else if (vert_inline_box && advance_per_char_pre > 0) {
                             base_char_count_pre = 1;
                         }
+                        // annot_depth is shared by both the render_w estimate and the advance override.
+                        int annot_depth = annot_char_count_pre * annot_font_size_pre;
                         // Compute render_w here so it's available for both rendering and logging.
                         int render_w;
                         if (is_ruby_inline_pre && advance_per_char_pre > 0) {
                             int base_depth = base_char_count_pre * advance_per_char_pre;
-                            int annot_depth = annot_char_count_pre * annot_font_size_pre;
                             render_w = annot_depth > base_depth ? annot_depth : base_depth;
                         } else {
                             render_w = m_pbuffer->width;
@@ -2386,8 +2388,7 @@ public:
                         //   letter_spacing → vert_min_next_x set to visual end of the word
                         // For CJK base text, getCharWidth ≈ font_size, so result is unchanged.
                         int advance;
-                        if (is_ruby_inline_pre && vert_inline_box && base_horiz_advance_pre > 0) {
-                            int annot_depth = annot_char_count_pre * annot_font_size_pre;
+                        if (is_ruby_inline_pre && base_horiz_advance_pre > 0) {
                             advance = base_horiz_advance_pre > annot_depth
                                     ? base_horiz_advance_pre : annot_depth;
                         } else {
