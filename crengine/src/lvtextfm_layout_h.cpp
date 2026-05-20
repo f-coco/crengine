@@ -7,6 +7,24 @@
 int ltext_vert_bleed_count = 0;
 int ltext_vert_bleed_max_px = 0;
 
+// Vertical-rl plain-character overlap counters.
+// Fires when a CJK/plain character's y0 is less than the previous character's
+// y0 + effective_width (= its slot end), meaning two characters overlap in the
+// column (height) direction.  This is the "文字が被る" / character-overlap bug.
+// Reset via ltext_reset_vert_char_overlap(); read via ltext_get_vert_char_overlap().
+int ltext_vert_char_overlap_count = 0;
+int ltext_vert_char_overlap_max_px = 0;
+
+void ltext_reset_vert_char_overlap() {
+    ltext_vert_char_overlap_count = 0;
+    ltext_vert_char_overlap_max_px = 0;
+}
+
+void ltext_get_vert_char_overlap(int *count_out, int *max_px_out) {
+    *count_out  = ltext_vert_char_overlap_count;
+    *max_px_out = ltext_vert_char_overlap_max_px;
+}
+
 // Vertical-rl ruby column-position diagnostic.
 // In the inline-box draw path, y0 must equal (x + node_y) so that the inner
 // Draw() places the ruby base column at the correct screen-X position.
@@ -3286,7 +3304,8 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
     // Counters (ltext_vert_bleed_count/max_px) and Lua API are kept for
     // future investigation via doc._document:resetVertBleedCounters() /
     // getVertBleedStats().
-    int vert_prev_plain_y0 = -1;  // unused until detection is re-enabled
+    int vert_prev_plain_y0 = -1;         // y0 of last drawn plain/CJK char in this column
+    int vert_prev_effective_width = 0;   // effective_width of that char (= its slot height)
 
     for (i=0; i<m_pbuffer->frmlinecount; i++)
     {
@@ -3323,6 +3342,10 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
             // the previous normal word width instead, ensuring monotonically increasing
             // y positions for all glyphs.
             int vert_min_next_x = 0;
+            // Reset per-column plain-char tracking at the start of each frmline (column)
+            // to avoid false-positive overlap reports across column boundaries.
+            vert_prev_plain_y0 = -1;
+            vert_prev_effective_width = 0;
             if ( line_y >= clip.top && line_y + frmline->height <= clip.bottom ) {
                 if ( draw_extra_info ) {
                     restore_orig_clip = true;
@@ -3881,9 +3904,28 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             int font_size = font->getSize();
                             int effective_width = ((int)word->width > font_size) ? (int)word->width : font_size;
                             vert_min_next_x = clamped_x + effective_width;
-                            // Track this plain-text character's y0 for the inline-box
-                            // bleed check that fires when the next ruby box is encountered.
+                            // Cap vert_min_next_x at the column height so that compressed
+                            // punctuation (。、 TTB < font_size) cannot push the next character
+                            // past clip.bottom and cause it to be silently dropped.
+                            if (vert_min_next_x > clip.bottom - y)
+                                vert_min_next_x = clip.bottom - y;
+                            // Detect character overlap in the height (column) direction.
+                            // If this character's slot start (y0) is before the previous
+                            // character's slot end (vert_prev_plain_y0 + vert_prev_effective_width),
+                            // two characters overlap — the "文字が被る" bug.
+                            if (vert_prev_plain_y0 >= 0 && !vert_skip_draw) {
+                                int slot_end_prev = vert_prev_plain_y0 + vert_prev_effective_width;
+                                int overlap_px = slot_end_prev - y0;
+                                if (overlap_px > 0) {
+                                    ltext_vert_char_overlap_count++;
+                                    if (overlap_px > ltext_vert_char_overlap_max_px)
+                                        ltext_vert_char_overlap_max_px = overlap_px;
+                                }
+                            }
+                            // Track this plain-text character's y0 and effective_width for the
+                            // next character's overlap check and the inline-box bleed check.
                             vert_prev_plain_y0 = y0;
+                            vert_prev_effective_width = effective_width;
                             // Skip only when the character SLOT START (y0) is at or past
                             // clip.bottom — the glyph bitmap is then completely outside the
                             // visible column and shouldn't be drawn.
