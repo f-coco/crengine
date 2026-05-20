@@ -3246,13 +3246,11 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
     //   x/y: 9/-139 clip.top/bottom: 13 583
     //   x/y: 9/-709 clip.top/bottom: 13 545
 
-    // Vertical-rl bleed detection (work-in-progress, currently inactive).
-    // Investigation found that all detected cases were false positives:
-    //   - font_size-vs-strut_height offset (8px): systematic, not a visual bug
-    //   - large backward jumps: column boundary transitions, not misplacements
-    // Root cause of the actual "上にめり込む" bug is still unknown.
-    // Counters (ltext_vert_bleed_count/max_px) and Lua API are kept for
-    // future investigation via doc._document:resetVertBleedCounters() /
+    // Vertical-rl bleed detection.
+    // ltext_vert_bleed_count fires when a ruby inline-box's screen-Y start
+    // (draw_x_inner) is less than the preceding character's slot end, meaning
+    // the ruby group overlaps the character above it.
+    // Counters accessible via doc._document:resetVertBleedCounters() /
     // getVertBleedStats().
     int vert_prev_plain_y0 = -1;         // y0 of last drawn plain/CJK char in this column
     int vert_prev_effective_width = 0;   // effective_width of that char (= its slot height)
