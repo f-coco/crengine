@@ -397,6 +397,21 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
 void processEmbeddedBlockVertical( LVFormatter* fmt, int idx );
 // Helper functions used by measureText() and processParagraphHorizontal()
 bool isLeftPunctuation( lChar32 c );
+
+// True if node is a vertical-ruby inline box: the boxing algorithm wraps
+// the ruby table in an el_inlineBox whose parent has display:ruby.
+static inline bool isRubyInlineBox(ldomNode * node) {
+    return node
+        && node->getParentNode()
+        && node->getParentNode()->getStyle()->display == css_d_ruby
+        && node->getChildCount() > 0
+        && node->getChildNode(0)->getRendMethod() == erm_table;
+}
+
+// True if a ruby element ID belongs to the annotation side (rt, rp, rtc).
+static inline bool isRubyAnnotId(lUInt16 id) {
+    return id == el_rt || id == el_rp || id == el_rtc;
+}
 #if (USE_LIBUNIBREAK!=1)
 bool isCJKPunctuation( lChar32 c );
 bool isCJKLeftPunctuation( lChar32 c );
@@ -2245,11 +2260,7 @@ public:
                         // For CJK chars getCharWidth ≈ font_size, so this is a no-op for CJK ruby.
                         int base_horiz_advance_pre = 0;
                         // Only apply ruby-specific logic when this inlineBox wraps a ruby table.
-                        bool is_ruby_inline_pre = vert_inline_box
-                            && node->getParentNode()
-                            && node->getParentNode()->getStyle()->display == css_d_ruby
-                            && node->getChildCount() > 0
-                            && node->getChildNode(0)->getRendMethod() == erm_table;
+                        bool is_ruby_inline_pre = vert_inline_box && isRubyInlineBox(node);
                         if (is_ruby_inline_pre && advance_per_char_pre > 0) {
                             // Post-boxing structure:
                             //   inlineBox → rbox1(erm_table) → [rbox2_base(T="rbc"), rbox2_annot(T="rtc")]
@@ -2262,16 +2273,12 @@ public:
                             for (int ci = 0; ci < cc_pre; ci++) {
                                 ldomNode * rbox2 = rbox1_pre->getChildNode(ci);
                                 if (!rbox2 || !rbox2->isElement()) continue;
-                                bool is_annot = false;
                                 lUInt16 cid = rbox2->getNodeId();
-                                if (cid == el_rt || cid == el_rp || cid == el_rtc) {
-                                    is_annot = true;
-                                } else if (rbox2->getChildCount() > 0) {
+                                bool is_annot = isRubyAnnotId(cid);
+                                if (!is_annot && rbox2->getChildCount() > 0) {
                                     ldomNode * fc = rbox2->getChildNode(0);
-                                    if (fc && fc->isElement()) {
-                                        lUInt16 fid = fc->getNodeId();
-                                        is_annot = (fid == el_rt || fid == el_rtc || fid == el_rp);
-                                    }
+                                    if (fc && fc->isElement())
+                                        is_annot = isRubyAnnotId(fc->getNodeId());
                                 }
                                 if (is_annot) {
                                     lString32 t = rbox2->getText();

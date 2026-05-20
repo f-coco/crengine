@@ -715,14 +715,7 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
                     if ( is_vert ) {
                         int box_h = word->o.height;
                         int col_w = fmt->m_pbuffer->strut_height;
-                        // Detect ruby inline box: el_inlineBox wrapping a ruby table,
-                        // whose parent <ruby> element has display:ruby.
-                        // (Same check as lvtextfm.cpp measureText ruby detection.)
-                        bool is_ruby_box = node
-                            && node->getParentNode()
-                            && node->getParentNode()->getStyle()->display == css_d_ruby
-                            && node->getChildCount() > 0
-                            && node->getChildNode(0)->getRendMethod() == erm_table;
+                        bool is_ruby_box = isRubyInlineBox(node);
                         if ( is_ruby_box ) {
                             LVFontRef fnt = node->getFont();
                             int em = !fnt.isNull() ? fnt->getSize() : 0;
