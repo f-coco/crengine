@@ -398,6 +398,20 @@ void processEmbeddedBlockVertical( LVFormatter* fmt, int idx );
 // Helper functions used by measureText() and processParagraphHorizontal()
 bool isLeftPunctuation( lChar32 c );
 
+// Diagnostic: tracks render_w − advance for vertical ruby inline boxes.
+// Positive total proves the getCharWidth-based advance path is active (Latin ruby).
+// Reset via ltext_reset_vert_ruby_adv_diff(); read via ltext_get_vert_ruby_adv_diff().
+int ltext_vert_ruby_adv_diff_total = 0;
+int ltext_vert_ruby_adv_diff_max   = 0;
+void ltext_reset_vert_ruby_adv_diff() {
+    ltext_vert_ruby_adv_diff_total = 0;
+    ltext_vert_ruby_adv_diff_max   = 0;
+}
+void ltext_get_vert_ruby_adv_diff(int *total_out, int *max_out) {
+    *total_out = ltext_vert_ruby_adv_diff_total;
+    *max_out   = ltext_vert_ruby_adv_diff_max;
+}
+
 // True if node is a vertical-ruby inline box: the boxing algorithm wraps
 // the ruby table in an el_inlineBox whose parent has display:ruby.
 static inline bool isRubyInlineBox(ldomNode * node) {
@@ -2406,8 +2420,16 @@ public:
                         m_srcs[start]->o.baseline = baseline;
                         // Store the visual column depth in letter_spacing so vert_min_next_x
                         // in Draw() is set to the actual visual end of the inline box.
-                        if (is_ruby_inline_pre && vert_inline_box)
+                        if (is_ruby_inline_pre && vert_inline_box) {
                             m_srcs[start]->letter_spacing = (lInt16)advance;
+                            // Diagnostic: record the space reclaimed from TTB over-estimation.
+                            if (render_w > advance) {
+                                int diff = render_w - advance;
+                                ltext_vert_ruby_adv_diff_total += diff;
+                                if (diff > ltext_vert_ruby_adv_diff_max)
+                                    ltext_vert_ruby_adv_diff_max = diff;
+                            }
+                        }
                         lastWidth += advance;
                         m_advance[start] = lastWidth;
                         // This object could be a small bullet, and we might want to ensure locked

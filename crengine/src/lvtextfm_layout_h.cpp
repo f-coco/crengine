@@ -7,6 +7,23 @@
 int ltext_vert_bleed_count = 0;
 int ltext_vert_bleed_max_px = 0;
 
+// Diagnostic: layout/draw position mismatch for vertical inline boxes.
+// Fires when ib_word_x (from layout) > vert_min_next_x (draw tracking),
+// meaning the layout placed the box further than the draw tracker expected —
+// a gap is visible above the inline box.  With correct vert_layout_min_x
+// tracking (e.g. after the CJK-only font_size fix for spaces) this is 0.
+int ltext_vert_ib_layout_gap_total = 0;
+int ltext_vert_ib_layout_gap_max   = 0;
+
+void ltext_reset_vert_ib_layout_gap() {
+    ltext_vert_ib_layout_gap_total = 0;
+    ltext_vert_ib_layout_gap_max   = 0;
+}
+void ltext_get_vert_ib_layout_gap(int *total_out, int *max_out) {
+    *total_out = ltext_vert_ib_layout_gap_total;
+    *max_out   = ltext_vert_ib_layout_gap_max;
+}
+
 // Vertical-rl plain-character overlap counters.
 // Fires when a CJK/plain character's y0 is less than the previous character's
 // y0 + effective_width (= its slot end), meaning two characters overlap in the
@@ -3590,6 +3607,17 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             int ib_word_x = node_x - frmline->x;
                             int clamped_ib_x = ib_word_x < vert_min_next_x ? vert_min_next_x : ib_word_x;
                             int clamp_delta = clamped_ib_x - ib_word_x;  // ≥ 0
+                            // Diagnostic: ib_word_x > vert_min_next_x means the layout
+                            // placed this box further than the draw tracker expected — a gap
+                            // above the box.  Should be 0 when vert_layout_min_x correctly
+                            // mirrors vert_min_next_x (e.g. spaces use actual advance, not
+                            // font_size, so no inflation).
+                            if (ib_word_x > vert_min_next_x) {
+                                int gap = ib_word_x - vert_min_next_x;
+                                ltext_vert_ib_layout_gap_total += gap;
+                                if (gap > ltext_vert_ib_layout_gap_max)
+                                    ltext_vert_ib_layout_gap_max = gap;
+                            }
                             // P14 overlap diagnostic: save the OLD vert_min_next_x
                             // (= end of the preceding character) BEFORE updating it.
                             // After update, vert_min_next_x = end of THIS inline box.
