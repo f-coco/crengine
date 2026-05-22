@@ -3231,8 +3231,13 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
     //  - doc_y increases → line_x decreases (columns shift left)
     // Using only x (not y which encodes vertical position) avoids accidental
     // column overlap between blocks with different doc_x ancestry.
-    int line_x = is_vertical ? (clip.right - x) : x;
+    // For vertical-rl: use the stored column anchor rather than the buffer's current
+    // clip.right. content_overflow_clip.right may have been widened to allow ruby
+    // annotations to draw into the right margin; that must not shift the column anchor.
     draw_extra_info_t * draw_extra_info = (draw_extra_info_t*)buf->GetDrawExtraInfo();
+    int vert_anchor = (is_vertical && draw_extra_info && draw_extra_info->vert_column_clip_right)
+        ? draw_extra_info->vert_column_clip_right : clip.right;
+    int line_x = is_vertical ? (vert_anchor - x) : x;
 
     bool ignore_clip = false;
     if ( m_pbuffer->frmlinecount == 1 && m_pbuffer->frmlines[0]->word_count > 0 ) {

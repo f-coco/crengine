@@ -124,6 +124,11 @@ typedef struct {
     bool draw_body_background;
     lvRect body_background_clip;
     lvRect content_overflow_clip;
+    // For vertical-rl: the column anchor right boundary.
+    // content_overflow_clip.right may be widened to allow ruby annotations to
+    // draw into the right margin, but the column anchor must stay at the original
+    // clip.right so that all columns (including ruby groups) are positioned correctly.
+    int vert_column_clip_right;
 } draw_extra_info_t;
 
 /// returns true if styles are identical
