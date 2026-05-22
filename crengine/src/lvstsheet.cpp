@@ -131,6 +131,7 @@ enum css_decl_code {
     cssd_clear,
     cssd_direction,
     cssd_writing_mode,
+    cssd_writing_mode2, // -webkit-writing-mode (vendor-prefixed alias used by many EPUBs)
     cssd_text_orientation,
     cssd_text_combine_upright,
     cssd_text_combine_upright2,
@@ -250,6 +251,7 @@ static const char * css_decl_name[] = {
     "clear",
     "direction",
     "writing-mode",
+    "-webkit-writing-mode",
     "text-orientation",
     "text-combine-upright",
     "-epub-text-combine",
@@ -4721,6 +4723,7 @@ bool LVCssDeclaration::parse( const char * &decl, bool higher_importance, lxmlDo
                 n = parse_name( decl, css_dir_names, -1 );
                 break;
             case cssd_writing_mode:
+            case cssd_writing_mode2: // -webkit-writing-mode
                 IF_g_SET_n_AND_break(true, css_wm_inherit, css_wm_horizontal_tb);
                 n = parse_name( decl, css_wm_names, -1 );
                 break;
@@ -5520,6 +5523,7 @@ void LVCssDeclaration::apply( css_style_rec_t * style, const ldomNode * node ) c
             // inherited in CSS specs, but not needed for us as we handle it at rendering time
             break;
         case cssd_writing_mode:
+        case cssd_writing_mode2: // -webkit-writing-mode
             {
                 css_writing_mode_t wm_val = (css_writing_mode_t) *p++;
                 style->Apply( wm_val, &style->writing_mode, imp_bit_writing_mode, is_important );

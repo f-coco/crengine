@@ -3228,9 +3228,19 @@ lString32 renderListItemMarker( ldomNode * enode, int & marker_width, int * fina
                 int em = font->getSize();
                 line_h = lengthToPx(enode, style->line_height, em, em, true);
             }
-            // Scale line_h according to document's _interlineScaleFactor
-            if (style->line_height.type != css_val_screen_px && doc->getInterlineScaleFactor() != INTERLINE_SCALE_FACTOR_NO_SCALE)
-                line_h = (line_h * doc->getInterlineScaleFactor()) >> INTERLINE_SCALE_FACTOR_SHIFT;
+            // Scale line_h according to document's _interlineScaleFactor.
+            // For vertical text with auto line-height, add a +55% offset so the
+            // user's horizontal comfortable setting (110-130%) maps to comfortable
+            // vertical spacing (165-185%), matching traditional Japanese typesetting.
+            if (style->line_height.type != css_val_screen_px) {
+                int scale = doc->getInterlineScaleFactor();
+                if ( css_wm_is_vertical(style->writing_mode) &&
+                        style->line_height.type == css_val_unspecified &&
+                        style->line_height.value == css_generic_normal )
+                    scale += INTERLINE_SCALE_FACTOR_NO_SCALE * 55 / 100;
+                if (scale != INTERLINE_SCALE_FACTOR_NO_SCALE)
+                    line_h = (line_h * scale) >> INTERLINE_SCALE_FACTOR_SHIFT;
+            }
             if ( STYLE_HAS_CR_HINT(style, STRUT_CONFINED) )
                 flags |= LTEXT_STRUT_CONFINED;
             if ( final_line_h ) {

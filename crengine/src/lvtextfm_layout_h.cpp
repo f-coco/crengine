@@ -662,22 +662,27 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
                 formatted_word_t * wi = &frmline->words[i];
                 if ( is_vert_frmline && !(wi->flags & LTEXT_WORD_IS_INLINE_BOX) ) {
                     // Plain / space word: advance vert_layout_min_x past it.
-                    src_text_fragment_t * si = &fmt->m_pbuffer->srctext[wi->src_text_index];
-                    if ( si->t.font ) {
-                        LVFont * fi = (LVFont *)si->t.font;
-                        int font_sz = fi->getSize();
-                        // CJK punctuation has compressed TTB advances but occupies a full
-                        // font_size slot visually — enforce font_size as minimum.
-                        // Non-CJK words (Latin, space) use the actual advance so that
-                        // vert_layout_min_x matches the draw's vert_min_next_x tracking.
-                        // Without this, a U+0020 space before an inline box creates a gap
-                        // of (font_size - space_advance) above the box.
-                        bool is_cjk = (wi->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_FLEXIBLE_WIDTH_CJK)) != 0;
-                        int eff_w   = (is_cjk && (int)wi->width < font_sz) ? font_sz : (int)wi->width;
-                        int next_x  = wi->x + eff_w;
-                        if ( next_x > vert_layout_min_x )
-                            vert_layout_min_x = next_x;
+                    int eff_w = (int)wi->width;
+                    // Guard: only access t.font when the source fragment is a text
+                    // fragment (not an image, inline-box pad, or other object type).
+                    if ( (int)wi->src_text_index < fmt->m_pbuffer->srctextlen ) {
+                        src_text_fragment_t * si = &fmt->m_pbuffer->srctext[wi->src_text_index];
+                        if ( !(si->flags & LTEXT_SRC_IS_OBJECT) && si->t.font ) {
+                            LVFont * fi = (LVFont *)si->t.font;
+                            int font_sz = fi->getSize();
+                            // CJK punctuation has compressed TTB advances but occupies a full
+                            // font_size slot visually — enforce font_size as minimum.
+                            // Non-CJK words (Latin, space) use the actual advance so that
+                            // vert_layout_min_x matches the draw's vert_min_next_x tracking.
+                            // Without this, a U+0020 space before an inline box creates a gap
+                            // of (font_size - space_advance) above the box.
+                            bool is_cjk = (wi->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_FLEXIBLE_WIDTH_CJK)) != 0;
+                            eff_w = (is_cjk && (int)wi->width < font_sz) ? font_sz : (int)wi->width;
+                        }
                     }
+                    int next_x = wi->x + eff_w;
+                    if ( next_x > vert_layout_min_x )
+                        vert_layout_min_x = next_x;
                     continue;
                 }
                 if ( frmline->words[i].flags & LTEXT_WORD_IS_INLINE_BOX ) {
