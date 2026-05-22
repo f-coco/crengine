@@ -680,6 +680,13 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
                             eff_w = (is_cjk && (int)wi->width < font_sz) ? font_sz : (int)wi->width;
                         }
                     }
+                    // Mirror Draw()'s vert_min_next_x clamping: if a previous word's
+                    // effective advance pushed vert_layout_min_x past this word's layout
+                    // position, update word->x so getRect() returns the rendered position,
+                    // not the raw layout position. This prevents highlights from appearing
+                    // above the actual glyph when font CJK advances are slightly < font_size.
+                    if ( (int)wi->x < vert_layout_min_x )
+                        wi->x = (lInt16)vert_layout_min_x;
                     int next_x = wi->x + eff_w;
                     if ( next_x > vert_layout_min_x )
                         vert_layout_min_x = next_x;

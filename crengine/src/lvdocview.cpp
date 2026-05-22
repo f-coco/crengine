@@ -14,6 +14,7 @@
 #include "../include/crsetup.h"
 #include "../include/fb2def.h"
 #include "../include/lvdocview.h"
+#include "../include/lvfntman.h"
 #include "../include/rtfimp.h"
 
 #include "../include/lvstyles.h"
@@ -190,7 +191,7 @@ LVDocView::LVDocView(int bitsPerPixel, bool noDefaultDocument) :
 			, m_section_bounds_valid(false), m_section_bounds_externally_updated(false)
 			, m_doc_format(doc_format_none),
 			m_callback(NULL), m_swapDone(false), m_drawBufferBits(
-					GRAY_BACKBUFFER_BITS) {
+					GRAY_BACKBUFFER_BITS), m_vert_glyph_y_offset(0) {
 #if (COLOR_BACKBUFFER==1)
 	m_backgroundColor = 0xFFFFFF;
 	m_textColor = 0x000000;
@@ -2204,6 +2205,7 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 				bool is_vert = isVerticalText();
 				int draw_x0 = is_vert ? clip.top                        : pageRect->left + m_pageMargins.left;
 				int draw_y0 = is_vert ? 0                               : clip.top;
+				if (is_vert) lfnt_reset_vert_gy_diag();
 				DrawDocument(*drawbuf, m_doc->getRootNode(),
 						draw_x0,
 						draw_y0,
@@ -2213,6 +2215,12 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 						-start,   // doc_y
 						m_dy,     // page_height
 						&m_markRanges, &m_bmkRanges);
+				if (is_vert) {
+					int cnt, sm, smsq, mn, mx;
+					lfnt_get_vert_gy_diag(&cnt, &sm, &smsq, &mn, &mx);
+					if (cnt > 0)
+						m_vert_glyph_y_offset = mn;  // min keeps sbox within one slot
+				}
 			}
 			//CRLog::trace("Done DrawDocument() for main text");
 			if ( m_doc->getPartialRerenderingsCount() != prev_partial_rerenderings_count ) {
@@ -2781,7 +2789,7 @@ bool LVDocView::windowToDocPoint(lvPoint & pt, bool pullInPageArea) {
 				                                m_pages[page]->height );
 				int draw_x0 = m_pageRects[page_rect_idx].top + m_pageMargins.top + headerHeight;
 				pt.y = page_y + (page_right - screen_x);
-				pt.x = screen_y - draw_x0;
+				pt.x = screen_y - draw_x0 - m_vert_glyph_y_offset;
 				return true;
 			}
 			pt.x -= rc->left;
@@ -2853,7 +2861,7 @@ bool LVDocView::docToWindowPoint(lvPoint & pt, bool isRectBottom, bool fitToPage
                             return false;
                         }
                         int draw_x0 = m_pageRects[index].top + m_pageMargins.top + getPageHeaderHeight();
-                        int screen_y = doc_x + draw_x0;
+                        int screen_y = doc_x + draw_x0 + m_vert_glyph_y_offset;
                         // Ruby annotations in vertical-rl can produce doc_x slightly larger
                         // than the column height (frmline->x + word->x overflow).
                         // Clamp screen_y to page bounds instead of rejecting — this produces

@@ -1195,5 +1195,10 @@ public:
     virtual void addGlyph() = 0;
 };
 
+// Vertical glyph-Y diagnostic (defined in lvfntman.cpp).
+// Tracks (gy − y0) for each non-rotated CJK glyph drawn in vertical mode.
+// Reset before each page render; read afterward to calibrate coordinate conversion.
+void lfnt_reset_vert_gy_diag();
+void lfnt_get_vert_gy_diag(int *count, int *sum, int *sum_sq, int *min, int *max);
 
 #endif //__LV_FNT_MAN_H_INCLUDED__
