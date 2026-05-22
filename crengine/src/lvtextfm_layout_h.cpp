@@ -2337,6 +2337,12 @@ void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fr
             // inflating the column.  The inter-column gap (strut - em) is wide enough to
             // accommodate a half-em annotation without overlapping adjacent column text.
             int col_width = fmt->m_pbuffer->strut_height;
+            // Exception: a frmline consisting of a single image uses the image's physical
+            // width (= block-direction / screen-X extent in vertical-rl) so the page
+            // splitter and clip calculations see the correct horizontal span.
+            if ( frmline->word_count == 1 && (frmline->words[0].flags & LTEXT_WORD_IS_IMAGE) ) {
+                col_width = (int)frmline->words[0].width;
+            }
             frmline->height = col_width;
             frmline->width = col_width;
         }
@@ -3266,7 +3272,7 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
         }
         frmline = m_pbuffer->frmlines[i];
         bool line_visible = is_vertical
-            ? ((line_x <= clip.right && line_x - (int)frmline->height >= clip.left) || ignore_clip)
+            ? ((line_x > clip.left && line_x - (int)frmline->height < clip.right) || ignore_clip)
             : (line_y + frmline->height > clip.top || ignore_clip);
         if (line_visible)
         {
@@ -3573,9 +3579,23 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         LVImageSourceRef img = node->getObjectImageSource();
                         if ( img.isNull() )
                             img = LVCreateDummyImageSource( node, word->width, word->o.height );
-                        int xx = x + frmline->x + word->x;
-                        int yy = line_y + frmline->baseline - word->o.height + word->y;
-                        buf->Draw( img, xx, yy, word->width, word->o.height );
+                        if (is_vertical) {
+                            // In vertical-rl mode after the x/y swap at Draw() entry:
+                            //   x   = column advance (doc_y, ≈0 for first column)
+                            //   y   = screen-Y origin of the block
+                            //   line_x = clip.right - x = right edge of current column group
+                            // word->width   = image physical width  = block-direction (screen-X) extent
+                            // word->o.height = image physical height = inline-direction (screen-Y) extent
+                            // Place the right edge of the image at line_x; clamp left to 0.
+                            int x0 = line_x - (int)word->width;
+                            if ( x0 < 0 ) x0 = 0;
+                            int y0 = y + (int)frmline->x + (int)word->x;
+                            buf->Draw( img, x0, y0, word->width, word->o.height );
+                        } else {
+                            int xx = x + frmline->x + word->x;
+                            int yy = line_y + frmline->baseline - word->o.height + word->y;
+                            buf->Draw( img, xx, yy, word->width, word->o.height );
+                        }
                         //buf->FillRect( xx, yy, xx+word->width, yy+word->height, 1 );
                     }
                 }
