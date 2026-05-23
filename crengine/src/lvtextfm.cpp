@@ -26,6 +26,7 @@
 #include "../include/lvtinydom.h"
 #include "../include/lvrend.h"
 #include "../include/textlang.h"
+#include "../include/renderutil.h"
 #endif
 
 #if USE_HARFBUZZ==1
@@ -140,6 +141,22 @@ embedded_float_t * lvtextAddEmbeddedFloat( formatted_text_fragment_t * pbuffer )
     return (pbuffer->floats[ pbuffer->floatcount++ ] = lvtextAllocEmbeddedFloat());
 }
 
+static void lvtextAddOversizedInlineBox( formatted_text_fragment_t * pbuffer, int src_text_index )
+{
+    for ( int i=0; i < pbuffer->oversized_inlinebox_count; i++ ) {
+        if ( pbuffer->oversized_inlineboxes[i] == src_text_index ) {
+            return;
+        }
+    }
+    int size = (pbuffer->oversized_inlinebox_count + FLT_ALLOC_SIZE-1) / FLT_ALLOC_SIZE * FLT_ALLOC_SIZE;
+    if (pbuffer->oversized_inlinebox_count >= size)
+    {
+        size += FLT_ALLOC_SIZE;
+        pbuffer->oversized_inlineboxes = cr_realloc( pbuffer->oversized_inlineboxes, size );
+    }
+    pbuffer->oversized_inlineboxes[ pbuffer->oversized_inlinebox_count++ ] = src_text_index;
+}
+
 
 formatted_text_fragment_t * lvtextAllocFormatter( lUInt16 width )
 {
@@ -178,6 +195,8 @@ void lvtextFreeFormatter( formatted_text_fragment_t * pbuffer )
         {
             if (pbuffer->srctext[i].flags & LTEXT_FLAG_OWNTEXT)
                 free( (void*)pbuffer->srctext[i].t.text );
+            if ( pbuffer->srctext[i].retained_font_ref )
+                delete (LVFontRef*)pbuffer->srctext[i].retained_font_ref;
         }
         free( pbuffer->srctext );
     }
@@ -199,6 +218,10 @@ void lvtextFreeFormatter( formatted_text_fragment_t * pbuffer )
             free(pbuffer->floats[i]);
         }
         free( pbuffer->floats );
+    }
+    if (pbuffer->oversized_inlineboxes)
+    {
+        free( pbuffer->oversized_inlineboxes );
     }
     if (pbuffer->inlineboxes_links)
     {
@@ -226,8 +249,9 @@ void lvtextAddSourceLine( formatted_text_fragment_t * pbuffer,
    lInt16          indent,    /* first line indent (or all but first, when negative) */
    void *          object,    /* pointer to custom object */
    lUInt16         offset,
-   lInt16          letter_spacing
-                         )
+   lInt16          letter_spacing,
+   void *          retained_font_ref
+                          )
 {
     int srctextsize = (pbuffer->srctextlen + FRM_ALLOC_SIZE-1) / FRM_ALLOC_SIZE * FRM_ALLOC_SIZE;
     if ( pbuffer->srctextlen >= srctextsize)
@@ -237,6 +261,7 @@ void lvtextAddSourceLine( formatted_text_fragment_t * pbuffer,
     }
     src_text_fragment_t * pline = &pbuffer->srctext[ pbuffer->srctextlen++ ];
     pline->t.font = font;
+    pline->retained_font_ref = retained_font_ref;
 //    if (font) {
 //        // DEBUG: check for crash
 //        CRLog::trace("c font = %08x  txt = %08x", (lUInt32)font, (lUInt32)text);
@@ -297,6 +322,7 @@ void lvtextAddSourceObject(
         pbuffer->srctext = cr_realloc( pbuffer->srctext, srctextsize );
     }
     src_text_fragment_t * pline = &pbuffer->srctext[ pbuffer->srctextlen++ ];
+    pline->retained_font_ref = NULL;
     pline->index = (lUInt16)(pbuffer->srctextlen-1);
     pline->flags = flags | LTEXT_SRC_IS_OBJECT;
     pline->o.objflags = objflags;
@@ -480,6 +506,14 @@ public:
     bool m_has_cjk; // true when some CJK met
     int  m_cjk_prev_line_added_space_div; // Used with CJK justified lines, to
     int  m_cjk_prev_line_added_space_mod; // apply same spacing on last line.
+    struct {
+        bool active;
+        bool is_right;
+        int x;
+        int width;
+        int start_y;
+        int end_y;
+    } m_initial_letter_exclusion;
 
 // These are not unicode codepoints: these values are put where we
 // store text indexes in the source text node.
@@ -518,6 +552,12 @@ public:
         m_usable_left_overflow = 0;
         m_usable_right_overflow = 0;
         m_hanging_punctuation = false;
+        m_initial_letter_exclusion.active = false;
+        m_initial_letter_exclusion.is_right = false;
+        m_initial_letter_exclusion.x = 0;
+        m_initial_letter_exclusion.width = 0;
+        m_initial_letter_exclusion.start_y = 0;
+        m_initial_letter_exclusion.end_y = 0;
         m_has_cjk = false;
         m_cjk_prev_line_added_space_div = 0;
         m_cjk_prev_line_added_space_mod = 0;
@@ -531,6 +571,69 @@ public:
 
     ~LVFormatter()
     {
+    }
+
+    // Handle sinking initial-letter exclusion area (similar to how we handle floats,
+    // but this should not follow floats' clearance/stacking rules and pecularities)
+    void activateInitialLetterInlineBoxExclusion(formatted_line_t * frmline, formatted_word_t * word) {
+        if ( !word || !(word->flags & LTEXT_WORD_IS_INLINE_BOX) ) {
+            return;
+        }
+        src_text_fragment_t * src = &m_pbuffer->srctext[word->src_text_index];
+        ldomNode * node = (ldomNode *) src->object;
+        if ( !getInitialLetterInlineBoxPseudoElem(node) ) {
+            return;
+        }
+        RenderRectAccessor fmt( node );
+        InitialLetterInlineBoxMetrics metrics;
+        if ( !getInitialLetterInlineBoxMetrics(node, fmt.getBaseline(), metrics) ) {
+            m_initial_letter_exclusion.active = false;
+            return;
+        }
+        int exclusion_start = frmline->y + frmline->height;
+        // If the first line had to grow upward for accents/raised initials, the
+        // same vertical shift must extend the later-line exclusion footprint.
+        int exclusion_end = frmline->y + metrics.top_overflow + metrics.exclusion_height;
+        if ( exclusion_end <= exclusion_start ) {
+            m_initial_letter_exclusion.active = false;
+            return;
+        }
+        int exclusion_x = fmt.getX();
+        int exclusion_right = exclusion_x + fmt.getWidth();
+        // This mirrors the width widening done when the inline-box is first measured.
+        lvRect ink_rect;
+        if ( getInitialLetterInlineBoxInkRect(node, ink_rect) ) {
+            lvRect box_rect;
+            node->getAbsRect(box_rect);
+            if ( m_para_dir_is_rtl ) {
+                int left_overflow = box_rect.left - ink_rect.left;
+                if ( left_overflow > 0 ) {
+                    exclusion_x -= left_overflow;
+                }
+            }
+            else {
+                int right_overflow = ink_rect.right - box_rect.right;
+                if ( right_overflow > 0 ) {
+                    exclusion_right += right_overflow;
+                }
+            }
+        }
+        if ( exclusion_right <= 0 || exclusion_x >= m_pbuffer->width ) {
+            m_initial_letter_exclusion.active = false;
+            return;
+        }
+        if ( exclusion_x < 0 ) {
+            exclusion_x = 0;
+        }
+        if ( exclusion_right > m_pbuffer->width ) {
+            exclusion_right = m_pbuffer->width;
+        }
+        m_initial_letter_exclusion.active = true;
+        m_initial_letter_exclusion.is_right = m_para_dir_is_rtl;
+        m_initial_letter_exclusion.x = exclusion_x;
+        m_initial_letter_exclusion.width = exclusion_right - exclusion_x;
+        m_initial_letter_exclusion.start_y = exclusion_start;
+        m_initial_letter_exclusion.end_y = exclusion_end;
     }
 
     // Embedded floats positioning helpers.
@@ -574,7 +677,6 @@ public:
     // Also set offset_x to the x where this width is available
     int getAvailableWidthAtY(int start_y, int h, int & offset_x) {
         if (m_pbuffer->floatcount == 0) { // common short path when no float
-            offset_x = 0;
             // For vertical text, the "line width" is the column height (page_height).
             // Using m_pbuffer->width (horizontal block width) would make alignLine
             // think the column massively overflows, causing heavy space compression.
@@ -586,9 +688,30 @@ public:
             // upward without the vert_min_next_x clamping that protects plain chars.
             if ( m_pbuffer->writing_mode == css_wm_vertical_rl ||
                  m_pbuffer->writing_mode == css_wm_vertical_lr ) {
+                offset_x = 0;
                 return m_pbuffer->page_height;
             }
-            return m_pbuffer->width;
+            int fl_left_max_x = 0;
+            int fl_right_min_x = m_pbuffer->width;
+            if ( m_initial_letter_exclusion.active ) {
+                int y = start_y;
+                while ( y <= start_y + h ) {
+                    if ( y >= m_initial_letter_exclusion.start_y && y < m_initial_letter_exclusion.end_y ) {
+                        if ( m_initial_letter_exclusion.is_right ) {
+                            if ( m_initial_letter_exclusion.x < fl_right_min_x )
+                                fl_right_min_x = m_initial_letter_exclusion.x;
+                        }
+                        else {
+                            int right = m_initial_letter_exclusion.x + m_initial_letter_exclusion.width;
+                            if ( right > fl_left_max_x )
+                                fl_left_max_x = right;
+                        }
+                    }
+                    y += 1;
+                }
+            }
+            offset_x = fl_left_max_x;
+            return fl_right_min_x - fl_left_max_x;
         }
         int fl_left_max_x = 0;
         int fl_right_min_x = m_pbuffer->width;
@@ -608,6 +731,17 @@ public:
                         if (flt->x + flt->width > fl_left_max_x)
                             fl_left_max_x = flt->x + flt->width;
                     }
+                }
+            }
+            if ( m_initial_letter_exclusion.active && y >= m_initial_letter_exclusion.start_y && y < m_initial_letter_exclusion.end_y ) {
+                if ( m_initial_letter_exclusion.is_right ) {
+                    if ( m_initial_letter_exclusion.x < fl_right_min_x )
+                        fl_right_min_x = m_initial_letter_exclusion.x;
+                }
+                else {
+                    int right = m_initial_letter_exclusion.x + m_initial_letter_exclusion.width;
+                    if ( right > fl_left_max_x )
+                        fl_left_max_x = right;
                 }
             }
             y += 1;
@@ -749,6 +883,17 @@ public:
                         flt->x = x;
                         flt->y = y;
                         flt->to_position = false;
+                        ldomNode * source_node = node->getEffectiveNode();
+                        if ( source_node != node ) {
+                            // We ended up positionning the cloneNode for an floatBox on
+                            // the ::first-line of the paragraph, which means the original
+                            // floatBox has not been positionned and won't be shown.
+                            // Flag that original node as not-rendered/discarded, so that
+                            // getRect(), when called on a xpointer to the original source,
+                            // know it has to climb to its clondeNode and use its rect.
+                            RenderRectAccessor source_fmt( source_node );
+                            RENDER_RECT_SET_FLAG(source_fmt, BOX_IS_DISCARDED);
+                        }
                         fmt.setX(flt->x);
                         fmt.setY(flt->y);
                         if (flt->is_right)
@@ -788,6 +933,17 @@ public:
             flt->y = y;
             flt->to_position = false;
             ldomNode * node = (ldomNode *) flt->srctext->object;
+            ldomNode * source_node = node->getEffectiveNode();
+            if ( source_node != node ) {
+                // We ended up positionning the cloneNode for an floatBox on
+                // the ::first-line of the paragraph, which means the original
+                // floatBox has not been positionned and won't be shown.
+                // Flag that original node as not-rendered/discarded, so that
+                // getRect(), when called on a xpointer to the original source,
+                // know it has to climb to its clondeNode and use its rect.
+                RenderRectAccessor source_fmt( source_node );
+                RENDER_RECT_SET_FLAG(source_fmt, BOX_IS_DISCARDED);
+            }
             RenderRectAccessor fmt( node );
             fmt.setX(flt->x);
             fmt.setY(flt->y);
@@ -1252,7 +1408,13 @@ public:
                         // to set LCHAR_ALLOW_WRAP_AFTER on it.
                         // (it will allow wrap before and after an object, unless it's near
                         // some punctuation/quote/paren, whose rules will be ensured it seems).
-                        int brk = lb_process_next_char(&lbCtx, (utf32_t)0xFFFC); // OBJECT REPLACEMENT CHARACTER
+                        lChar32 surrogate = 0xFFFC; // OBJECT REPLACEMENT CHARACTER
+                        if ( getInitialLetterInlineBoxPseudoElem((ldomNode *)src->object) ) {
+                            // If that inline box is an initial letter, keep the following text stuck to it
+                            // (if there is a following space, it will naturally cancel this)
+                            surrogate = 0x2060; // WORD JOINER
+                        }
+                        int brk = lb_process_next_char(&lbCtx, (utf32_t)surrogate);
                         if (pos > 0) {
                             if (brk == LINEBREAK_ALLOWBREAK)
                                 m_flags[pos-1] |= LCHAR_ALLOW_WRAP_AFTER;
@@ -2400,6 +2562,35 @@ public:
                         int width = fmt.getWidth();
                         int height = fmt.getHeight();
                         int baseline = fmt.getBaseline();
+                        // If that inline-box is an initial-letter, we need some adjustments
+                        InitialLetterInlineBoxMetrics initial_letter_metrics;
+                        if ( getInitialLetterInlineBoxMetrics(node, baseline, initial_letter_metrics) ) {
+                            baseline = initial_letter_metrics.placement_baseline;
+                            // Widen its word->width to account for ink overflowing on the side
+                            // of the running text (ie. italic 'f').
+                            // (activateInitialLetterInlineBoxExclusion() will do the same for
+                            // the exclusion area).
+                            lvRect ink_rect;
+                            if ( getInitialLetterInlineBoxInkRect(node, ink_rect) ) {
+                                lvRect box_rect;
+                                node->getAbsRect(box_rect);
+                                if ( m_para_dir_is_rtl ) {
+                                    int left_overflow = box_rect.left - ink_rect.left;
+                                    if ( left_overflow > 0 ) {
+                                        width += left_overflow;
+                                    }
+                                }
+                                else {
+                                    int right_overflow = ink_rect.right - box_rect.right;
+                                    if ( right_overflow > 0 ) {
+                                        width += right_overflow;
+                                    }
+                                }
+                            }
+                            // It feels we can let a space following the initial letter
+                            // be expanded by text justification.
+                            // if ( start < m_length-1 ) m_flags[start+1] |= LCHAR_LOCKED_SPACING;
+                        }
                         // For vertical ruby with Latin base text, fmt.getWidth() is TTB-based
                         // (text formatter uses vertical TTB advances ≈ font_size per char).
                         // The visual column depth is the horizontal advance of the base text
@@ -2871,6 +3062,12 @@ static void freeFrmLines( formatted_text_fragment_t * m_pbuffer )
     }
     m_pbuffer->floats = NULL;
     m_pbuffer->floatcount = 0;
+
+    // Also clear oversized inlinebox src indices
+    if (m_pbuffer->oversized_inlineboxes)
+        free( m_pbuffer->oversized_inlineboxes );
+    m_pbuffer->oversized_inlineboxes = NULL;
+    m_pbuffer->oversized_inlinebox_count = 0;
 
     // Also clear inlinebox links containers
     if (m_pbuffer->inlineboxes_links)
