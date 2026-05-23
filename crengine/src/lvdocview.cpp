@@ -2861,7 +2861,14 @@ bool LVDocView::docToWindowPoint(lvPoint & pt, bool isRectBottom, bool fitToPage
                             return false;
                         }
                         int draw_x0 = m_pageRects[index].top + m_pageMargins.top + getPageHeaderHeight();
-                        int screen_y = doc_x + draw_x0 + m_vert_glyph_y_offset;
+                        // Per-slot offset lookup: aligns the highlight sbox with the actual
+                        // glyph for each character.  Falls back to the page-wide min
+                        // (m_vert_glyph_y_offset) when no exact match is found (e.g. ruby
+                        // annotations, rotated Latin words, or off-page coordinates).
+                        int slot_y = doc_x + draw_x0;
+                        int offset = lfnt_lookup_vert_slot_offset(screen_x, slot_y,
+                                                                   m_vert_glyph_y_offset);
+                        int screen_y = slot_y + offset;
                         // Ruby annotations in vertical-rl can produce doc_x slightly larger
                         // than the column height (frmline->x + word->x overflow).
                         // Clamp screen_y to page bounds instead of rejecting — this produces

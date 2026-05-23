@@ -1201,4 +1201,29 @@ public:
 void lfnt_reset_vert_gy_diag();
 void lfnt_get_vert_gy_diag(int *count, int *sum, int *sum_sq, int *min, int *max);
 
+// Per-slot offset lookup for vertical-rl sbox alignment (defined in lvfntman.cpp).
+// Returns the recorded glyph-Y offset for an exact (anchor, slot_y) match, or
+// `fallback` if no record matches.  Records are populated during DrawTextString
+// in vertical mode and cleared by lfnt_reset_vert_gy_diag().
+int lfnt_lookup_vert_slot_offset(int anchor, int slot_y, int fallback);
+
+// Set the column anchor (line_x in screen coords) and slot_y key used by
+// DrawTextString to key per-slot records.  slot_y_key must match what
+// docToWindowPoint will compute at lookup time from the layout-stored
+// position (clip.top + frmline->x + word->x), NOT the per-draw running
+// tracker.  Must be called by the vertical formatter immediately before each
+// DrawTextString call into a column; -1 disables recording.
+void lfnt_vert_set_current_anchor(int anchor);
+void lfnt_vert_set_current_slot_y_key(int slot_y_key);
+
+// Diagnostic / test accessors for the per-slot record machinery.
+int  lfnt_vert_slot_record_count();
+bool lfnt_vert_get_slot_record(int i, int *anchor_out, int *slot_y_out, int *offset_out);
+void lfnt_vert_get_lookup_counts(int *hits_out, int *misses_out);
+int  lfnt_vert_get_anchor_sets();
+int  lfnt_vert_get_lifetime_draws();
+int  lfnt_vert_lookup_log_size();
+bool lfnt_vert_get_lookup_log(int i, int *anchor_out, int *slot_y_out,
+                              int *returned_out, bool *hit_out);
+
 #endif //__LV_FNT_MAN_H_INCLUDED__
