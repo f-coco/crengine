@@ -191,7 +191,8 @@ LVDocView::LVDocView(int bitsPerPixel, bool noDefaultDocument) :
 			, m_section_bounds_valid(false), m_section_bounds_externally_updated(false)
 			, m_doc_format(doc_format_none),
 			m_callback(NULL), m_swapDone(false), m_drawBufferBits(
-					GRAY_BACKBUFFER_BITS) {
+					GRAY_BACKBUFFER_BITS), m_vert_glyph_y_offset(0)
+			, m_vert_last_pt_offset(0), m_vert_last_pt_hit(false) {
 #if (COLOR_BACKBUFFER==1)
 	m_backgroundColor = 0xFFFFFF;
 	m_textColor = 0x000000;
@@ -2215,6 +2216,12 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 						-start,   // doc_y
 						m_dy,     // page_height
 						&m_markRanges, &m_bmkRanges);
+				if (is_vert) {
+					int cnt, sm, smsq, mn, mx;
+					lfnt_get_vert_gy_diag(&cnt, &sm, &smsq, &mn, &mx);
+					if (cnt > 0)
+						m_vert_glyph_y_offset = mn;  // min keeps sbox within one slot
+				}
 			}
 			//CRLog::trace("Done DrawDocument() for main text");
 			if ( m_doc->getPartialRerenderingsCount() != prev_partial_rerenderings_count ) {
@@ -2783,7 +2790,7 @@ bool LVDocView::windowToDocPoint(lvPoint & pt, bool pullInPageArea) {
 				                                m_pages[page]->height );
 				int draw_x0 = m_pageRects[page_rect_idx].top + m_pageMargins.top + headerHeight;
 				pt.y = page_y + (page_right - screen_x);
-				pt.x = screen_y - draw_x0;
+				pt.x = screen_y - draw_x0 - m_vert_glyph_y_offset;
 				return true;
 			}
 			pt.x -= rc->left;
@@ -2855,7 +2862,27 @@ bool LVDocView::docToWindowPoint(lvPoint & pt, bool isRectBottom, bool fitToPage
                             return false;
                         }
                         int draw_x0 = m_pageRects[index].top + m_pageMargins.top + getPageHeaderHeight();
-                        int screen_y = doc_x + draw_x0;
+                        // Per-slot offset lookup: aligns the highlight sbox with the actual
+                        // glyph for each character.  Falls back to the page-wide min
+                        // (m_vert_glyph_y_offset) when no exact match is found (e.g. ruby
+                        // annotations, rotated Latin words, or off-page coordinates).
+                        int slot_y = doc_x + draw_x0;
+                        bool my_hit = false;
+                        int offset = lfnt_lookup_vert_slot_offset(screen_x, slot_y,
+                                                                   m_vert_glyph_y_offset,
+                                                                   &my_hit);
+                        // Sbox corners are paired (topLeft then bottomRight=true).  The
+                        // bottomRight's anchor is at the column's opposite edge and its
+                        // slot_y is at glyph_top+height, so its own lookup misses by design.
+                        // Inheriting the topLeft's offset keeps top/bottom shifted uniformly
+                        // — sbox height matches glyph height instead of being short.
+                        if (!isRectBottom) {
+                            m_vert_last_pt_offset = offset;
+                            m_vert_last_pt_hit    = my_hit;
+                        } else if (!my_hit && m_vert_last_pt_hit) {
+                            offset = m_vert_last_pt_offset;
+                        }
+                        int screen_y = slot_y + offset;
                         // Ruby annotations in vertical-rl can produce doc_x slightly larger
                         // than the column height (frmline->x + word->x overflow).
                         // Clamp screen_y to page bounds instead of rejecting — this produces

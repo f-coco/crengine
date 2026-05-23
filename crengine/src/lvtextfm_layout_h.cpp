@@ -7,6 +7,18 @@
 int ltext_vert_bleed_count = 0;
 int ltext_vert_bleed_max_px = 0;
 
+// Diagnostic: count CJK draw calls reached by the vertical formatter path.
+// Compared with lfnt_vert_lifetime_draws this isolates whether records are
+// lost between formatter and font (mismatch) or before the formatter (=0).
+int ltext_vert_fmt_draws = 0;
+// Counts every LFormattedText::Draw entry, regardless of writing-mode, and
+// every word-loop iteration.  Comparing fmt_draws / fmt_calls / word_iters
+// tells us whether inner ruby cells reach LFormattedText::Draw with vertical
+// writing-mode or not.
+int ltext_fmt_calls   = 0;
+int ltext_fmt_vert_calls = 0;
+int ltext_word_iters  = 0;
+
 // Diagnostic: layout/draw position mismatch for vertical inline boxes.
 // Fires when ib_word_x (from layout) > vert_min_next_x (draw tracking),
 // meaning the layout placed the box further than the draw tracker expected —
@@ -50,6 +62,16 @@ void ltext_reset_vert_bleed() {
 void ltext_get_vert_bleed(int *count_out, int *max_px_out) {
     *count_out  = ltext_vert_bleed_count;
     *max_px_out = ltext_vert_bleed_max_px;
+}
+
+int ltext_get_vert_fmt_draws() {
+    return ltext_vert_fmt_draws;
+}
+
+void ltext_get_fmt_counts(int *calls_out, int *vert_calls_out, int *word_iters_out) {
+    if (calls_out)      *calls_out      = ltext_fmt_calls;
+    if (vert_calls_out) *vert_calls_out = ltext_fmt_vert_calls;
+    if (word_iters_out) *word_iters_out = ltext_word_iters;
 }
 
 
@@ -3224,6 +3246,8 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
     buf->GetClipRect( &clip );
     const lChar32 * str;
     bool is_vertical = (css_wm_is_vertical(m_pbuffer->writing_mode));
+    ltext_fmt_calls++;
+    if (is_vertical) ltext_fmt_vert_calls++;
     if (is_vertical) {
         // DrawDocument passes (actual_Y, actual_X) as (x, y) due to the Y=X
         // coordinate mapping used throughout the rendering/page-split pipeline.
@@ -3585,6 +3609,7 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
             lUInt16 lastWordSrcIndex;
             for (j=0; j<frmline->word_count; j++)
             {
+                ltext_word_iters++;
                 word = &frmline->words[j];
                 srcline = &m_pbuffer->srctext[word->src_text_index];
                 if ( (srcline->flags & LTEXT_HAS_EXTRA) && getLTextExtraProperty(srcline, LTEXT_EXTRA_CSS_HIDDEN) && !buf->WantsHiddenContent() )
@@ -3965,6 +3990,19 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         }
                     }
                     {
+                        // For vertical-rl, hand the column anchor (line_x) AND the slot_y
+                        // key (clip.top + frmline->x + word->x in screen coords) to the font
+                        // layer.  Using word->x — the position layoutstores and getRectEx
+                        // returns — instead of clamped_x (the running tracker possibly
+                        // bumped by vert_min_next_x overlap correction) lets docToWindowPoint
+                        // produce matching keys at sbox time.
+                        if (is_vertical) {
+                            lfnt_vert_set_current_anchor(line_x);
+                            // y here is screen-Y origin (= clip.top for outer block; the inner
+                            // block's accumulated draw_y for nested formatters such as ruby cells)
+                            lfnt_vert_set_current_slot_y_key(y + (int)frmline->x + (int)word->x);
+                            ltext_vert_fmt_draws++;
+                        }
                         int _adv = !vert_skip_draw ? font->DrawTextString(
                             buf,
                             x0,
@@ -3980,6 +4018,10 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             word->width,
                             text_decoration_back_gap,
                             w, h) : 0;
+                        if (is_vertical) {
+                            lfnt_vert_set_current_anchor(-1);
+                            lfnt_vert_set_current_slot_y_key(-1);
+                        }
                         // For word_is_latin_in_vertical, DrawTextString returns the
                         // actual horizontal (x_advance) width, which may be smaller
                         // than word->width (TTB y_advance) for fonts with full-em vmtx.

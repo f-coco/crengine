@@ -478,10 +478,6 @@ public:
 
     /// returns font baseline offset
     virtual int getBaseline() = 0;
-    /// Returns the per-font vertical glyph Y offset (gy - y), measured from the
-    /// first DrawTextString call in vertical mode.  Returns -1 if the font has
-    /// not yet drawn any vertical glyphs (page not yet rendered).
-    virtual int getVertGlyphYOffset() const { return -1; }
     /// returns font height including normal interline space
     virtual int getHeight() const = 0;
     /// returns font character size
@@ -771,7 +767,6 @@ public:
     virtual LVFontGlyphCacheItem * getGlyph(lUInt32 ch, lChar32 def_char=0, bool is_fallback=false);
     /// returns font baseline offset
     virtual int getBaseline();
-    virtual int getVertGlyphYOffset() const;
     /// returns font height
     virtual int getHeight() const;
     /// returns font character size
@@ -1200,11 +1195,38 @@ public:
     virtual void addGlyph() = 0;
 };
 
-
 // Vertical glyph-Y diagnostic (defined in lvfntman.cpp).
-// Records (gy − y) for each non-rotated vertical glyph drawn in vertical mode.
-// Used by tests to verify the glyph-Y formula; not used for coordinate conversion.
+// Tracks (gy − y0) for each non-rotated CJK glyph drawn in vertical mode.
+// Reset before each page render; read afterward to calibrate coordinate conversion.
 void lfnt_reset_vert_gy_diag();
 void lfnt_get_vert_gy_diag(int *count, int *sum, int *sum_sq, int *min, int *max);
+
+// Per-slot offset lookup for vertical-rl sbox alignment (defined in lvfntman.cpp).
+// Returns the recorded glyph-Y offset for an exact (anchor, slot_y) match, or
+// `fallback` if no record matches.  Records are populated during DrawTextString
+// in vertical mode and cleared by lfnt_reset_vert_gy_diag().
+// If `hit_out` is non-NULL, *hit_out is set to true on exact match, false otherwise;
+// callers (docToWindowPoint) use this to share the topLeft offset with the bottomRight
+// when the bottomRight's own lookup misses (column-edge / glyph-bottom mismatch).
+int lfnt_lookup_vert_slot_offset(int anchor, int slot_y, int fallback, bool *hit_out = NULL);
+
+// Set the column anchor (line_x in screen coords) and slot_y key used by
+// DrawTextString to key per-slot records.  slot_y_key must match what
+// docToWindowPoint will compute at lookup time from the layout-stored
+// position (clip.top + frmline->x + word->x), NOT the per-draw running
+// tracker.  Must be called by the vertical formatter immediately before each
+// DrawTextString call into a column; -1 disables recording.
+void lfnt_vert_set_current_anchor(int anchor);
+void lfnt_vert_set_current_slot_y_key(int slot_y_key);
+
+// Diagnostic / test accessors for the per-slot record machinery.
+int  lfnt_vert_slot_record_count();
+bool lfnt_vert_get_slot_record(int i, int *anchor_out, int *slot_y_out, int *offset_out);
+void lfnt_vert_get_lookup_counts(int *hits_out, int *misses_out);
+int  lfnt_vert_get_anchor_sets();
+int  lfnt_vert_get_lifetime_draws();
+int  lfnt_vert_lookup_log_size();
+bool lfnt_vert_get_lookup_log(int i, int *anchor_out, int *slot_y_out,
+                              int *returned_out, bool *hit_out);
 
 #endif //__LV_FNT_MAN_H_INCLUDED__
