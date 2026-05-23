@@ -2628,7 +2628,7 @@ static void tryHyphenBreak(
 // processParagraphHorizontal
 // Origin: upstream lvtextfm.cpp `void LVFormatter::processParagraph(...)` (~line
 // 4692 pre-f8b0bbe1).  Member -> free function as above.  The vertical-mode
-// sibling is processParagraphVertical in lvtextfm_layout_v.cpp.
+// sibling is processParagraphVertical in lvtextfm_vert.cpp.
 // -----------------------------------------------------------------------------
 void processParagraphHorizontal( LVFormatter* fmt, int start, int end, bool isLastPara )
     {

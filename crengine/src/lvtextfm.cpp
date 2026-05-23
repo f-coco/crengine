@@ -418,7 +418,7 @@ class LVFormatter;
 void processParagraphHorizontal( LVFormatter* fmt, int start, int end, bool isLastPara );
 void processEmbeddedBlockHorizontal( LVFormatter* fmt, int idx );
 // Forward declarations for vertical layout free functions
-// (defined in lvtextfm_layout_v.cpp)
+// (defined in lvtextfm_vert.cpp)
 void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLastPara );
 void processEmbeddedBlockVertical( LVFormatter* fmt, int idx );
 // Helper functions used by measureText() and processParagraphHorizontal()
@@ -3361,6 +3361,6 @@ static void drawBorder(LVDrawBuf * buf, int x0, int x1, int y, int h, ldomNode *
 }
 
 #include "lvtextfm_layout_h.cpp"
-#include "lvtextfm_layout_v.cpp"
+#include "lvtextfm_vert.cpp"
 
 #endif
