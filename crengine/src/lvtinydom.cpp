@@ -10567,7 +10567,6 @@ bool ldomXPointer::getRect(lvRect & rect, bool extended, bool adjusted, int * ct
         // Get the formatted text, so we can look where in it is this XPointer
         LFormattedTextRef txtform;
         finalNode->renderFinalBlock( txtform, &fmt, inner_width );
-        bool is_vertical_rl = css_wm_is_vertical(txtform->GetBuffer()->writing_mode);
 
         ldomNode *node = getNode();
         int offset = getOffset();
@@ -11027,14 +11026,6 @@ bool ldomXPointer::getRect(lvRect & rect, bool extended, bool adjusted, int * ct
                             rect.right = rect.left + 1;
                         }
                         rect.bottom = rect.top + frmline->height;
-                        if (is_vertical_rl && !(word->flags & (LTEXT_WORD_IS_IMAGE|LTEXT_WORD_IS_INLINE_BOX))) {
-                            const src_text_fragment_t * vsrc = txtform->GetSrcInfo(word->src_text_index);
-                            LVFont * vf = (!(vsrc->flags & LTEXT_SRC_IS_OBJECT)) ? (LVFont *)vsrc->t.font : NULL;
-                            if (vf) {
-                                int gy_off = vf->getVertGlyphYOffset();
-                                if (gy_off > 0) { rect.left += gy_off; rect.right += gy_off; }
-                            }
-                        }
                         // No ctxFlags to set
                         return true;
                     } else if ( (word->src_text_index == srcIndex) &&
@@ -11060,10 +11051,6 @@ bool ldomXPointer::getRect(lvRect & rect, bool extended, bool adjusted, int * ct
                             rect.top = rc.top + frmline->y;
                             rect.right = rect.left + 1;
                             rect.bottom = rect.top + frmline->height;
-                            if (is_vertical_rl && font) {
-                                int gy_off = font->getVertGlyphYOffset();
-                                if (gy_off > 0) { rect.left += gy_off; rect.right += gy_off; }
-                            }
                             // No ctxFlags to set
                             return true;
                         }
@@ -11153,10 +11140,6 @@ bool ldomXPointer::getRect(lvRect & rect, bool extended, bool adjusted, int * ct
                         else
                             rect.right = rect.left + 1;
                         rect.bottom = rect.top + frmline->height;
-                        if (is_vertical_rl && font) {
-                            int gy_off = font->getVertGlyphYOffset();
-                            if (gy_off > 0) { rect.left += gy_off; rect.right += gy_off; }
-                        }
                         // No ctxFlags to set
                         return true;
                     } else if (lastWord) {
@@ -11169,14 +11152,6 @@ bool ldomXPointer::getRect(lvRect & rect, bool extended, bool adjusted, int * ct
                         else
                             rect.right = rect.left + 1;
                         rect.bottom = rect.top + frmline->height;
-                        if (is_vertical_rl && !(word->flags & (LTEXT_WORD_IS_IMAGE|LTEXT_WORD_IS_INLINE_BOX))) {
-                            const src_text_fragment_t * vsrc = txtform->GetSrcInfo(word->src_text_index);
-                            LVFont * vf = (!(vsrc->flags & LTEXT_SRC_IS_OBJECT)) ? (LVFont *)vsrc->t.font : NULL;
-                            if (vf) {
-                                int gy_off = vf->getVertGlyphYOffset();
-                                if (gy_off > 0) { rect.left += gy_off; rect.right += gy_off; }
-                            }
-                        }
                         // No ctxFlags to set
                         return true;
                     }
