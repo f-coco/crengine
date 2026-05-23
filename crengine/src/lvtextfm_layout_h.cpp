@@ -3269,6 +3269,9 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
     int vert_anchor = (is_vertical && draw_extra_info && draw_extra_info->vert_column_clip_right)
         ? draw_extra_info->vert_column_clip_right : clip.right;
     int line_x = is_vertical ? (vert_anchor - x) : x;
+    // line_x decrements per frmline; preserve initial value as reference for
+    // translating block-relative mark.top/bottom (formatter-y) to screen-X.
+    int line_x_initial = line_x;
 
     bool ignore_clip = false;
     if ( m_pbuffer->frmlinecount == 1 && m_pbuffer->frmlines[0]->word_count > 0 ) {
@@ -3573,8 +3576,12 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                     ldomMarkedRange * range = marks->get(i);
                     // printf("marks #%d %d %d > %d %d\n", i, range->start.x, range->start.y, range->end.x, range->end.y);
                     if ( range->intersects( lineRect, mark ) ) {
-                        //
-                        buf->FillRect(mark.left + x, mark.top + y, mark.right + x, mark.bottom + y, m_pbuffer->highlight_options.selectionColor);
+                        // Vertical-rl: formatter-x→screen-Y (+y), formatter-y→screen-X (line_x_initial−).
+                        if (is_vertical) {
+                            buf->FillRect(line_x_initial - mark.bottom, mark.left + y, line_x_initial - mark.top, mark.right + y, m_pbuffer->highlight_options.selectionColor);
+                        } else {
+                            buf->FillRect(mark.left + x, mark.top + y, mark.right + x, mark.bottom + y, m_pbuffer->highlight_options.selectionColor);
+                        }
                     }
                 }
             }
@@ -3584,9 +3591,14 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                     lvRect mark;
                     ldomMarkedRange * range = bookmarks->get(i);
                     if ( range->intersects( lineRect, mark ) ) {
-                        //
-                        DrawBookmarkTextUnderline(*buf, mark.left + x, mark.top + y, mark.right + x, mark.bottom + y, mark.bottom + y - 2, range->flags,
-                                                  &m_pbuffer->highlight_options);
+                        // Vertical-rl: same axis-swap as marks above.
+                        if (is_vertical) {
+                            DrawBookmarkTextUnderline(*buf, line_x_initial - mark.bottom, mark.left + y, line_x_initial - mark.top, mark.right + y, mark.right + y - 2, range->flags,
+                                                      &m_pbuffer->highlight_options);
+                        } else {
+                            DrawBookmarkTextUnderline(*buf, mark.left + x, mark.top + y, mark.right + x, mark.bottom + y, mark.bottom + y - 2, range->flags,
+                                                      &m_pbuffer->highlight_options);
+                        }
                     }
                 }
             }
@@ -3599,7 +3611,12 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                     lvRect bookmark_rc;
                     ldomMarkedRange * range = bookmarks->get(i);
                     if ( range->intersects( lineRect, bookmark_rc ) ) {
-                        buf->FillRect( bookmark_rc.left + x, bookmark_rc.top + y, bookmark_rc.right + x, bookmark_rc.bottom + y, 0xAAAAAA );
+                        // Vertical-rl: same axis-swap as marks above.
+                        if (is_vertical) {
+                            buf->FillRect( line_x_initial - bookmark_rc.bottom, bookmark_rc.left + y, line_x_initial - bookmark_rc.top, bookmark_rc.right + y, 0xAAAAAA );
+                        } else {
+                            buf->FillRect( bookmark_rc.left + x, bookmark_rc.top + y, bookmark_rc.right + x, bookmark_rc.bottom + y, 0xAAAAAA );
+                        }
                     }
                 }
             }
@@ -4097,7 +4114,12 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                     lvRect mark;
                     ldomMarkedRange * range = marks->get(i);
                     if ( range->intersects( lineRect, mark ) ) {
-                        buf->InvertRect( mark.left + x, mark.top + y, mark.right + x, mark.bottom + y);
+                        // Vertical-rl: same axis-swap as marks/bookmarks above.
+                        if (is_vertical) {
+                            buf->InvertRect( line_x_initial - mark.bottom, mark.left + y, line_x_initial - mark.top, mark.right + y);
+                        } else {
+                            buf->InvertRect( mark.left + x, mark.top + y, mark.right + x, mark.bottom + y);
+                        }
                     }
                 }
             }
