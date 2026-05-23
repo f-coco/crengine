@@ -90,6 +90,7 @@ crengine/src/odtfmt.cpp
 crengine/src/odxutil.cpp
 crengine/src/pdbfmt.cpp
 crengine/src/props.cpp
+crengine/src/renderutil.cpp
 crengine/src/rtfimp.cpp
 crengine/src/textlang.cpp
 crengine/src/txtselector.cpp

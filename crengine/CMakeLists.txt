@@ -22,8 +22,8 @@ if ( NOT ${GUI} STREQUAL FB2PROPS )
     src/lvbmpbuf.cpp   
     src/lvfnt.cpp      
     src/hyphman.cpp    
-    src/lvfntman.cpp        
-    src/crgui.cpp     
+    src/lvfntman.cpp
+    src/crgui.cpp
     src/lvimg.cpp           
     src/crskin.cpp    
     src/lvdrawbuf.cpp  
@@ -31,6 +31,7 @@ if ( NOT ${GUI} STREQUAL FB2PROPS )
     src/lvpagesplitter.cpp  
     src/lvtextfm.cpp
     src/lvrend.cpp
+    src/renderutil.cpp
     src/wolutil.cpp
     src/hist.cpp      
     src/chmfmt.cpp     
