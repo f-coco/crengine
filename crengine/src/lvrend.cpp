@@ -9152,6 +9152,12 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
                     }
                 }
 
+                // In a vertical-rl page context, a horizontal-mode image's frmline
+                // height equals its screen-Y extent, which can exceed eff_page_h
+                // (the block-direction page stride). Cap each addContentLine call
+                // to prevent a ghost overflow page.
+                int vert_eph_cap = (flow->isVertical())
+                    ? flow->getPageContext()->getEffectivePageHeight() : 0;
                 int h = padding_top + final_h + pad_style_h + padding_bottom;
                 final_min_y += padding_top;
                 final_max_y += padding_top;
@@ -9242,7 +9248,9 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
                             line_flags |= RN_SPLIT_AFTER_AVOID;
                     }
 
-                    flow->addContentLine(line->height, line_flags, line->baseline);
+                    int lh = (vert_eph_cap > 0 && line->height > vert_eph_cap)
+                        ? vert_eph_cap : line->height;
+                    flow->addContentLine(lh, line_flags, line->baseline);
 
                     // See if there are links to footnotes in that line, and add
                     // a reference to it so page splitting can bring the footnotes
@@ -9432,7 +9440,6 @@ int renderBlockElement(LVRendPageContext & context, ldomNode * enode, int x, int
         }
         int page_width = (css_wm_is_vertical(writing_mode))
                          ? enode->getDocument()->getPageWidth() : 0;
-
         // Create a flow state (aka "block formatting context") for the rendering
         // of this block and all its children.
         // (We are called when rendering the root node, and when rendering each float

@@ -21573,8 +21573,22 @@ int ldomNode::renderFinalBlock(  LFormattedTextRef & frmtext, RenderRectAccessor
     // Format/render inner content: this makes lines and words, which are
     // cached into the LFormattedText and ready to be used for drawing
     // and text selection.
+    // Resolve writing_mode: if this element's own style has css_wm_inherit (= 0),
+    // walk the parent chain to find the effective value.  This ensures that
+    // block-level images (<img>) whose writing_mode is not explicitly set in CSS
+    // are formatted in the correct vertical or horizontal mode.
+    int effective_writing_mode = getStyle()->writing_mode;
+    if ( effective_writing_mode == 0 ) { // css_wm_inherit
+        for (ldomNode * p = getParentNode(); p && p->isElement(); p = p->getParentNode()) {
+            css_style_ref_t ps = p->getStyle();
+            if ( !ps.isNull() && ps->writing_mode != 0 ) {
+                effective_writing_mode = ps->writing_mode;
+                break;
+            }
+        }
+    }
     int h = f->Format((lUInt16)width, (lUInt16)page_h, direction,
-                            getStyle()->writing_mode, usable_left_overflow, usable_right_overflow,
+                            effective_writing_mode, usable_left_overflow, usable_right_overflow,
                             getDocument()->getHangingPunctiationEnabled(), float_footprint);
     frmtext = f;
     //CRLog::trace("Created new formatted object for node #%08X", (lUInt32)this);
