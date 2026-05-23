@@ -738,6 +738,17 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
                     formatted_word_t * word = &frmline->words[i];
                     src_text_fragment_t * srcline = &fmt->m_pbuffer->srctext[word->src_text_index];
                     ldomNode * node = (ldomNode *) srcline->object;
+                    ldomNode * source_node = node->getEffectiveNode();
+                    if ( source_node != node ) {
+                        // We ended up positionning the cloneNode for an inlineBox on
+                        // the ::first-line of the paragraph, which means the original
+                        // inlineBox has not been positionned and won't be shown.
+                        // Flag that original node as not-rendered/discarded, so that
+                        // getRect(), when called on a xpointer to the original source,
+                        // know it has to climb to its clondeNode and use its rect.
+                        RenderRectAccessor source_fmt( source_node );
+                        RENDER_RECT_SET_FLAG(source_fmt, BOX_IS_DISCARDED);
+                    }
                     RenderRectAccessor node_fmt( node );
                     bool vert_mode = (fmt->m_pbuffer->writing_mode == css_wm_vertical_rl ||
                                       fmt->m_pbuffer->writing_mode == css_wm_vertical_lr);
@@ -800,7 +811,7 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
                             vert_y_adjust = col_w - box_h;  // negative: annotation overhangs right
                         }
                     }
-                    node_fmt.setY( frmline->y + (is_vert ? vert_y_adjust : frmline->baseline - word->o.baseline + word->y) );
+                    node_fmt.setY( (int)frmline->y + (is_vert ? vert_y_adjust : (int)frmline->baseline - (int)word->o.baseline + (int)word->y) );
                     node_fmt.push();
                     #if MATHML_SUPPORT==1
                         ldomNode * unboxedParent = node->getUnboxedParent();
@@ -937,6 +948,9 @@ void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fr
         // Override it for PRE lines (or in case align has not been set)
         if ( preFormattedOnly || !align )
             align = fmt->m_para_dir_is_rtl ? LTEXT_ALIGN_RIGHT : LTEXT_ALIGN_LEFT;
+
+        // single initial-letter word on the logical first line, if any
+        int initial_letter_word_index = -1;
 
         TR("addLine(%d, %d) y=%d  align=%d", start, end, fmt->m_line_advance, align);
 
@@ -1171,10 +1185,15 @@ void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fr
         // increased if some inline elements need more, but not decreased.
         frmline->height = fmt->m_pbuffer->strut_height;
         frmline->baseline = fmt->m_pbuffer->strut_baseline;
-        if (fmt->m_has_ongoing_float)
+        if (fmt->m_has_ongoing_float) {
             // Avoid page split when some float that started on a previous line
             // still spans this line
             frmline->flags |= LTEXT_LINE_SPLIT_AVOID_BEFORE;
+        }
+        if ( fmt->m_initial_letter_exclusion.active && fmt->m_line_advance < fmt->m_initial_letter_exclusion.end_y && !first ) {
+            // Avoid page split alongside a sinking initial letter
+            frmline->flags |= LTEXT_LINE_SPLIT_AVOID_BEFORE;
+        }
         if ( lineIsBidi ) {
             // Flag that line, so createXPointer() and getRect() know it's not
             // a regular one and can't assume words and text nodes are linear.
@@ -1491,6 +1510,7 @@ void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fr
                     word->width = srcline->o.width;
                     word->min_width = word->width;
                     word->o.height = srcline->o.height;
+                    bool is_initial_letter_inline_box = false;
                     if ( srcline->o.objflags & LTEXT_OBJECT_IS_INLINE_BOX ) { // inline-block
                         word->flags = LTEXT_WORD_IS_INLINE_BOX;
                         // For inline-block boxes, the baseline may not be the bottom; it has
@@ -1498,6 +1518,7 @@ void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fr
                         word->o.baseline = srcline->o.baseline;
                         top_to_baseline = word->o.baseline;
                         baseline_to_bottom = word->o.height - word->o.baseline;
+                        is_initial_letter_inline_box = getInitialLetterInlineBoxPseudoElem((ldomNode *) srcline->object) != NULL;
                         // We can't really ensure strut_confined with inline-block boxes,
                         // or we could miss content (it would be overwritten by next lines)
                         if ( fmt->m_pbuffer->inlineboxes_links ) {
@@ -1552,7 +1573,20 @@ void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fr
                     // For vertical-align: top or bottom, delay computation as we need to
                     // know the final frmline height and baseline, which might change
                     // with upcoming words.
-                    if ( word->flags & LTEXT_WORD_IS_PAD ) {
+                    if ( is_initial_letter_inline_box ) {
+                        if ( initial_letter_word_index < 0 ) {
+                            // There can be only one initial-letter per paragraph. In RTL/BiDi,
+                            // it is not guaranteed to be the visual first word.
+                            // Remember its index for additional fixup when done with that line..
+                            initial_letter_word_index = frmline->word_count - 1;
+                        }
+                        lvtextAddOversizedInlineBox(fmt->m_pbuffer, srcline->index);
+                        // We will ensure its specific vertical positionning after all other
+                        // delayed vertical alignments and line-growth have been done
+                        word->y = 0;
+                        adjust_line_box = false;
+                    }
+                    else if ( word->flags & LTEXT_WORD_IS_PAD ) {
                         // We don't care about y/height/baseline
                         word->y = srcline->valign_dy;
                         adjust_line_box = false;
@@ -2369,9 +2403,33 @@ void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fr
             }
         }
 
+        if ( initial_letter_word_index >= 0 ) {
+            formatted_word_t * word = &frmline->words[initial_letter_word_index];
+            src_text_fragment_t * src = &fmt->m_pbuffer->srctext[word->src_text_index];
+            ldomNode * node = (ldomNode *) src->object;
+            InitialLetterInlineBoxMetrics metrics;
+            if ( node && getInitialLetterInlineBoxMetrics(node, word->o.baseline, metrics) ) {
+                // Initial-letter should stay anchored to the paragraph strut baseline,
+                // not to any extra first-line baseline lift caused by superscripts or
+                // other delayed vertical-align adjustments. We still reserve the real
+                // top ink overflow on that first line so accents don't paint upward.
+                if ( metrics.top_overflow > 0 ) {
+                    frmline->baseline += metrics.top_overflow;
+                    frmline->height += metrics.top_overflow;
+                }
+                word->y = fmt->m_pbuffer->strut_baseline + metrics.top_overflow - frmline->baseline;
+            }
+        }
+
         if ( !light_formatting ) {
             // Fix up words position and width to ensure requested alignment and indent
             alignLineHorizontal( fmt, frmline, align, rightIndent, hasInlineBoxes );
+        }
+
+        if ( initial_letter_word_index >= 0 ) {
+            // This has to done after alignLine() has possibly repositionned its inline-box.
+            formatted_word_t * word = &frmline->words[initial_letter_word_index];
+            fmt->activateInitialLetterInlineBoxExclusion(frmline, word);
         }
 
         // Vertical text: fix up line dimensions
@@ -2650,8 +2708,12 @@ void processParagraphHorizontal( LVFormatter* fmt, int start, int end, bool isLa
             int cjkReduceWidth = 0; // max total line width which can be reduced by narrowing CJK punctuations
             int firstInlineBoxPos = -1;
 
+            // (Let's not do the following when initial-letter is at play: better to cut raw
+            // the first word if it can't be hyphenated, and have bits of it alongside its
+            // initial letter, than having it cut after the initial letter and the next part
+            // way below that initial letter.)
             int maxWidth = fmt->getCurrentLineWidth();
-            if (maxWidth <= minWidth) {
+            if (maxWidth <= minWidth && !fmt->m_initial_letter_exclusion.active ) {
                 // Find y with available minWidth
                 int unused_x;
                 // We need to provide a height to find some width available over
@@ -3171,6 +3233,19 @@ void processParagraphHorizontal( LVFormatter* fmt, int start, int end, bool isLa
                 }
             }
             #endif
+        }
+
+        // If we have an initial-letter still ongoing, extend that paragraph height
+        // so it contains it fully so it does not overlap on the following paragraph.
+        if ( isLastPara && fmt->m_initial_letter_exclusion.active && fmt->m_line_advance < fmt->m_initial_letter_exclusion.end_y
+                && fmt->m_pbuffer->frmlinecount > 0 ) {
+            formatted_line_t * last_line = fmt->m_pbuffer->frmlines[fmt->m_pbuffer->frmlinecount - 1];
+            int extra_height = fmt->m_initial_letter_exclusion.end_y - fmt->m_line_advance;
+            if ( last_line && extra_height > 0 ) {
+                last_line->height += extra_height;
+                fmt->m_line_advance += extra_height;
+                fmt->m_pbuffer->height = fmt->m_line_advance;
+            }
         }
     }
 
@@ -4211,6 +4286,50 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
             line_x -= frmline->height; // columns progress right-to-left
         } else {
             line_y += frmline->height;
+        }
+    }
+
+    // Oversized inline boxes (currently initial-letter) are normally drawn when
+    // their owner first line is drawn, which preserves the usual text paint
+    // ordering. When that first line is fully above the viewport, redraw these
+    // here so the sunk part still appears lower down.
+    // (oversized_inlineboxes have been made generic and could contain anything
+    // but we know that currently it can only be an initial-letter on the first line;
+    // as an optimization, we just ensure that looking if the first line was not drawn.)
+    bool first_line_drawn = ignore_clip;
+    if ( !first_line_drawn && m_pbuffer->frmlinecount > 0 ) {
+        first_line_drawn = y + m_pbuffer->frmlines[0]->height > clip.top;
+    }
+    if ( !first_line_drawn ) {
+        for (i=0; i<m_pbuffer->oversized_inlinebox_count; i++) {
+            int src_index = m_pbuffer->oversized_inlineboxes[i];
+            srcline = &m_pbuffer->srctext[src_index];
+            ldomNode * node = (ldomNode *)srcline->object;
+            RenderRectAccessor fmt( node );
+            int top_overflow = fmt.getTopOverflow();
+            int bottom_overflow = fmt.getBottomOverflow();
+            if ( y + fmt.getY() - top_overflow >= clip.bottom
+                    || y + fmt.getY() + fmt.getHeight() + bottom_overflow <= clip.top ) {
+                continue;
+            }
+            int x0 = x + fmt.getX();
+            int y0 = y + fmt.getY();
+            int doc_x = 0 - fmt.getX();
+            int doc_y = 0 - fmt.getY();
+            int dx = m_pbuffer->width;
+            int dy = m_pbuffer->page_height;
+            int page_height = m_pbuffer->page_height;
+            if ( absmarks_update_needed ) {
+                getAbsMarksFromMarks(marks, absmarks, node);
+                absmarks_update_needed = false;
+            }
+            lvRect curclip;
+            buf->GetClipRect( &curclip );
+            if ( draw_extra_info ) {
+                buf->SetClipRect( &draw_extra_info->content_overflow_clip );
+            }
+            DrawDocument( *buf, node, x0, y0, dx, dy, doc_x, doc_y, page_height, absmarks, bookmarks );
+            buf->SetClipRect(&curclip);
         }
     }
 
