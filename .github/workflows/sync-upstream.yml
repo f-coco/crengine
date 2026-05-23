@@ -2,7 +2,7 @@ name: Sync from upstream crengine
 
 on:
   schedule:
-    - cron: '0 0 * * 1'  # Every Monday at 00:00 UTC
+    - cron: '0 0 * * *'  # Nightly at 00:00 UTC — surfaces conflicts within ~1 day
   workflow_dispatch:
 
 jobs:
