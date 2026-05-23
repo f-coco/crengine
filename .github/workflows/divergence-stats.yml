@@ -1,0 +1,45 @@
+name: Fork divergence stats
+
+# Reports per-file line-count divergence vs upstream/master so unexpected
+# growth in any single file gets noticed early.  The output lands in the
+# run summary; failure is non-fatal — this is informational.
+
+on:
+  schedule:
+    - cron: '15 0 * * *'  # Nightly, after sync-upstream (00:00) has a chance to merge
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'crengine/**'
+
+jobs:
+  divergence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/koreader/crengine.git || true
+          git fetch upstream master
+
+      - name: Report divergence
+        run: |
+          {
+            echo "## Fork divergence vs upstream/master"
+            echo
+            echo "Top 20 files by added+removed lines."
+            echo
+            echo '```'
+            git diff --numstat upstream/master HEAD \
+              | awk '{ print $1 + $2, $1, $2, $3 }' \
+              | sort -nr \
+              | head -20 \
+              | awk 'BEGIN { printf "%-8s %-8s %-8s  %s\n", "TOTAL", "ADDED", "REMOVED", "FILE" }
+                     { printf "%-8s %-8s %-8s  %s\n", $1, $2, $3, $4 }'
+            echo '```'
+            echo
+            echo "Total: $(git diff --shortstat upstream/master HEAD)"
+          } >> "$GITHUB_STEP_SUMMARY"
