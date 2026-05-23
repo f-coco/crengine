@@ -10568,6 +10568,11 @@ bool ldomXPointer::getRect(lvRect & rect, bool extended, bool adjusted, int * ct
         LFormattedTextRef txtform;
         finalNode->renderFinalBlock( txtform, &fmt, inner_width );
 
+        // For vertical-rl, frmline->height may be inflated by a ruby annotation zone.
+        // Adjust rect.top to exclude the annotation zone so highlights land on base text.
+        bool is_vert_rl = (finalNode->getStyle()->writing_mode == css_wm_vertical_rl);
+        int strut_h = is_vert_rl ? (int)txtform->GetBuffer()->strut_height : 0;
+
         ldomNode *node = getNode();
         int offset = getOffset();
 ////        ldomXPointerEx xp(node, offset);
@@ -11026,6 +11031,8 @@ bool ldomXPointer::getRect(lvRect & rect, bool extended, bool adjusted, int * ct
                             rect.right = rect.left + 1;
                         }
                         rect.bottom = rect.top + frmline->height;
+                        if (is_vert_rl && (int)frmline->height > strut_h)
+                            rect.top += (int)frmline->height - strut_h;
                         // No ctxFlags to set
                         return true;
                     } else if ( (word->src_text_index == srcIndex) &&
@@ -11051,6 +11058,8 @@ bool ldomXPointer::getRect(lvRect & rect, bool extended, bool adjusted, int * ct
                             rect.top = rc.top + frmline->y;
                             rect.right = rect.left + 1;
                             rect.bottom = rect.top + frmline->height;
+                            if (is_vert_rl && (int)frmline->height > strut_h)
+                                rect.top += (int)frmline->height - strut_h;
                             // No ctxFlags to set
                             return true;
                         }
@@ -11140,6 +11149,8 @@ bool ldomXPointer::getRect(lvRect & rect, bool extended, bool adjusted, int * ct
                         else
                             rect.right = rect.left + 1;
                         rect.bottom = rect.top + frmline->height;
+                        if (is_vert_rl && (int)frmline->height > strut_h)
+                            rect.top += (int)frmline->height - strut_h;
                         // No ctxFlags to set
                         return true;
                     } else if (lastWord) {
@@ -11152,6 +11163,8 @@ bool ldomXPointer::getRect(lvRect & rect, bool extended, bool adjusted, int * ct
                         else
                             rect.right = rect.left + 1;
                         rect.bottom = rect.top + frmline->height;
+                        if (is_vert_rl && (int)frmline->height > strut_h)
+                            rect.top += (int)frmline->height - strut_h;
                         // No ctxFlags to set
                         return true;
                     }
