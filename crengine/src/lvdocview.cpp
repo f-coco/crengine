@@ -191,7 +191,8 @@ LVDocView::LVDocView(int bitsPerPixel, bool noDefaultDocument) :
 			, m_section_bounds_valid(false), m_section_bounds_externally_updated(false)
 			, m_doc_format(doc_format_none),
 			m_callback(NULL), m_swapDone(false), m_drawBufferBits(
-					GRAY_BACKBUFFER_BITS), m_vert_glyph_y_offset(0) {
+					GRAY_BACKBUFFER_BITS), m_vert_glyph_y_offset(0)
+			, m_vert_last_pt_offset(0), m_vert_last_pt_hit(false) {
 #if (COLOR_BACKBUFFER==1)
 	m_backgroundColor = 0xFFFFFF;
 	m_textColor = 0x000000;
@@ -2866,8 +2867,21 @@ bool LVDocView::docToWindowPoint(lvPoint & pt, bool isRectBottom, bool fitToPage
                         // (m_vert_glyph_y_offset) when no exact match is found (e.g. ruby
                         // annotations, rotated Latin words, or off-page coordinates).
                         int slot_y = doc_x + draw_x0;
+                        bool my_hit = false;
                         int offset = lfnt_lookup_vert_slot_offset(screen_x, slot_y,
-                                                                   m_vert_glyph_y_offset);
+                                                                   m_vert_glyph_y_offset,
+                                                                   &my_hit);
+                        // Sbox corners are paired (topLeft then bottomRight=true).  The
+                        // bottomRight's anchor is at the column's opposite edge and its
+                        // slot_y is at glyph_top+height, so its own lookup misses by design.
+                        // Inheriting the topLeft's offset keeps top/bottom shifted uniformly
+                        // — sbox height matches glyph height instead of being short.
+                        if (!isRectBottom) {
+                            m_vert_last_pt_offset = offset;
+                            m_vert_last_pt_hit    = my_hit;
+                        } else if (!my_hit && m_vert_last_pt_hit) {
+                            offset = m_vert_last_pt_offset;
+                        }
                         int screen_y = slot_y + offset;
                         // Ruby annotations in vertical-rl can produce doc_x slightly larger
                         // than the column height (frmline->x + word->x overflow).

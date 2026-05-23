@@ -207,7 +207,7 @@ void lfnt_record_vert_slot(int anchor, int slot_y, int offset) {
 // Returns the recorded offset on EXACT match; otherwise returns `fallback`.
 // O(N) linear scan; N ≤ LFNT_VERT_SLOT_MAX, and lookup count per page is small
 // (one per sbox corner), so total work is negligible.
-int lfnt_lookup_vert_slot_offset(int anchor, int slot_y, int fallback) {
+int lfnt_lookup_vert_slot_offset(int anchor, int slot_y, int fallback, bool *hit_out) {
     int found_offset = fallback;
     bool hit = false;
     for (int i = 0; i < lfnt_vert_slot_count; i++) {
@@ -227,6 +227,7 @@ int lfnt_lookup_vert_slot_offset(int anchor, int slot_y, int fallback) {
         e.returned = found_offset;
         e.hit      = hit;
     }
+    if (hit_out) *hit_out = hit;
     return found_offset;
 }
 

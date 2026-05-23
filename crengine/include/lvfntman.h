@@ -1205,7 +1205,10 @@ void lfnt_get_vert_gy_diag(int *count, int *sum, int *sum_sq, int *min, int *max
 // Returns the recorded glyph-Y offset for an exact (anchor, slot_y) match, or
 // `fallback` if no record matches.  Records are populated during DrawTextString
 // in vertical mode and cleared by lfnt_reset_vert_gy_diag().
-int lfnt_lookup_vert_slot_offset(int anchor, int slot_y, int fallback);
+// If `hit_out` is non-NULL, *hit_out is set to true on exact match, false otherwise;
+// callers (docToWindowPoint) use this to share the topLeft offset with the bottomRight
+// when the bottomRight's own lookup misses (column-edge / glyph-bottom mismatch).
+int lfnt_lookup_vert_slot_offset(int anchor, int slot_y, int fallback, bool *hit_out = NULL);
 
 // Set the column anchor (line_x in screen coords) and slot_y key used by
 // DrawTextString to key per-slot records.  slot_y_key must match what

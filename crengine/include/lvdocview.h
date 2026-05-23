@@ -378,6 +378,15 @@ private:
     // the two functions as exact inverses while preventing the sbox bottom from
     // overlapping the next character's glyph.  Updated after each page render.
     int m_vert_glyph_y_offset;
+    // Carries the topLeft per-slot lookup result over to the paired bottomRight
+    // docToWindowPoint call (vertical-rl only).  When the bottomRight's own
+    // (anchor, slot_y) lookup misses — which happens by design, since the rect's
+    // right corner sits on the column's opposite edge from the recorded anchor
+    // AND at glyph_top+height rather than glyph_top — we reuse the topLeft's
+    // offset so both corners shift uniformly and the sbox height matches the
+    // glyph's actual height.  Reset on every isRectBottom=false call.
+    int  m_vert_last_pt_offset;
+    bool m_vert_last_pt_hit;
 
     /// sets current document format
     void setDocFormat( doc_format_t fmt );
