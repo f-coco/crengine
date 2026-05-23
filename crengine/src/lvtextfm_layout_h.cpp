@@ -3270,6 +3270,17 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
         ? draw_extra_info->vert_column_clip_right : clip.right;
     int line_x = is_vertical ? (vert_anchor - x) : x;
 
+    // Build the lineRect used by ldomMarkedRange::intersects() for marks/bookmarks.
+    // In vertical-rl, frmline->width is set to strut_height (column WIDTH on screen),
+    // not the inline content extent, so we must use m_pbuffer->width (inner_width of
+    // the final block = column inline extent) as the upper bound for mark.start.x.
+    auto makeMarkLineRect = [&](const formatted_line_t * fl) -> lvRect {
+        int line_right = is_vertical
+            ? (fl->x + (int)m_pbuffer->width)
+            : (fl->x + fl->width + fl->width_overflow);
+        return lvRect(fl->x, fl->y, line_right, fl->y + fl->height);
+    };
+
     bool ignore_clip = false;
     if ( m_pbuffer->frmlinecount == 1 && m_pbuffer->frmlines[0]->word_count > 0 ) {
         // If the first word of a single line block has LTEXT_MATH_TRANSFORM,
@@ -3567,7 +3578,7 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                 // Here is drawn the "native highlighting" of a selection in progress
                 // (We include frmline->width_overflow so any hanging punctuation overflow
                 // over frmline->width is included in the drawing.)
-                lvRect lineRect( frmline->x, frmline->y, frmline->x + frmline->width + frmline->width_overflow, frmline->y + frmline->height );
+                lvRect lineRect = makeMarkLineRect(frmline);
                 for ( int i=0; i<marks->length(); i++ ) {
                     lvRect mark;
                     ldomMarkedRange * range = marks->get(i);
@@ -3579,8 +3590,14 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         if (is_vertical) {
                             int ann_w = (int)frmline->height > m_pbuffer->strut_height
                                         ? (int)frmline->height - m_pbuffer->strut_height : 0;
-                            buf->FillRect(line_x - (int)m_pbuffer->strut_height - ann_w, mark.left + y,
-                                          line_x - ann_w, mark.right + y, m_pbuffer->highlight_options.selectionColor);
+                            // Apply the per-slot Y offset that docToWindowPoint applies to
+                            // sboxes, so the highlight aligns with the actual rendered glyphs.
+                            // Use mark.left as the slot_y key (same as lfnt_vert_set_current_slot_y_key
+                            // sets when drawing the first char of the column).
+                            int slot_fallback = (draw_extra_info ? draw_extra_info->vert_glyph_y_offset : 0);
+                            int slot_off = lfnt_lookup_vert_slot_offset(line_x, mark.left + y, slot_fallback);
+                            buf->FillRect(line_x - (int)m_pbuffer->strut_height - ann_w, mark.left + y + slot_off,
+                                          line_x - ann_w, mark.right + y + slot_off, m_pbuffer->highlight_options.selectionColor);
                         } else {
                             buf->FillRect(mark.left + x, mark.top + y, mark.right + x, mark.bottom + y, m_pbuffer->highlight_options.selectionColor);
                         }
@@ -3588,7 +3605,7 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                 }
             }
             if (bookmarks!=NULL && bookmarks->length()>0) {
-                lvRect lineRect( frmline->x, frmline->y, frmline->x + frmline->width + frmline->width_overflow, frmline->y + frmline->height );
+                lvRect lineRect = makeMarkLineRect(frmline);
                 for ( int i=0; i<bookmarks->length(); i++ ) {
                     lvRect mark;
                     ldomMarkedRange * range = bookmarks->get(i);
@@ -3611,7 +3628,7 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
 #ifdef CR_USE_INVERT_FOR_SELECTION_MARKS
             // process bookmarks
             if ( bookmarks != NULL && bookmarks->length() > 0 ) {
-                lvRect lineRect( frmline->x, frmline->y, frmline->x + frmline->width + frmline->width_overflow, frmline->y + frmline->height );
+                lvRect lineRect = makeMarkLineRect(frmline);
                 for ( int i=0; i<bookmarks->length(); i++ ) {
                     lvRect bookmark_rc;
                     ldomMarkedRange * range = bookmarks->get(i);
@@ -4116,7 +4133,7 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
 #ifdef CR_USE_INVERT_FOR_SELECTION_MARKS
             // process marks
             if ( marks!=NULL && marks->length()>0 ) {
-                lvRect lineRect( frmline->x, frmline->y, frmline->x + frmline->width + frmline->width_overflow, frmline->y + frmline->height );
+                lvRect lineRect = makeMarkLineRect(frmline);
                 for ( int i=0; i<marks->length(); i++ ) {
                     lvRect mark;
                     ldomMarkedRange * range = marks->get(i);

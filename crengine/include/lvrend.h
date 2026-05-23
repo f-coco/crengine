@@ -129,6 +129,11 @@ typedef struct {
     // draw into the right margin, but the column anchor must stay at the original
     // clip.right so that all columns (including ruby groups) are positioned correctly.
     int vert_column_clip_right;
+    // For vertical-rl: page-wide minimum per-glyph Y offset recorded from the
+    // previous render (LVDocView::m_vert_glyph_y_offset).  Used as fallback by
+    // mark FillRect when its per-slot lookup misses (since marks draw before
+    // their column's glyphs and the lookup has no record yet for this draw).
+    int vert_glyph_y_offset;
 } draw_extra_info_t;
 
 /// returns true if styles are identical
