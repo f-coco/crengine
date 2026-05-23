@@ -1,3 +1,17 @@
+// =============================================================================
+// Vertical-mode formatter layout code (vertical-rl / vertical-lr).
+//
+// Fork origin: this file was created in commit f8b0bbe1 ("vertical-rl Option C
+// Phase 2b") alongside lvtextfm_layout_h.cpp.  Its functions are vertical-
+// writing-mode siblings of their `*Horizontal` counterparts in
+// lvtextfm_layout_h.cpp; they were initially ported (= cloned and adapted)
+// from the same upstream lvtextfm.cpp originals, then specialised for
+// column flow, kinsoku (line-breaking rules), and the Y=X coordinate swap.
+//
+// When reconciling an upstream change to lvtextfm.cpp that lands in a
+// region covered by one of the *Horizontal functions, consider whether
+// the analogous *Vertical function here needs the same fix.
+// =============================================================================
 
 #define MIN_WORD_LEN_TO_HYPHENATE 4
 #define MAX_WORD_SIZE 64
@@ -37,6 +51,13 @@ static inline bool isVerticalHangingChar(lChar32 ch) {
 // this is a reasonable approximation of vertical letter-spacing justify.
 // Proper vertical justify (Step 3) will be implemented after Step 4
 // (DrawVertical) provides visible output for verification.
+// -----------------------------------------------------------------------------
+// addLineVertical
+// Vertical-rl sibling of addLineHorizontal (lvtextfm_layout_h.cpp), originally
+// ported from upstream `LVFormatter::addLine` and re-specialised for column
+// flow.  Cross-check against addLineHorizontal when upstream changes the
+// horizontal one.
+// -----------------------------------------------------------------------------
 void addLineVertical( LVFormatter* fmt, int start, int end, int x, src_text_fragment_t * para, bool first, bool last, bool preFormattedOnly, bool isLastPara, bool hasInlineBoxes )
 {
     // Delegate all word placement to horizontal function.
@@ -67,6 +88,12 @@ void addLineVertical( LVFormatter* fmt, int start, int end, int x, src_text_frag
 /// addLineVertical currently delegates to addLineHorizontal, so line creation
 /// is still horizontal. Step 2 will implement proper vertical addLine.
 ///
+// -----------------------------------------------------------------------------
+// processParagraphVertical
+// Vertical-rl sibling of processParagraphHorizontal (lvtextfm_layout_h.cpp).
+// Originally ported from upstream `LVFormatter::processParagraph` and adapted
+// for column-wise layout + kinsoku.  Cross-check when the horizontal one moves.
+// -----------------------------------------------------------------------------
 void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLastPara )
     {
         TR("processParagraphVertical(%d, %d)", start, end);
@@ -606,6 +633,11 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
     }
 
     /// handle embedded block for vertical layout
+// -----------------------------------------------------------------------------
+// processEmbeddedBlockVertical
+// Vertical-rl sibling of processEmbeddedBlockHorizontal (lvtextfm_layout_h.cpp),
+// from upstream `LVFormatter::processEmbeddedBlock`.
+// -----------------------------------------------------------------------------
 void processEmbeddedBlockVertical( LVFormatter* fmt, int idx )
 {
     // TODO: Implement proper vertical embedded block handling

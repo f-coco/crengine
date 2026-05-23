@@ -1,3 +1,16 @@
+// =============================================================================
+// Horizontal-mode formatter layout/draw code.
+//
+// Fork origin: this file was split out of upstream crengine/src/lvtextfm.cpp
+// in commit f8b0bbe1 ("vertical-rl Option C Phase 2b: CSSLogical in block
+// rendering + remaining ports").  Sections below are derived from the
+// like-named LVFormatter member functions in pre-split lvtextfm.cpp;
+// see each section header for the upstream origin and the rename that was
+// applied (member -> free function taking `LVFormatter* fmt`).
+//
+// When reconciling an upstream change to lvtextfm.cpp, use these origin
+// pointers to locate the corresponding region in this file.
+// =============================================================================
 
 #define MIN_WORD_LEN_TO_HYPHENATE 4
 #define MAX_WORD_SIZE 64
@@ -75,6 +88,13 @@ void ltext_get_fmt_counts(int *calls_out, int *vert_calls_out, int *word_iters_o
 }
 
 
+// -----------------------------------------------------------------------------
+// alignLineHorizontal
+// Origin: upstream lvtextfm.cpp `void LVFormatter::alignLine(...)` (~line 2558
+// in the pre-f8b0bbe1 snapshot).  Renamed and lifted from class member to a
+// free function that takes `LVFormatter* fmt` so the vertical variant can
+// share the formatter object without subclassing.
+// -----------------------------------------------------------------------------
     /// align line: add or reduce widths of spaces to achieve desired text alignment
 void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alignment, int rightIndent=0, bool hasInlineBoxes=false ) {
         // Fetch current line x offset and max width
@@ -821,6 +841,14 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
     // Forward declaration (defined later in this file)
     int getMaxCondensedSpaceTruncation( LVFormatter* fmt, int pos );
 
+// -----------------------------------------------------------------------------
+// addLineHorizontal
+// Origin: upstream lvtextfm.cpp `void LVFormatter::addLine(...)` (~line 3117
+// pre-f8b0bbe1).  Member -> free function as above.  Vertical-rl additions
+// (column inflation for ruby, glyph rotation hints, etc.) are clearly
+// guarded by `is_vertical` / writing-mode checks within the body; the
+// surrounding horizontal logic stays close to upstream.
+// -----------------------------------------------------------------------------
     /// split line into words, add space for width alignment
 void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fragment_t * para, bool first, bool last, bool preFormattedOnly, bool isLastPara, bool hasInlineBoxes )
     {
@@ -2392,6 +2420,11 @@ void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fr
         #endif
     }
 
+// -----------------------------------------------------------------------------
+// getMaxCondensedSpaceTruncation
+// Origin: upstream lvtextfm.cpp `int LVFormatter::getMaxCondensedSpaceTruncation(int)`
+// (~line 4640 pre-f8b0bbe1).  Member -> free function as above.
+// -----------------------------------------------------------------------------
 int getMaxCondensedSpaceTruncation(LVFormatter* fmt, int pos) {
         if (pos<0 || pos>=fmt->m_length || !(fmt->m_flags[pos] & LCHAR_IS_SPACE))
             return 0;
@@ -2533,6 +2566,12 @@ static void tryHyphenBreak(
 }
 
     /// Split paragraph into lines
+// -----------------------------------------------------------------------------
+// processParagraphHorizontal
+// Origin: upstream lvtextfm.cpp `void LVFormatter::processParagraph(...)` (~line
+// 4692 pre-f8b0bbe1).  Member -> free function as above.  The vertical-mode
+// sibling is processParagraphVertical in lvtextfm_layout_v.cpp.
+// -----------------------------------------------------------------------------
 void processParagraphHorizontal( LVFormatter* fmt, int start, int end, bool isLastPara )
     {
         TR("processParagraph(%d, %d)", start, end);
@@ -3135,6 +3174,11 @@ void processParagraphHorizontal( LVFormatter* fmt, int start, int end, bool isLa
         }
     }
 
+// -----------------------------------------------------------------------------
+// processEmbeddedBlockHorizontal
+// Origin: upstream lvtextfm.cpp `void LVFormatter::processEmbeddedBlock(int)`
+// (~line 5413 pre-f8b0bbe1).  Member -> free function as above.
+// -----------------------------------------------------------------------------
 void processEmbeddedBlockHorizontal( LVFormatter* fmt, int idx )
     {
         ldomNode * node = (ldomNode *) fmt->m_pbuffer->srctext[idx].object;
@@ -3235,6 +3279,14 @@ void processEmbeddedBlockHorizontal( LVFormatter* fmt, int idx )
     }
 
 
+// -----------------------------------------------------------------------------
+// LFormattedText::Draw
+// Origin: upstream lvtextfm.cpp `void LFormattedText::Draw(...)` (~line 5923
+// pre-f8b0bbe1).  Already a non-member, so no signature rename.  Heavily
+// modified for vertical-rl (Y=X swap, line_x decrementing per column, ruby
+// inflation handling, per-slot offset recording hooks).  Vertical-specific
+// branches are guarded by `is_vertical`.
+// -----------------------------------------------------------------------------
 void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * marks, ldomMarkedRangeList *bookmarks )
 {
     int i, j;
