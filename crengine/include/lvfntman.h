@@ -478,6 +478,10 @@ public:
 
     /// returns font baseline offset
     virtual int getBaseline() = 0;
+    /// Returns the per-font vertical glyph Y offset (gy - y), measured from the
+    /// first DrawTextString call in vertical mode.  Returns -1 if the font has
+    /// not yet drawn any vertical glyphs (page not yet rendered).
+    virtual int getVertGlyphYOffset() const { return -1; }
     /// returns font height including normal interline space
     virtual int getHeight() const = 0;
     /// returns font character size
@@ -767,6 +771,7 @@ public:
     virtual LVFontGlyphCacheItem * getGlyph(lUInt32 ch, lChar32 def_char=0, bool is_fallback=false);
     /// returns font baseline offset
     virtual int getBaseline();
+    virtual int getVertGlyphYOffset() const;
     /// returns font height
     virtual int getHeight() const;
     /// returns font character size
@@ -1195,9 +1200,10 @@ public:
     virtual void addGlyph() = 0;
 };
 
+
 // Vertical glyph-Y diagnostic (defined in lvfntman.cpp).
-// Tracks (gy − y0) for each non-rotated CJK glyph drawn in vertical mode.
-// Reset before each page render; read afterward to calibrate coordinate conversion.
+// Records (gy − y) for each non-rotated vertical glyph drawn in vertical mode.
+// Used by tests to verify the glyph-Y formula; not used for coordinate conversion.
 void lfnt_reset_vert_gy_diag();
 void lfnt_get_vert_gy_diag(int *count, int *sum, int *sum_sq, int *min, int *max);
 

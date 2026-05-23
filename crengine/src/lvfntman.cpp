@@ -91,18 +91,13 @@ static void ft_error_trace(const char *where, const char *call, FT_Error error) 
 
 // Vertical glyph-Y diagnostic.
 // Records (gy − y) for each non-rotated vertical glyph draw.
-// The consistent formula gy = y + (_baseline − origin_y) − y_offset gives a
-// near-constant offset for all full-width CJK glyphs (≈ |descender|, 4-10 px).
-// A formula that removes the (_baseline − origin_y) term (like gy = y − y_offset)
-// gives avg ≈ 0 but HIGH VARIANCE because y_offset differs per character
-// (e.g. punctuation vs kanji), producing irregular inter-character spacing.
-// Tracks: sum for average, sum-of-squares for variance, min/max for spread.
-// Reset via lfnt_reset_vert_gy_diag(); read via lfnt_get_vert_gy_diag().
-int lfnt_vert_gy_count       = 0;
-int lfnt_vert_gy_sum         = 0;
-int lfnt_vert_gy_sum_sq      = 0;  // for variance: E[x^2] - E[x]^2
-int lfnt_vert_gy_min         = 0x7fffffff;
-int lfnt_vert_gy_max         = -0x7fffffff;
+// Used by vertical_glyph_y_spec to verify the glyph-Y formula includes the
+// baseline term.  Not used for coordinate conversion (per-font cache handles that).
+int lfnt_vert_gy_count  = 0;
+int lfnt_vert_gy_sum    = 0;
+int lfnt_vert_gy_sum_sq = 0;
+int lfnt_vert_gy_min    = 0x7fffffff;
+int lfnt_vert_gy_max    = -0x7fffffff;
 
 void lfnt_reset_vert_gy_diag() {
     lfnt_vert_gy_count  = 0;
@@ -112,7 +107,6 @@ void lfnt_reset_vert_gy_diag() {
     lfnt_vert_gy_max    = -0x7fffffff;
 }
 
-// Returns count, sum, sum_of_squares, min, max of (gy − y).
 void lfnt_get_vert_gy_diag(int *count_out, int *sum_out, int *sum_sq_out,
                             int *min_out,   int *max_out) {
     *count_out  = lfnt_vert_gy_count;
@@ -1624,6 +1618,7 @@ protected:
     int           _height; // full line height in pixels
     int           _hyphen_width;
     int           _baseline;
+    int           _vert_glyph_y_offset; // cached per-font vertical glyph Y offset (-1 = not yet measured)
     int           _weight; // original font weight 400: normal, 700: bold, 100..900 thin..black
     int           _italic; // 0: regular, 1: italic, 2: fake/synthesized italic
     int           _underline_offset;
@@ -1827,7 +1822,7 @@ public:
 
     LVFreeTypeFace( LVMutex &mutex, FT_Library  library, LVFontGlobalGlyphCache * globalCache )
         : _mutex(mutex), _fontFamily(css_ff_sans_serif), _library(library), _face(NULL), _face_size(0)
-        , _size(0), _hyphen_width(0), _baseline(0), _weight(400), _italic(0)
+        , _size(0), _hyphen_width(0), _baseline(0), _vert_glyph_y_offset(-1), _weight(400), _italic(0)
         , _underline_offset(0), _underline_thickness(0), _extra_metric(NULL)
         , _glyph_cache(globalCache), _drawMonochrome(false)
         , _hintingMode(HINTING_MODE_AUTOHINT), _kerningMode(KERNING_MODE_DISABLED)
@@ -3706,6 +3701,10 @@ public:
     {
         return _baseline;
     }
+    virtual int getVertGlyphYOffset() const
+    {
+        return _vert_glyph_y_offset;
+    }
 
     /// returns font height
     virtual int getHeight() const
@@ -4586,9 +4585,12 @@ public:
                                 // Clamp: glyph must not start above its slot top in vertical mode.
                                 if (is_vertical_draw && gy < y)
                                     gy = y;
-                                // Diagnostic: record (gy − y) for vertical non-rotated draws.
                                 if (is_vertical_draw) {
                                     int d = gy - y;
+                                    // Cache per-font offset on first vertical draw.
+                                    if (_vert_glyph_y_offset < 0)
+                                        _vert_glyph_y_offset = (d > 0) ? d : 0;
+                                    // Diagnostic counters (used by tests/cre.cpp Lua API).
                                     lfnt_vert_gy_count++;
                                     lfnt_vert_gy_sum    += d;
                                     lfnt_vert_gy_sum_sq += d * d;

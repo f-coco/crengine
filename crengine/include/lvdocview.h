@@ -371,13 +371,6 @@ private:
     lString32 m_pageInfoOverride;
 
     int m_drawBufferBits;
-    // Glyph-Y offset for vertical-rl coordinate conversion.
-    // In vertical-rl, CJK glyphs are drawn at gy = y0 + (_baseline - origin_y)
-    // rather than at y0 (the slot top).  Storing the minimum observed delta and
-    // applying it symmetrically in windowToDocPoint and docToWindowPoint keeps
-    // the two functions as exact inverses while preventing the sbox bottom from
-    // overlapping the next character's glyph.  Updated after each page render.
-    int m_vert_glyph_y_offset;
 
     /// sets current document format
     void setDocFormat( doc_format_t fmt );
