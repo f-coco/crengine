@@ -24,6 +24,7 @@ if ( NOT ${GUI} STREQUAL FB2PROPS )
     src/hyphman.cpp    
     src/lvfntman.cpp
     src/lvfntman_vert_slot.cpp
+    src/lvrend_vert_diag.cpp
     src/crgui.cpp
     src/lvimg.cpp           
     src/crskin.cpp    
