@@ -6982,26 +6982,28 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             // paired PAD to determine the other boundary.
                             if ( is_right_pad != is_mirrored ) { // right border at line_x (column right edge)
                                 // Right PAD marks element end; scan backward for the left PAD.
-                                int y_end = y + (int)x + (int)frmline->x + (int)word->x;
-                                int y_start = y + (int)x + (int)frmline->x; // fallback: frmline start
+                                // Use y+frmline->x (not y+x+frmline->x): x=draw_y0 is block-direction
+                                // (screen-X), adding it to a screen-Y value gives a wrong coordinate.
+                                int y_end = y + (int)frmline->x + (int)word->x;
+                                int y_start = y + (int)frmline->x; // fallback: frmline inline start
                                 for (int k = j - 1; k >= 0; k--) {
                                     formatted_word_t * pw = &frmline->words[k];
                                     if ((pw->flags & LTEXT_WORD_IS_PAD) &&
                                         (m_pbuffer->srctext[pw->src_text_index].object == srcline->object)) {
-                                        y_start = y + (int)x + (int)frmline->x + (int)pw->x + (int)pw->width;
+                                        y_start = y + (int)frmline->x + (int)pw->x + (int)pw->width;
                                         break;
                                     }
                                 }
                                 drawBorderVertical(buf, line_x, (int)frmline->height, y_start, y_end, node, 1);
                             } else { // left border at left column edge
                                 // Left PAD marks element start; scan forward for the right PAD.
-                                int y_start = y + (int)x + (int)frmline->x + (int)word->x + (int)word->width;
+                                int y_start = y + (int)frmline->x + (int)word->x + (int)word->width;
                                 int y_end = -1;
                                 for (int k = j + 1; k < frmline->word_count; k++) {
                                     formatted_word_t * pw = &frmline->words[k];
                                     if ((pw->flags & LTEXT_WORD_IS_PAD) &&
                                         (m_pbuffer->srctext[pw->src_text_index].object == srcline->object)) {
-                                        y_end = y + (int)x + (int)frmline->x + (int)pw->x;
+                                        y_end = y + (int)frmline->x + (int)pw->x;
                                         break;
                                     }
                                 }
