@@ -3091,10 +3091,8 @@ public:
                                     // Fall back to x_advance for vertical layout.
                                     advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance);
                             }
-                            else {
-                                if ( glyph_pos[hg].x_advance )
-                                    advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance + _synth_weight_strength);
-                            }
+                            else if ( glyph_pos[hg].x_advance )
+                                advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance + _synth_weight_strength);
                         }
                         else {
                             #ifdef DEBUG_MEASURE_TEXT
@@ -3107,10 +3105,8 @@ public:
                                 else if ( glyph_pos[hg].x_advance )
                                     advance = abs(FONT_METRIC_TO_PX(glyph_pos[hg].x_advance));
                             }
-                            else {
-                                if ( glyph_pos[hg].x_advance )
-                                    advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance + _synth_weight_strength);
-                            }
+                            else if ( glyph_pos[hg].x_advance )
+                                advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance + _synth_weight_strength);
                             if ( t_notdef_start < 0 ) {
                                 t_notdef_start = t;
                             }
