@@ -6606,6 +6606,43 @@ static void drawBorder(LVDrawBuf * buf, int x0, int x1, int y, int h, ldomNode *
     }
 }
 
+// In vertical-rl mode, CSS physical left/right borders map to thin stripes at the
+// column's right (bdidx=1) or left (bdidx=3) screen-X edge, spanning y_start..y_end
+// in screen-Y (the element's inline extent).
+static void drawBorderVertical(LVDrawBuf * buf, int line_x, int col_width,
+                               int y_start, int y_end,
+                               ldomNode * borderNode, int bdidx) {
+    css_style_ref_t style = borderNode->getStyle();
+    css_length_t border_color = style->border_color[bdidx];
+    lUInt32 bdcl = border_color.type == css_val_color ?
+                       border_color.value : style->color.value;
+    if ( !IS_COLOR_FULLY_TRANSPARENT(bdcl) ) {
+        int border_width = measureBorder(borderNode, bdidx);
+        css_border_style_type_t border_style;
+        switch (bdidx) {
+            case 1: border_style = style->border_style_right; break;
+            case 3: border_style = style->border_style_left;  break;
+            default:
+                    assert(0);
+                    border_style = css_border_none;
+                    break;
+        }
+        int dot, interval;
+        switch (border_style) {
+            case css_border_dotted: dot = interval = border_width;     break;
+            case css_border_dashed: dot = interval = 3 * border_width; break;
+            default: dot = 1; interval = 0;                            break;
+        }
+        if ( bdidx == 1 ) // right border → right edge of column
+            buf->DrawLine(line_x - border_width, y_start, line_x, y_end,
+                          bdcl, dot, interval, 1);
+        else               // left border → left edge of column
+            buf->DrawLine(line_x - col_width, y_start,
+                          line_x - col_width + border_width, y_end,
+                          bdcl, dot, interval, 1);
+    }
+}
+
 // -----------------------------------------------------------------------------
 // LFormattedText::Draw
 // Origin: upstream lvtextfm.cpp `void LFormattedText::Draw(...)` (~line 5923
@@ -6937,15 +6974,51 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         bool is_right_pad = srcline->o.objflags & LTEXT_OBJECT_IS_PAD_RIGHT;
                         bool is_mirrored = word->flags & LTEXT_WORD_DIRECTION_IS_RTL; // will be drawn as if on the other side
                         ldomNode * node = (ldomNode *) srcline->object;
-                        if ( is_right_pad != is_mirrored ) { // unmirrored right pad, or mirrored left pad
-                            int x0 = x + frmline->x + word->x + word->o.height - word->o.baseline;
-                            int x1 = x0 + word->o.baseline;
-                            drawBorder(buf, x0, x1, y+frmline->y, frmline->height, node, 1);
-                        }
-                        else { // unmirrored left pad, or mirrored right pad
-                            int x0 = x + frmline->x + word->x + word->width - word->o.height;
-                            int x1 = x0 + word->o.baseline;
-                            drawBorder(buf, x0, x1, y+frmline->y, frmline->height, node, 3);
+                        if (is_vertical) {
+                            // In vertical-rl mode, x/y roles are swapped: x + frmline->x + word->x
+                            // is a screen-Y value (inline position), not screen-X.  Route to the
+                            // vertical helper which draws at the column's screen-X edge.
+                            // The border spans the element's inline (screen-Y) extent; find the
+                            // paired PAD to determine the other boundary.
+                            if ( is_right_pad != is_mirrored ) { // right border at line_x (column right edge)
+                                // Right PAD marks element end; scan backward for the left PAD.
+                                int y_end = y + (int)x + (int)frmline->x + (int)word->x;
+                                int y_start = y + (int)x + (int)frmline->x; // fallback: frmline start
+                                for (int k = j - 1; k >= 0; k--) {
+                                    formatted_word_t * pw = &frmline->words[k];
+                                    if ((pw->flags & LTEXT_WORD_IS_PAD) &&
+                                        (m_pbuffer->srctext[pw->src_text_index].object == srcline->object)) {
+                                        y_start = y + (int)x + (int)frmline->x + (int)pw->x + (int)pw->width;
+                                        break;
+                                    }
+                                }
+                                drawBorderVertical(buf, line_x, (int)frmline->height, y_start, y_end, node, 1);
+                            } else { // left border at left column edge
+                                // Left PAD marks element start; scan forward for the right PAD.
+                                int y_start = y + (int)x + (int)frmline->x + (int)word->x + (int)word->width;
+                                int y_end = -1;
+                                for (int k = j + 1; k < frmline->word_count; k++) {
+                                    formatted_word_t * pw = &frmline->words[k];
+                                    if ((pw->flags & LTEXT_WORD_IS_PAD) &&
+                                        (m_pbuffer->srctext[pw->src_text_index].object == srcline->object)) {
+                                        y_end = y + (int)x + (int)frmline->x + (int)pw->x;
+                                        break;
+                                    }
+                                }
+                                if (y_end >= y_start)
+                                    drawBorderVertical(buf, line_x, (int)frmline->height, y_start, y_end, node, 3);
+                            }
+                        } else {
+                            if ( is_right_pad != is_mirrored ) { // unmirrored right pad, or mirrored left pad
+                                int x0 = x + frmline->x + word->x + word->o.height - word->o.baseline;
+                                int x1 = x0 + word->o.baseline;
+                                drawBorder(buf, x0, x1, y+frmline->y, frmline->height, node, 1);
+                            }
+                            else { // unmirrored left pad, or mirrored right pad
+                                int x0 = x + frmline->x + word->x + word->width - word->o.height;
+                                int x1 = x0 + word->o.baseline;
+                                drawBorder(buf, x0, x1, y+frmline->y, frmline->height, node, 3);
+                            }
                         }
                     }
                 }
