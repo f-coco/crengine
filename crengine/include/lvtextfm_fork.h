@@ -49,6 +49,11 @@ extern int ltext_vert_ib_layout_gap_max;
 extern int ltext_vert_char_overlap_count;
 extern int ltext_vert_char_overlap_max_px;
 
+// True if every char in the word's text is in needsVerticalRotation90CW
+// (―, —, …, ‥, ー, 〜, ～, －).  Defined in lvtextfm_vert.cpp.  Used by
+// LFormattedText::Draw to route such words through the CJK +vert path.
+bool isWordAllVertRotationChars(const lChar32 * text, int len);
+
 // True if node is a vertical-ruby inline box: the boxing algorithm wraps
 // the ruby table in an el_inlineBox whose parent has display:ruby.
 static inline bool isRubyInlineBox(ldomNode * node) {

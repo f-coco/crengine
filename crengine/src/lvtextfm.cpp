@@ -7301,12 +7301,24 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                     // features (+vert/+vrt2) should be applied, substituting glyphs like ー→|.
                     // TCY words and non-CJK (Latin etc.) words are drawn horizontally.
                     // For non-CJK words, we render horizontally then rotate 90° CW as a block.
+                    // Fork-only: Japanese horizontal marks (―, —, …, 〜, ―, etc.) are
+                    // classified as non-CJK by lStr_isCJK (they're below U+2E80) and would
+                    // default to the Latin-in-vertical render+rotate-as-block path — which
+                    // composites consecutive glyphs into one rotated bitmap that sits flush
+                    // against the previous character's slot bottom, with no internal padding.
+                    // Route them through the CJK +vert path so the font's properly-designed
+                    // vertical glyph (with built-in bearings) is used; per-glyph rotation
+                    // falls back gracefully when +vert is absent.
+                    bool word_is_vert_mark = is_vertical
+                        && !(word->flags & LTEXT_WORD_IS_TCY)
+                        && isWordAllVertRotationChars(srcline->t.text + word->t.start, (int)word->t.len);
                     bool word_is_latin_in_vertical = is_vertical
                         && !(word->flags & LTEXT_WORD_IS_TCY)
                         && !(word->flags & LTEXT_WORD_IS_CJK)
                         && !(word->flags & LTEXT_WORD_IS_FLEXIBLE_WIDTH_CJK)
                         && !(word->flags & LTEXT_WORD_IS_IMAGE)
-                        && !(word->flags & LTEXT_WORD_IS_INLINE_BOX);
+                        && !(word->flags & LTEXT_WORD_IS_INLINE_BOX)
+                        && !word_is_vert_mark;
                     if (is_vertical && !(word->flags & LTEXT_WORD_IS_TCY) && !word_is_latin_in_vertical)
                         drawFlags |= LFNT_HINT_IS_VERTICAL;
                     if (word_is_latin_in_vertical)

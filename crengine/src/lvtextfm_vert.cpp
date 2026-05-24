@@ -117,6 +117,33 @@ void ltext_get_fmt_counts(int *calls_out, int *vert_calls_out, int *word_iters_o
     if (word_iters_out) *word_iters_out = ltext_word_iters;
 }
 
+// Forward declaration: defined in lvfntman_vert_slot.cpp (fork-only).
+bool needsVerticalRotation90CW(lChar32 c);
+
+// Returns true if every character in [text, text+len) is a "horizontal-mark"
+// character that needs vertical orientation (―, —, …, ‥, ー, 〜, ～, －).
+//
+// Used by LFormattedText::Draw's classification step to route words composed
+// entirely of such marks through the CJK +vert glyph path instead of the
+// Latin-in-vertical render+rotate-as-block path.  The Latin path composites
+// consecutive horizontal glyphs into a single rotated bitmap that ends up
+// flush against the previous character's slot bottom (no internal padding,
+// edge-to-edge contact reads as visual overlap with neighbouring CJK chars).
+// The CJK path instead lets HarfBuzz's +vert/+vrt2 substitution pick up the
+// font's properly-designed vertical glyph (with built-in top/bottom bearings),
+// or, when the font lacks the substitution, falls back to per-glyph 90° CW
+// rotation whose `correct_y = y + _size - origin_x - bw` calculation places
+// the rotated glyph with natural top padding.
+bool isWordAllVertRotationChars(const lChar32 * text, int len) {
+    if (!text || len <= 0)
+        return false;
+    for (int i = 0; i < len; i++) {
+        if (!needsVerticalRotation90CW(text[i]))
+            return false;
+    }
+    return true;
+}
+
 // Returns true if 'ch' is a Japanese/CJK sentence-end character that must not
 // start a new column (行頭禁則) and should hang at the bottom of the current
 // column (ぶら下がり) instead.
