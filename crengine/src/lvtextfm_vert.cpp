@@ -117,28 +117,38 @@ void ltext_get_fmt_counts(int *calls_out, int *vert_calls_out, int *word_iters_o
     if (word_iters_out) *word_iters_out = ltext_word_iters;
 }
 
-// Forward declaration: defined in lvfntman_vert_slot.cpp (fork-only).
-bool needsVerticalRotation90CW(lChar32 c);
+// Returns true if 'ch' is one of the Japanese horizontal-mark characters
+// that must be routed through the CJK +vert path in vertical mode.
+// needsVerticalRotation90CW() also returns true for Latin/ASCII, so it cannot
+// be used here — we need only the specific marks that are non-CJK by
+// lStr_isCJK() but should still be rendered upright via +vert.
+static inline bool isJapaneseHorizontalMark(lChar32 c) {
+    switch (c) {
+        case 0x30FC: // ー KATAKANA-HIRAGANA PROLONGED SOUND MARK
+        case 0x301C: // 〜 WAVE DASH
+        case 0xFF5E: // ～ FULLWIDTH TILDE
+        case 0x2014: // — EM DASH
+        case 0x2015: // ― HORIZONTAL BAR
+        case 0xFF0D: // － FULLWIDTH HYPHEN-MINUS
+        case 0x2025: // ‥ TWO DOT LEADER
+        case 0x2026: // … HORIZONTAL ELLIPSIS
+            return true;
+        default:
+            return false;
+    }
+}
 
-// Returns true if every character in [text, text+len) is a "horizontal-mark"
-// character that needs vertical orientation (―, —, …, ‥, ー, 〜, ～, －).
+// Returns true if every character in [text, text+len) is a Japanese
+// horizontal-mark character (―, —, …, ‥, ー, 〜, ～, －).
 //
-// Used by LFormattedText::Draw's classification step to route words composed
-// entirely of such marks through the CJK +vert glyph path instead of the
-// Latin-in-vertical render+rotate-as-block path.  The Latin path composites
-// consecutive horizontal glyphs into a single rotated bitmap that ends up
-// flush against the previous character's slot bottom (no internal padding,
-// edge-to-edge contact reads as visual overlap with neighbouring CJK chars).
-// The CJK path instead lets HarfBuzz's +vert/+vrt2 substitution pick up the
-// font's properly-designed vertical glyph (with built-in top/bottom bearings),
-// or, when the font lacks the substitution, falls back to per-glyph 90° CW
-// rotation whose `correct_y = y + _size - origin_x - bw` calculation places
-// the rotated glyph with natural top padding.
+// Used by LFormattedText::Draw's classification step to route such words
+// through the CJK +vert glyph path instead of the Latin-in-vertical
+// render+rotate-as-block path.
 bool isWordAllVertRotationChars(const lChar32 * text, int len) {
     if (!text || len <= 0)
         return false;
     for (int i = 0; i < len; i++) {
-        if (!needsVerticalRotation90CW(text[i]))
+        if (!isJapaneseHorizontalMark(text[i]))
             return false;
     }
     return true;
