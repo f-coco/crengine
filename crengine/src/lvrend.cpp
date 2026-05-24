@@ -5945,15 +5945,10 @@ public:
     }
     /// Current flow position: c_x for vertical, c_y for horizontal
     int flowPos() const { return css_wm_is_vertical(writing_mode) ? c_x : c_y; }
-    /// Advance the flow position by height (syncs c_x+c_y in vertical; calls moveDown in horizontal)
+    /// Advance the flow position by height (always calls moveDown; additionally tracks c_x for vertical)
     void advanceFlowPos(int height) {
-        if ( isVertical() ) {
-            c_x += height;
-            c_y += height;
-            if ( c_y > in_y_max ) in_y_max = c_y;
-        } else {
-            moveDown( height );
-        }
+        moveDown( height );
+        if ( isVertical() ) c_x += height;
     }
     LVRendPageContext * getPageContext() {
         return &context;
