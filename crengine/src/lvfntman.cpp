@@ -4404,73 +4404,70 @@ public:
                                     printf("%x(x=%d+%d,w=%d) ", glyph_info[i].codepoint, x,
                                             item->origin_x + FONT_METRIC_TO_PX(glyph_pos[i].x_offset), w);
                                 #endif
-                                if ( flags & LFNT_HINT_CJK_ALTERED_WIDTH ) {
-                                    // In vertical-rl mode, x is the column's screen-X position (fixed for all
-                                    // glyphs in the column).  The x-shifting logic below is designed for
-                                    // horizontal text and must not run for vertical text — it would shift the
-                                    // glyph out of its column or clip it against the wrong boundary.
-                                    // The font's +vert feature already handles punctuation placement in
-                                    // vertical mode; for fonts without +vert the glyph stays at its natural
-                                    // horizontal position within the column.
-                                    if ( !is_vertical_draw ) {
-                                        int orig_width = width;
-                                        if ( flags & LFNT_HINT_CJK_SCALED_WIDTH ) {
-                                            // We want the below positionning to work inside the unscaled original glyph width
-                                            // (this feels like the most natural way to handle this, but may not look optimal
-                                            // when there are multiple consecutive opening/closing such flexible cjk chars)
-                                            int cjk_width_scale_percent = target_w; // We've passed it via this unused param
-                                            x += (w * cjk_width_scale_percent / 100 - w) / 2;
-                                            width = width * 100 / cjk_width_scale_percent;
-                                        }
-                                        // We got x and have w of a fullwidth CJK char, normally some punctuation
-                                        // char whose blackbox is narrow and smaller or equal to half its width.
-                                        // But the position of this blackbox may depends on the opening/closing
-                                        // punctuation status, and on the language requested (Simplified Chinese
-                                        // get punctuations left- or right-anchored in the glyph, while Traditional
-                                        // Chinese may get them centered in the glyph). We only know about the glyph
-                                        // returned by the font here, so we should try to guess how to shift the
-                                        // drawing to get this glyph to look alright in half of w at the original x.
-                                        if ( item->origin_x + item->bmp_width <= w/2 ) {
-                                            // Glyph fully in the left half part (ie. Simplified Chinese closing punctuation)
-                                            // Nothing to tweak.
-                                        }
-                                        else if ( item->origin_x >= w/2 ) {
-                                            // Glyph fully in the right half part (ie. Simplified Chinese opening punctuation)
-                                            x += width - w;
-                                        }
-                                        else if ( item->origin_x <= w*1/5 && w - item->origin_x - item->bmp_width >= w*2/5) {
-                                            // With some fonts (ie. SimSun), some left/right glyphs may leak slightly over
-                                            // the middle: do a few more checks to catch these and handle them as above.
-                                            // Glyph mostly in the left half part: nothing to tweak
-                                        }
-                                        else if ( item->origin_x >= w*2/5 && w - item->origin_x - item->bmp_width <= w*1/5) {
-                                            // Glyph mostly in the rightly half part
-                                            x += width - w;
-                                        }
-                                        else {
-                                            // Glyph overlapping the middle of the glyph (ie. Traditional Chinese opening
-                                            // or closing punctuation), so probably centered in its glyph.
-                                            // We want to keep it centered in the provided width.
-                                            x += (width - w) / 2;
-                                        }
-                                        width = orig_width; // restore it in case we tweaked it
-                                        // We draw such CJK glyph one by one, so make sure the 'x += w' just below
-                                        // gives x=x0+width, which is necessary to correctly draw any underline
-                                        w = x0 + width - x;
-                                        // Note: no thought given about what we should do if non-zero letter_spacing
-                                    }
-                                }
-                                else if ( flags & LFNT_HINT_CJK_SCALED_WIDTH ) {
-                                    if ( !is_vertical_draw ) {
-                                        // We need to shift x by half of what was added for scaling.
-                                        // (We could use 'width', which should usually be the glyph 'w' scaled, but we
-                                        // don't, as it may have been increased by overlap correction.)
+                                // In vertical-rl mode, x is the column's screen-X position (fixed for
+                                // all glyphs in the column).  The CJK x-shifting logic in both branches
+                                // below is designed for horizontal text and must not run for vertical
+                                // text — it would shift the glyph out of its column or clip it against
+                                // the wrong boundary.  The font's +vert feature already handles
+                                // punctuation placement; for fonts without +vert the glyph stays at its
+                                // natural horizontal position within the column.  Fold `!is_vertical_draw`
+                                // into each branch's guard so the body indentation matches upstream.
+                                if ( (flags & LFNT_HINT_CJK_ALTERED_WIDTH) && !is_vertical_draw ) {
+                                    int orig_width = width;
+                                    if ( flags & LFNT_HINT_CJK_SCALED_WIDTH ) {
+                                        // We want the below positionning to work inside the unscaled original glyph width
+                                        // (this feels like the most natural way to handle this, but may not look optimal
+                                        // when there are multiple consecutive opening/closing such flexible cjk chars)
                                         int cjk_width_scale_percent = target_w; // We've passed it via this unused param
                                         x += (w * cjk_width_scale_percent / 100 - w) / 2;
-                                        // We draw such CJK glyph one by one, so also make sure the 'x += w' just below
-                                        // gives x=x0+width, which is necessary to correctly draw any underline
-                                        w = x0 + width - x;
+                                        width = width * 100 / cjk_width_scale_percent;
                                     }
+                                    // We got x and have w of a fullwidth CJK char, normally some punctuation
+                                    // char whose blackbox is narrow and smaller or equal to half its width.
+                                    // But the position of this blackbox may depends on the opening/closing
+                                    // punctuation status, and on the language requested (Simplified Chinese
+                                    // get punctuations left- or right-anchored in the glyph, while Traditional
+                                    // Chinese may get them centered in the glyph). We only know about the glyph
+                                    // returned by the font here, so we should try to guess how to shift the
+                                    // drawing to get this glyph to look alright in half of w at the original x.
+                                    if ( item->origin_x + item->bmp_width <= w/2 ) {
+                                        // Glyph fully in the left half part (ie. Simplified Chinese closing punctuation)
+                                        // Nothing to tweak.
+                                    }
+                                    else if ( item->origin_x >= w/2 ) {
+                                        // Glyph fully in the right half part (ie. Simplified Chinese opening punctuation)
+                                        x += width - w;
+                                    }
+                                    else if ( item->origin_x <= w*1/5 && w - item->origin_x - item->bmp_width >= w*2/5) {
+                                        // With some fonts (ie. SimSun), some left/right glyphs may leak slightly over
+                                        // the middle: do a few more checks to catch these and handle them as above.
+                                        // Glyph mostly in the left half part: nothing to tweak
+                                    }
+                                    else if ( item->origin_x >= w*2/5 && w - item->origin_x - item->bmp_width <= w*1/5) {
+                                        // Glyph mostly in the rightly half part
+                                        x += width - w;
+                                    }
+                                    else {
+                                        // Glyph overlapping the middle of the glyph (ie. Traditional Chinese opening
+                                        // or closing punctuation), so probably centered in its glyph.
+                                        // We want to keep it centered in the provided width.
+                                        x += (width - w) / 2;
+                                    }
+                                    width = orig_width; // restore it in case we tweaked it
+                                    // We draw such CJK glyph one by one, so make sure the 'x += w' just below
+                                    // gives x=x0+width, which is necessary to correctly draw any underline
+                                    w = x0 + width - x;
+                                    // Note: no thought given about what we should do if non-zero letter_spacing
+                                }
+                                else if ( (flags & LFNT_HINT_CJK_SCALED_WIDTH) && !is_vertical_draw ) {
+                                    // We need to shift x by half of what was added for scaling.
+                                    // (We could use 'width', which should usually be the glyph 'w' scaled, but we
+                                    // don't, as it may have been increased by overlap correction.)
+                                    int cjk_width_scale_percent = target_w; // We've passed it via this unused param
+                                    x += (w * cjk_width_scale_percent / 100 - w) / 2;
+                                    // We draw such CJK glyph one by one, so also make sure the 'x += w' just below
+                                    // gives x=x0+width, which is necessary to correctly draw any underline
+                                    w = x0 + width - x;
                                 }
                                 // In vertical-rl mode, some characters need explicit 90° CW rotation
                                 // when the font has no +vert glyph substitution for them.
