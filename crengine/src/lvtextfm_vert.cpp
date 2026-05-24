@@ -1,12 +1,14 @@
 // =============================================================================
 // Vertical-mode formatter layout code (vertical-rl / vertical-lr).
 //
-// Fork origin: this file was created in commit f8b0bbe1 ("vertical-rl Option C
-// Phase 2b") alongside lvtextfm_layout_h.cpp.  Its functions are vertical-
-// writing-mode siblings of their `*Horizontal` counterparts in
-// lvtextfm_layout_h.cpp; they were initially ported (= cloned and adapted)
-// from the same upstream lvtextfm.cpp originals, then specialised for
-// column flow, kinsoku (line-breaking rules), and the Y=X coordinate swap.
+// Fork origin: this file was created in commit f8b0bbe1 ("vertical-rl
+// Option C Phase 2b").  Its functions are vertical-writing-mode siblings
+// of their `*Horizontal` counterparts in lvtextfm.cpp (which lived in
+// a separate lvtextfm_layout_h.cpp from commit f8b0bbe1 through Phase
+// C Step 2a, then folded back into lvtextfm.cpp in Steps 2b/2d).  They were initially ported
+// (= cloned and adapted) from the same upstream lvtextfm.cpp originals,
+// then specialised for column flow, kinsoku (line-breaking rules), and
+// the Y=X coordinate swap.
 //
 // When reconciling an upstream change to lvtextfm.cpp that lands in a
 // region covered by one of the *Horizontal functions, consider whether
@@ -16,17 +18,17 @@
 #define MIN_WORD_LEN_TO_HYPHENATE 4
 #define MAX_WORD_SIZE 64
 
-// Forward declarations (defined in lvtextfm_layout_h.cpp)
+// Forward declarations (defined in lvtextfm.cpp)
 void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fragment_t * para, bool first, bool last, bool preFormattedOnly, bool isLastPara, bool hasInlineBoxes );
 
 // =============================================================================
 // Vertical-mode diagnostic globals (Phase C Step 1 + 2a relocation).
 //
-// All ltext_vert_* counters live here so lvtextfm.cpp and lvtextfm_layout_h.cpp
-// stay closer to upstream.  Their extern declarations are in lvtextfm_fork.h.
+// All ltext_vert_* counters live here so lvtextfm.cpp stays closer to
+// upstream.  Their extern declarations are in lvtextfm_fork.h.
 // Increment sites are:
 //   - lvtextfm.cpp measureText (ruby_adv_diff)
-//   - lvtextfm_layout_h.cpp LFormattedText::Draw (bleed, fmt_draws, fmt_calls,
+//   - lvtextfm.cpp LFormattedText::Draw (bleed, fmt_draws, fmt_calls,
 //     fmt_vert_calls, word_iters, ib_layout_gap, char_overlap)
 // Reset/getter functions are called from cre.cpp via extern linkage.
 // =============================================================================
@@ -149,7 +151,7 @@ static inline bool isVerticalHangingChar(lChar32 ch) {
 // (DrawVertical) provides visible output for verification.
 // -----------------------------------------------------------------------------
 // addLineVertical
-// Vertical-rl sibling of addLineHorizontal (lvtextfm_layout_h.cpp), originally
+// Vertical-rl sibling of addLineHorizontal (lvtextfm.cpp), originally
 // ported from upstream `LVFormatter::addLine` and re-specialised for column
 // flow.  Cross-check against addLineHorizontal when upstream changes the
 // horizontal one.
@@ -186,7 +188,7 @@ void addLineVertical( LVFormatter* fmt, int start, int end, int x, src_text_frag
 ///
 // -----------------------------------------------------------------------------
 // processParagraphVertical
-// Vertical-rl sibling of processParagraphHorizontal (lvtextfm_layout_h.cpp).
+// Vertical-rl sibling of processParagraphHorizontal (lvtextfm.cpp).
 // Originally ported from upstream `LVFormatter::processParagraph` and adapted
 // for column-wise layout + kinsoku.  Cross-check when the horizontal one moves.
 // -----------------------------------------------------------------------------
@@ -731,7 +733,7 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
     /// handle embedded block for vertical layout
 // -----------------------------------------------------------------------------
 // processEmbeddedBlockVertical
-// Vertical-rl sibling of processEmbeddedBlockHorizontal (lvtextfm_layout_h.cpp),
+// Vertical-rl sibling of processEmbeddedBlockHorizontal (lvtextfm.cpp),
 // from upstream `LVFormatter::processEmbeddedBlock`.
 // -----------------------------------------------------------------------------
 void processEmbeddedBlockVertical( LVFormatter* fmt, int idx )

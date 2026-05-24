@@ -42,7 +42,7 @@ int lfnt_vert_gy_max         = -0x7fffffff;
 struct VertSlotRecord { int anchor; int slot_y; int offset; };
 static VertSlotRecord lfnt_vert_slot_records[LFNT_VERT_SLOT_MAX];
 int lfnt_vert_slot_count = 0;
-// Set by the formatter (lvtextfm_layout_h.cpp) immediately before each
+// Set by the formatter (LFormattedText::Draw in lvtextfm.cpp) immediately before each
 // DrawTextString call that draws into a vertical column.  Carries BOTH the
 // column anchor (line_x in screen coords) and the slot_y KEY for record lookup
 // purposes — the latter is the value docToWindowPoint will compute from the

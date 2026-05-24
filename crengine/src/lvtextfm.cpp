@@ -2994,11 +2994,12 @@ bool LVFormatter::m_libunibreak_init_done = false;
 // Horizontal-mode formatter layout free functions.
 //
 // These were extracted from the LVFormatter class as free functions during
-// the Option C vertical-rl split (commit f8b0bbe1), kept in a separate file
-// lvtextfm_layout_h.cpp for the duration of Phase B/C-1/C-2a, and inlined
-// back here in Phase C Step 2b to keep lvtextfm.cpp close to upstream
-// structure.  The vertical-mode sibling functions (processParagraphVertical
-// etc.) live in lvtextfm_vert.cpp, included at the end of this file.
+// the Option C vertical-rl split (commit f8b0bbe1), kept in a separate
+// file lvtextfm_layout_h.cpp through Phase B / C-1 / C-2a, and inlined
+// back here in Phase C Steps 2b (5 layout functions) and 2d (Draw) to
+// keep lvtextfm.cpp close to upstream structure.  The vertical-mode
+// sibling functions (processParagraphVertical etc.) live in
+// lvtextfm_vert.cpp, included at the end of this file.
 //
 // Each function below carries an `Origin:` header pointing back to its
 // upstream LVFormatter member, so an upstream-side change can be located
@@ -7623,7 +7624,6 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
 
 
 
-#include "lvtextfm_layout_h.cpp"
 #include "lvtextfm_vert.cpp"
 
 #endif
