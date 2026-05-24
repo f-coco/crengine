@@ -6606,41 +6606,31 @@ static void drawBorder(LVDrawBuf * buf, int x0, int x1, int y, int h, ldomNode *
     }
 }
 
-// In vertical-rl mode, CSS physical left/right borders map to thin stripes at the
-// column's right (bdidx=1) or left (bdidx=3) screen-X edge, spanning y_start..y_end
-// in screen-Y (the element's inline extent).
+// Fork-only helper for vertical-rl mode.
+// CSS physical left/right borders map to thin stripes at the column's right
+// (bdidx=1) or left (bdidx=3) screen-X edge, spanning y_start..y_end in screen-Y
+// (the element's inline extent).
+// Delegates to drawBorder() for the actual draw so color/style/dot/interval
+// resolution stays single-sourced — any upstream change to drawBorder() is
+// picked up automatically.  drawBorder()'s left/right path issues
+// DrawLine(x0, y, x1, y+h, ..., 1), which is exactly the geometry we want;
+// we just supply screen-X edges of the column and screen-Y as h.
 static void drawBorderVertical(LVDrawBuf * buf, int line_x, int col_width,
                                int y_start, int y_end,
                                ldomNode * borderNode, int bdidx) {
-    css_style_ref_t style = borderNode->getStyle();
-    css_length_t border_color = style->border_color[bdidx];
-    lUInt32 bdcl = border_color.type == css_val_color ?
-                       border_color.value : style->color.value;
-    if ( !IS_COLOR_FULLY_TRANSPARENT(bdcl) ) {
-        int border_width = measureBorder(borderNode, bdidx);
-        css_border_style_type_t border_style;
-        switch (bdidx) {
-            case 1: border_style = style->border_style_right; break;
-            case 3: border_style = style->border_style_left;  break;
-            default:
-                    assert(0);
-                    border_style = css_border_none;
-                    break;
-        }
-        int dot, interval;
-        switch (border_style) {
-            case css_border_dotted: dot = interval = border_width;     break;
-            case css_border_dashed: dot = interval = 3 * border_width; break;
-            default: dot = 1; interval = 0;                            break;
-        }
-        if ( bdidx == 1 ) // right border → right edge of column
-            buf->DrawLine(line_x - border_width, y_start, line_x, y_end,
-                          bdcl, dot, interval, 1);
-        else               // left border → left edge of column
-            buf->DrawLine(line_x - col_width, y_start,
-                          line_x - col_width + border_width, y_end,
-                          bdcl, dot, interval, 1);
+    int bw = measureBorder(borderNode, bdidx);
+    int x0, x1;
+    if ( bdidx == 1 ) {          // right border → right edge of column
+        x0 = line_x - bw;
+        x1 = line_x;
+    } else if ( bdidx == 3 ) {   // left border → left edge of column
+        x0 = line_x - col_width;
+        x1 = line_x - col_width + bw;
+    } else {
+        assert(0); // vertical helper only handles left/right
+        return;
     }
+    drawBorder(buf, x0, x1, y_start, y_end - y_start, borderNode, bdidx);
 }
 
 // -----------------------------------------------------------------------------
