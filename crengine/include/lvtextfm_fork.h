@@ -33,11 +33,21 @@ bool isCJKPunctuation( lChar32 c );
 bool isCJKLeftPunctuation( lChar32 c );
 #endif
 
-// Vertical-ruby diagnostic: tracks render_w − advance for vertical ruby
-// inline boxes.  Defined in lvtextfm_vert.cpp; incremented from
-// measureText() in lvtextfm.cpp.  Reset/getter exposed to cre.cpp.
+// Vertical-mode diagnostic globals.  Defined in lvtextfm_vert.cpp;
+// incremented from various sites in lvtextfm.cpp and lvtextfm_layout_h.cpp.
+// Reset/getter functions are exposed to cre.cpp.
 extern int ltext_vert_ruby_adv_diff_total;
 extern int ltext_vert_ruby_adv_diff_max;
+extern int ltext_vert_bleed_count;
+extern int ltext_vert_bleed_max_px;
+extern int ltext_vert_fmt_draws;
+extern int ltext_fmt_calls;
+extern int ltext_fmt_vert_calls;
+extern int ltext_word_iters;
+extern int ltext_vert_ib_layout_gap_total;
+extern int ltext_vert_ib_layout_gap_max;
+extern int ltext_vert_char_overlap_count;
+extern int ltext_vert_char_overlap_max_px;
 
 // True if node is a vertical-ruby inline box: the boxing algorithm wraps
 // the ruby table in an el_inlineBox whose parent has display:ruby.

@@ -15,78 +15,9 @@
 #define MIN_WORD_LEN_TO_HYPHENATE 4
 #define MAX_WORD_SIZE 64
 
-// Vertical-rl bleed counters: accessible from cre.cpp via extern.
-// Reset via ltext_reset_vert_bleed(); read via ltext_get_vert_bleed().
-int ltext_vert_bleed_count = 0;
-int ltext_vert_bleed_max_px = 0;
-
-// Diagnostic: count CJK draw calls reached by the vertical formatter path.
-// Compared with lfnt_vert_lifetime_draws this isolates whether records are
-// lost between formatter and font (mismatch) or before the formatter (=0).
-int ltext_vert_fmt_draws = 0;
-// Counts every LFormattedText::Draw entry, regardless of writing-mode, and
-// every word-loop iteration.  Comparing fmt_draws / fmt_calls / word_iters
-// tells us whether inner ruby cells reach LFormattedText::Draw with vertical
-// writing-mode or not.
-int ltext_fmt_calls   = 0;
-int ltext_fmt_vert_calls = 0;
-int ltext_word_iters  = 0;
-
-// Diagnostic: layout/draw position mismatch for vertical inline boxes.
-// Fires when ib_word_x (from layout) > vert_min_next_x (draw tracking),
-// meaning the layout placed the box further than the draw tracker expected —
-// a gap is visible above the inline box.  With correct vert_layout_min_x
-// tracking (e.g. after the CJK-only font_size fix for spaces) this is 0.
-int ltext_vert_ib_layout_gap_total = 0;
-int ltext_vert_ib_layout_gap_max   = 0;
-
-void ltext_reset_vert_ib_layout_gap() {
-    ltext_vert_ib_layout_gap_total = 0;
-    ltext_vert_ib_layout_gap_max   = 0;
-}
-void ltext_get_vert_ib_layout_gap(int *total_out, int *max_out) {
-    *total_out = ltext_vert_ib_layout_gap_total;
-    *max_out   = ltext_vert_ib_layout_gap_max;
-}
-
-// Vertical-rl plain-character overlap counters.
-// Fires when a CJK/plain character's y0 is less than the previous character's
-// y0 + effective_width (= its slot end), meaning two characters overlap in the
-// column (height) direction.  This is the "文字が被る" / character-overlap bug.
-// Reset via ltext_reset_vert_char_overlap(); read via ltext_get_vert_char_overlap().
-int ltext_vert_char_overlap_count = 0;
-int ltext_vert_char_overlap_max_px = 0;
-
-void ltext_reset_vert_char_overlap() {
-    ltext_vert_char_overlap_count = 0;
-    ltext_vert_char_overlap_max_px = 0;
-}
-
-void ltext_get_vert_char_overlap(int *count_out, int *max_px_out) {
-    *count_out  = ltext_vert_char_overlap_count;
-    *max_px_out = ltext_vert_char_overlap_max_px;
-}
-
-void ltext_reset_vert_bleed() {
-    ltext_vert_bleed_count = 0;
-    ltext_vert_bleed_max_px = 0;
-}
-
-void ltext_get_vert_bleed(int *count_out, int *max_px_out) {
-    *count_out  = ltext_vert_bleed_count;
-    *max_px_out = ltext_vert_bleed_max_px;
-}
-
-int ltext_get_vert_fmt_draws() {
-    return ltext_vert_fmt_draws;
-}
-
-void ltext_get_fmt_counts(int *calls_out, int *vert_calls_out, int *word_iters_out) {
-    if (calls_out)      *calls_out      = ltext_fmt_calls;
-    if (vert_calls_out) *vert_calls_out = ltext_fmt_vert_calls;
-    if (word_iters_out) *word_iters_out = ltext_word_iters;
-}
-
+// Vertical-mode diagnostic globals were moved to lvtextfm_vert.cpp during
+// Phase C Step 2a; this file's increment sites see them via the extern
+// declarations in include/lvtextfm_fork.h.
 
 // -----------------------------------------------------------------------------
 // alignLineHorizontal
