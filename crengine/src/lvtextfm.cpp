@@ -27,6 +27,7 @@
 #include "../include/lvrend.h"
 #include "../include/textlang.h"
 #include "../include/renderutil.h"
+#include "../include/lvtextfm_fork.h"
 #endif
 
 #if USE_HARFBUZZ==1
@@ -411,51 +412,6 @@ void LFormattedText::AddSourceObject(
     //   in measureText(), where we know about the buffer width (its container
     //   width) and can better apply values in %
 }
-
-// Forward declarations for horizontal layout free functions
-// (defined in lvtextfm_layout_h.cpp, called from LVFormatter::splitParagraphs)
-class LVFormatter;
-void processParagraphHorizontal( LVFormatter* fmt, int start, int end, bool isLastPara );
-void processEmbeddedBlockHorizontal( LVFormatter* fmt, int idx );
-// Forward declarations for vertical layout free functions
-// (defined in lvtextfm_vert.cpp)
-void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLastPara );
-void processEmbeddedBlockVertical( LVFormatter* fmt, int idx );
-// Helper functions used by measureText() and processParagraphHorizontal()
-bool isLeftPunctuation( lChar32 c );
-
-// Diagnostic: tracks render_w − advance for vertical ruby inline boxes.
-// Positive total proves the getCharWidth-based advance path is active (Latin ruby).
-// Reset via ltext_reset_vert_ruby_adv_diff(); read via ltext_get_vert_ruby_adv_diff().
-int ltext_vert_ruby_adv_diff_total = 0;
-int ltext_vert_ruby_adv_diff_max   = 0;
-void ltext_reset_vert_ruby_adv_diff() {
-    ltext_vert_ruby_adv_diff_total = 0;
-    ltext_vert_ruby_adv_diff_max   = 0;
-}
-void ltext_get_vert_ruby_adv_diff(int *total_out, int *max_out) {
-    *total_out = ltext_vert_ruby_adv_diff_total;
-    *max_out   = ltext_vert_ruby_adv_diff_max;
-}
-
-// True if node is a vertical-ruby inline box: the boxing algorithm wraps
-// the ruby table in an el_inlineBox whose parent has display:ruby.
-static inline bool isRubyInlineBox(ldomNode * node) {
-    return node
-        && node->getParentNode()
-        && node->getParentNode()->getStyle()->display == css_d_ruby
-        && node->getChildCount() > 0
-        && node->getChildNode(0)->getRendMethod() == erm_table;
-}
-
-// True if a ruby element ID belongs to the annotation side (rt, rp, rtc).
-static inline bool isRubyAnnotId(lUInt16 id) {
-    return id == el_rt || id == el_rp || id == el_rtc;
-}
-#if (USE_LIBUNIBREAK!=1)
-bool isCJKPunctuation( lChar32 c );
-bool isCJKLeftPunctuation( lChar32 c );
-#endif
 
 class LVFormatter {
 public:

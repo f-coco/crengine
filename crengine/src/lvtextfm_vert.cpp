@@ -19,6 +19,21 @@
 // Forward declarations (defined in lvtextfm_layout_h.cpp)
 void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fragment_t * para, bool first, bool last, bool preFormattedOnly, bool isLastPara, bool hasInlineBoxes );
 
+// Vertical-ruby diagnostic globals: track render_w − advance for vertical
+// ruby inline boxes.  Defined here (moved from lvtextfm.cpp during Phase C
+// Step 1); declared extern in lvtextfm_fork.h; incremented from measureText()
+// in lvtextfm.cpp; reset/getter exposed to cre.cpp.
+int ltext_vert_ruby_adv_diff_total = 0;
+int ltext_vert_ruby_adv_diff_max   = 0;
+void ltext_reset_vert_ruby_adv_diff() {
+    ltext_vert_ruby_adv_diff_total = 0;
+    ltext_vert_ruby_adv_diff_max   = 0;
+}
+void ltext_get_vert_ruby_adv_diff(int *total_out, int *max_out) {
+    *total_out = ltext_vert_ruby_adv_diff_total;
+    *max_out   = ltext_vert_ruby_adv_diff_max;
+}
+
 // Returns true if 'ch' is a Japanese/CJK sentence-end character that must not
 // start a new column (行頭禁則) and should hang at the bottom of the current
 // column (ぶら下がり) instead.
