@@ -7323,6 +7323,8 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         drawFlags |= LFNT_HINT_IS_VERTICAL;
                     if (word_is_latin_in_vertical)
                         drawFlags |= LFNT_HINT_RENDER_ROTATE_FOR_VERTICAL;
+                    if (word_is_vert_mark)
+                        drawFlags |= LFNT_HINT_VERTICAL_MARK;
                     // For debugging, to visually see overlap/italic correction:
                     // if (word->flags & LTEXT_WORD__AVAILABLE_BIT_16__ ) drawFlags |= LTEXT_TD_OVERLINE;
                     int x0, y0, w, h;

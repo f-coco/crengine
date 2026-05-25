@@ -4190,6 +4190,7 @@ public:
             // We call setupHBFeatures() here rather than at construction time because
             // measureText() may have changed _hb_features since the last DrawTextString call.
             bool is_vertical_draw = (flags & LFNT_HINT_IS_VERTICAL) != 0;
+            bool is_vert_mark     = (flags & LFNT_HINT_VERTICAL_MARK) != 0;
             // render+rotate mode: draw horizontally into temp buffer, then rotate 90° CW
             bool is_render_rotate = (flags & LFNT_HINT_RENDER_ROTATE_FOR_VERTICAL) != 0;
             int rr_word_w = width;  // horizontal pixel width of the word (passed via width param)
@@ -4470,7 +4471,14 @@ public:
                                 // Detect substitution: if +vert changed the glyph ID from the cmap
                                 // nominal, the font already provides a vertical form — draw normally.
                                 // If glyph ID is unchanged (no substitution), rotate explicitly.
-                                int gx = x + item->origin_x + FONT_METRIC_TO_PX(glyph_pos[i].x_offset);
+                                // For vertical marks (ー, …, ‥, etc.) always centre in
+                                // the em column.  Fonts designed primarily for TTB rendering
+                                // often set hmtx origin_x = 0 on their vert-form glyphs, so
+                                // relying on origin_x would place the glyph at the left edge.
+                                // Using (em − bmp_width)/2 gives correct centring for all fonts.
+                                int gx = (is_vertical_draw && is_vert_mark)
+                                    ? x + (_size - (int)item->bmp_width) / 2
+                                    : x + item->origin_x + FONT_METRIC_TO_PX(glyph_pos[i].x_offset);
                                 // Glyph Y position:
                                 // Both horizontal and vertical use:
                                 //   gy = y + _baseline - origin_y - y_offset
@@ -4518,7 +4526,13 @@ public:
                                             // Back-solve for rot_gx, rot_gy:
                                             int bw = item->bmp_width;
                                             int bh = item->bmp_height;
-                                            int correct_x = x + _baseline - item->origin_y;
+                                            // For vert marks, centre the rotated bar (width=bh after
+                                            // rotation) in the em column (width=_size).
+                                            // The formula _baseline - origin_y depends on where the
+                                            // glyph sits in the em square, which varies between fonts.
+                                            int correct_x = is_vert_mark
+                                                ? x + (_size - bh) / 2
+                                                : x + _baseline - item->origin_y;
                                             int correct_y = y + _size - item->origin_x - bw;
                                             if (correct_y < y) correct_y = y;
                                             int rot_gx = correct_x - (bw - bh) / 2;

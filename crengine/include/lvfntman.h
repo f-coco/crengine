@@ -231,6 +231,7 @@ enum kerning_mode_t {
 #define LFNT_HINT_IS_FALLBACK_FONT       0x0010 /// set on recursive Harfbuzz rendering/drawing with a fallback font
 #define LFNT_HINT_IS_VERTICAL            0x0020 /// text is in vertical writing mode (TTB)
 #define LFNT_HINT_DIRECTION_IS_TTB       0x0040 /// segment direction is top-to-bottom (vertical)
+#define LFNT_HINT_VERTICAL_MARK          0x0080 /// vertical-mark glyph (ー, …, ‥, etc.) — centre in em column
 
 #define LFNT_HINT_TRANSFORM_STRETCH      0x0100 /// Glyph(s) are to be stretched so their bounding box fits the provided w/h
 #define LFNT_HINT_CJK_ALTERED_WIDTH      0x0200 /// CJK full width glyph is to be shifted to look correct in a non-nominal width
