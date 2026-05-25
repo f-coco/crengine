@@ -19,6 +19,7 @@
 
 #include "../include/crsetup.h"
 #include "../include/lvfntman.h"
+#include "../include/lvfntman_vert.h"  // fork-only: TTB glyph metrics cache
 #include "../include/lvstream.h"
 #include "../include/lvdrawbuf.h"
 #include "../include/lvstyles.h"
@@ -1520,6 +1521,8 @@ protected:
     LVFontGlyphSignedMetricCache     _lsbcache; // glyph left side bearing cache
     LVFontGlyphSignedMetricCache     _rsbcache; // glyph right side bearing cache
     LVFontLocalGlyphCache            _glyph_cache;
+    // Fork-only: per-face TTB metrics cache for vertical-rl/lr rendering.
+    LVFontVertGlyphMetricsCache      _vert_metrics_cache;
     bool           _drawMonochrome;
     hinting_mode_t _hintingMode;
     kerning_mode_t _kerningMode;
@@ -1771,6 +1774,7 @@ public:
         _wcache.clear();
         _lsbcache.clear();
         _rsbcache.clear();
+        _vert_metrics_cache.clear();  // fork-only
         #if USE_HARFBUZZ==1
         _glyph_cache2.clear();
         _width_cache2.clear();
@@ -4201,6 +4205,14 @@ public:
             }
             setupHBFeatures(is_vertical_draw);
 
+            // Fork-only: switch HarfBuzz to TTB direction for vertical text so the
+            // shaper uses vmtx-based positioning (matching measureText), and we can
+            // read y_advance / y_offset for proper TTB-context placement.  Override
+            // the LTR/RTL direction that may have been set above from flags.
+            if (is_vertical_draw) {
+                hb_buffer_set_direction(_hb_buffer, HB_DIRECTION_TTB);
+            }
+
             // Shape
             hb_shape(_hb_font, _hb_buffer, _hb_features.ptr(), (unsigned int)_hb_features.length());
 
@@ -4397,6 +4409,12 @@ public:
                                     w = FONT_METRIC_TO_PX(glyph_pos[i].x_advance + _synth_weight_strength);
                                 else
                                     w = 0;
+                                // Fork-only: TTB shaping in vertical mode carries the
+                                // advance in y_advance (negative, y-up) instead of
+                                // x_advance.  Override w with abs(y_advance) when present.
+                                if (is_vertical_draw && glyph_pos[i].y_advance) {
+                                    w = abs(FONT_METRIC_TO_PX(glyph_pos[i].y_advance + _synth_weight_strength));
+                                }
                                 #ifdef DEBUG_DRAW_TEXT
                                     printf("%x(x=%d+%d,w=%d) ", glyph_info[i].codepoint, x,
                                             item->origin_x + FONT_METRIC_TO_PX(glyph_pos[i].x_offset), w);
@@ -4466,30 +4484,40 @@ public:
                                     // gives x=x0+width, which is necessary to correctly draw any underline
                                     w = x0 + width - x;
                                 }
-                                // In vertical-rl mode, some characters need explicit 90° CW rotation
-                                // when the font has no +vert glyph substitution for them.
-                                // Detect substitution: if +vert changed the glyph ID from the cmap
-                                // nominal, the font already provides a vertical form — draw normally.
-                                // If glyph ID is unchanged (no substitution), rotate explicitly.
-                                // For vertical marks (ー, …, ‥, etc.) always centre in
-                                // the em column.  Fonts designed primarily for TTB rendering
-                                // often set hmtx origin_x = 0 on their vert-form glyphs, so
-                                // relying on origin_x would place the glyph at the left edge.
-                                // Using (em − bmp_width)/2 gives correct centring for all fonts.
-                                int gx = (is_vertical_draw && is_vert_mark)
-                                    ? x + (_size - (int)item->bmp_width) / 2
-                                    : x + item->origin_x + FONT_METRIC_TO_PX(glyph_pos[i].x_offset);
-                                // Glyph Y position.  Vertical mode: y is the em-square (slot)
-                                // top, so the baseline offset within the slot is em_top, not
-                                // _baseline (= ascender below line-box top).
-                                int gy;
+                                // Upstream glyph placement.
+                                int gx = x + item->origin_x + FONT_METRIC_TO_PX(glyph_pos[i].x_offset);
+                                int gy = y + _baseline - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset);
+                                // Fork-only: vertical-rl/lr override.  Prefer vmtx-based
+                                // placement (matching HarfBuzz TTB shaping above) when the
+                                // font has vhea; fall back to an em-square-top formula on
+                                // horizontal metrics otherwise.
                                 if (is_vertical_draw) {
-                                    int em_top = _size - (_height - _baseline);
-                                    gy = y + em_top - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset);
-                                    if (gy < y) // never start above slot top
-                                        gy = y;
-                                } else {
-                                    gy = y + _baseline - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset);
+                                    VertGlyphMetrics vm;
+                                    if (_vert_metrics_cache.get(_face, glyph_info[i].codepoint, vm)) {
+                                        // Pen at (col_centre, slot_top) = vmtx vertical origin.
+                                        // HarfBuzz TTB returns x_offset = -vertOriginX and
+                                        // y_offset = -vertOriginY (compensation for an LTR-style
+                                        // pen) — we've already placed pen at the vertical origin
+                                        // ourselves, so adding them would double-displace.  Use
+                                        // vmtx bearings alone.
+                                        int col_center = x + _size / 2;
+                                        gx = col_center + vm.origin_x;
+                                        gy = y + vm.origin_y;
+                                    } else {
+                                        // No vhea (Noto, DroidSansMono, etc.): em-square-top
+                                        // formula on horizontal metrics — keeps the glyph in
+                                        // its slot without leaking into the next.
+                                        int em_top = _size - (_height - _baseline);
+                                        gy = y + em_top - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset);
+                                        if (gy < y)
+                                            gy = y;
+                                    }
+                                    // Vert marks (ー/—/…): always centre the bitmap in the
+                                    // em column.  Some fonts (Hiragino-style) leave their
+                                    // +vert form's bearing at 0, which would left-align.
+                                    if (is_vert_mark) {
+                                        gx = x + (_size - (int)item->bmp_width) / 2;
+                                    }
                                 }
                                 // Diagnostic: record (gy − y) and per-slot offset for vertical
                                 // non-rotated draws.  See lvfntman_vert_slot.cpp.

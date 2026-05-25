@@ -23,6 +23,7 @@ if ( NOT ${GUI} STREQUAL FB2PROPS )
     src/lvfnt.cpp      
     src/hyphman.cpp    
     src/lvfntman.cpp
+    src/lvfntman_vert.cpp
     src/lvfntman_vert_slot.cpp
     src/lvrend_vert_diag.cpp
     src/crgui.cpp
