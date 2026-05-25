@@ -4479,27 +4479,18 @@ public:
                                 int gx = (is_vertical_draw && is_vert_mark)
                                     ? x + (_size - (int)item->bmp_width) / 2
                                     : x + item->origin_x + FONT_METRIC_TO_PX(glyph_pos[i].x_offset);
-                                // Glyph Y position:
-                                // Both horizontal and vertical use:
-                                //   gy = y + _baseline - origin_y - y_offset
-                                //
-                                // This formula produces visually uniform inter-character spacing
-                                // because (_baseline − origin_y) is approximately constant for all
-                                // full-width CJK characters in a given font (≈ |descender|, typically
-                                // 4-8 px).  Using y − y_offset alone (without the constant term)
-                                // causes irregular spacing because y_offset varies per character.
-                                //
-                                // The consequence is that the highlight sbox (at slot top = y) sits
-                                // (_baseline − origin_y) pixels above the rendered glyph.  This is a
-                                // known limitation: closing the gap requires font-metric queries that
-                                // are not available in the coordinate-conversion layer.
-                                //
-                                // Rotation (Latin/etc without +vert) uses its own correct_y below
-                                // and does NOT read gy.
-                                int gy = y + _baseline - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset);
-                                // Clamp: glyph must not start above its slot top in vertical mode.
-                                if (is_vertical_draw && gy < y)
-                                    gy = y;
+                                // Glyph Y position.  Vertical mode: y is the em-square (slot)
+                                // top, so the baseline offset within the slot is em_top, not
+                                // _baseline (= ascender below line-box top).
+                                int gy;
+                                if (is_vertical_draw) {
+                                    int em_top = _size - (_height - _baseline);
+                                    gy = y + em_top - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset);
+                                    if (gy < y) // never start above slot top
+                                        gy = y;
+                                } else {
+                                    gy = y + _baseline - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset);
+                                }
                                 // Diagnostic: record (gy − y) and per-slot offset for vertical
                                 // non-rotated draws.  See lvfntman_vert_slot.cpp.
                                 if (is_vertical_draw)
