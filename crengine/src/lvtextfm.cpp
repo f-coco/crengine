@@ -7034,14 +7034,12 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         if (is_vertical) {
                             int ann_w = (int)frmline->height > m_pbuffer->strut_height
                                         ? (int)frmline->height - m_pbuffer->strut_height : 0;
-                            // Apply the per-slot Y offset that docToWindowPoint applies to
-                            // sboxes, so the highlight aligns with the actual rendered glyphs.
-                            // Use mark.left as the slot_y key (same as lfnt_vert_set_current_slot_y_key
-                            // sets when drawing the first char of the column).
-                            int slot_fallback = (draw_extra_info ? draw_extra_info->vert_glyph_y_offset : 0);
-                            int slot_off = lfnt_lookup_vert_slot_offset(line_x, mark.left + y, slot_fallback);
-                            buf->FillRect(line_x - (int)m_pbuffer->strut_height - ann_w, mark.left + y + slot_off,
-                                          line_x - ann_w, mark.right + y + slot_off, m_pbuffer->highlight_options.selectionColor);
+                            // With vmtx-based gy = slot_top + vertBearingY (≈ 1-5 px),
+                            // glyphs sit within em/10 of slot_top; the highlight fill
+                            // aligned to slot_top covers the character cleanly without
+                            // needing a per-glyph offset lookup.
+                            buf->FillRect(line_x - (int)m_pbuffer->strut_height - ann_w, mark.left + y,
+                                          line_x - ann_w, mark.right + y, m_pbuffer->highlight_options.selectionColor);
                         } else {
                             buf->FillRect(mark.left + x, mark.top + y, mark.right + x, mark.bottom + y, m_pbuffer->highlight_options.selectionColor);
                         }
@@ -7489,19 +7487,6 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         }
                     }
                     {
-                        // For vertical-rl, hand the column anchor (line_x) AND the slot_y
-                        // key (clip.top + frmline->x + word->x in screen coords) to the font
-                        // layer.  Using word->x — the position layoutstores and getRectEx
-                        // returns — instead of clamped_x (the running tracker possibly
-                        // bumped by vert_min_next_x overlap correction) lets docToWindowPoint
-                        // produce matching keys at sbox time.
-                        if (is_vertical) {
-                            lfnt_vert_set_current_anchor(line_x);
-                            // y here is screen-Y origin (= clip.top for outer block; the inner
-                            // block's accumulated draw_y for nested formatters such as ruby cells)
-                            lfnt_vert_set_current_slot_y_key(y + (int)frmline->x + (int)word->x);
-                            ltext_vert_fmt_draws++;
-                        }
                         int _adv = !vert_skip_draw ? font->DrawTextString(
                             buf,
                             x0,
@@ -7517,10 +7502,6 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             word->width,
                             text_decoration_back_gap,
                             w, h) : 0;
-                        if (is_vertical) {
-                            lfnt_vert_set_current_anchor(-1);
-                            lfnt_vert_set_current_slot_y_key(-1);
-                        }
                         // For word_is_latin_in_vertical, DrawTextString returns the
                         // actual horizontal (x_advance) width, which may be smaller
                         // than word->width (TTB y_advance) for fonts with full-em vmtx.

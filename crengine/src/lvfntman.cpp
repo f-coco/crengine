@@ -90,11 +90,6 @@ static void ft_error_trace(const char *where, const char *call, FT_Error error) 
     fprintf(stderr, "CRE: %s: %s failed: %s\n", where, call, errstr);
 }
 
-// Per-slot vertical-rl glyph-Y diagnostic + record machinery lives in
-// lvfntman_vert_slot.cpp (fork-only file).  The DrawTextString hook below
-// calls this internal helper once per non-rotated vertical glyph draw.
-extern void lfnt_vert_record_glyph_draw(int gy, int slot_top_y);
-
 // Note: y are inverted as the glyphs shapes are in a mirrored coordinates system
 static void SVGGlyphsCollector_svg_move_to(hb_draw_funcs_t *, SVGGlyphsCollector *collector, hb_draw_state_t *,
                                         float to_x, float to_y, void *) {
@@ -4519,11 +4514,6 @@ public:
                                         gx = x + (_size - (int)item->bmp_width) / 2;
                                     }
                                 }
-                                // Diagnostic: record (gy − y) and per-slot offset for vertical
-                                // non-rotated draws.  See lvfntman_vert_slot.cpp.
-                                if (is_vertical_draw)
-                                    lfnt_vert_record_glyph_draw(gy, y);
-
                                 bool did_rotate = false;
                                 if (is_vertical_draw && item->bmp_pixelformat != 4) {
                                     lUInt32 cluster = glyph_info[i].cluster;
