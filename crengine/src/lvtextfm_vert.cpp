@@ -978,27 +978,43 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                     }
                 }
             }
-            // 行頭禁則 wrap-back (追い込み): chars that JLReq prohibits at column start
-            // must not start a column.  In addition to closing brackets (」）】〕 etc.),
-            // LuaTeX-ja's kinsoku_table also lists 長音 (ー), 繰り返し記号 (々ヽヾゝゞ〻),
-            // and small kana (ぁぃぅぇぉっゃゅょゎ etc.).  Pull the break back by one
-            // so the prohibited char follows normal text into the previous column.
-            if ( lastMandatoryWrap < 0 && endp > pos + 1 && endp < fmt->m_length ) {
-                lChar32 endp_ch = fmt->m_text[endp];
-                if ( getCJKCharType(endp_ch) == cjkt_closing_bracket
-                     || isVertLineStartProhibitedExt(endp_ch) ) {
-                    wrapPos--;
-                    endp--;
+            // Cascading 追い出し (oidashi) wrap-back: chained 行頭/行末 kinsoku
+            // resolution.  A single wrap-back can leave another prohibited char
+            // exposed at the new boundary (e.g. 」」 at column head needs two
+            // wrap-backs; 漢「 at column end leaves 「 at next column head, which
+            // is then a closing-bracket-like situation if cascaded with another
+            // 行頭禁則 char).  Iterate until both ends are clean or the safety
+            // limit is hit — LuaTeX-ja's TeX-based optimizer handles this via
+            // paragraph-level badness search; we approximate with a bounded
+            // greedy cascade.
+            //
+            // Safety cap: never push more than ~5 chars back from a single
+            // column break.  Cascading further would shorten the column
+            // disproportionately to fix a punctuation pile-up.
+            int kinsoku_cascade = 5;
+            while ( kinsoku_cascade > 0 ) {
+                bool moved = false;
+                // 行頭禁則 wrap-back: chars JLReq prohibits at column start
+                // (closing brackets, 長音 ー, 々, ヽヾゝゞ〻, small kana, etc.).
+                if ( lastMandatoryWrap < 0 && endp > pos + 1 && endp < fmt->m_length ) {
+                    lChar32 endp_ch = fmt->m_text[endp];
+                    if ( getCJKCharType(endp_ch) == cjkt_closing_bracket
+                         || isVertLineStartProhibitedExt(endp_ch) ) {
+                        wrapPos--;
+                        endp--;
+                        moved = true;
+                    }
                 }
-            }
-            // 行末禁則: 開き括弧 (「（【〔 etc.) must not end a column.
-            // If the last char of the current column is an opening bracket, pull the
-            // break back by one so the bracket leads off the next column instead.
-            if ( lastMandatoryWrap < 0 && wrapPos > pos ) {
-                if ( getCJKCharType(fmt->m_text[wrapPos]) == cjkt_opening_bracket ) {
-                    wrapPos--;
-                    endp--;
+                // 行末禁則 wrap-back: 開き括弧 (「（【〔 etc.) must not end a column.
+                if ( lastMandatoryWrap < 0 && wrapPos > pos ) {
+                    if ( getCJKCharType(fmt->m_text[wrapPos]) == cjkt_opening_bracket ) {
+                        wrapPos--;
+                        endp--;
+                        moved = true;
+                    }
                 }
+                if ( !moved ) break;
+                kinsoku_cascade--;
             }
             #endif
 
