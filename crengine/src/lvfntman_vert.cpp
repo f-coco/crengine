@@ -299,6 +299,76 @@ lChar32 getVertPresentationForm(lChar32 c)
     }
 }
 
+int getJLReqGlueKernEighths(JLReqVertClass prev_class, JLReqVertClass next_class)
+{
+    // Encodes jfm-ujisv.lua [N].glue[M].base in eighths of em.
+    // Switch on prev (rows of the matrix), then next (columns).
+    // Pairs not listed default to 0.
+    switch (prev_class) {
+        case JLREQ_VERT_CJK_BODY:
+            switch (next_class) {
+                case JLREQ_VERT_OPEN_BRACKET:        return 4; // 0.5em
+                case JLREQ_VERT_MIDDLE_DOT:          return 2; // 0.25em
+                default: return 0;
+            }
+        case JLREQ_VERT_OPEN_BRACKET:
+            switch (next_class) {
+                case JLREQ_VERT_MIDDLE_DOT:          return 2;
+                default: return 0;
+            }
+        case JLREQ_VERT_CLOSE_BRACKET_COMMA:
+            switch (next_class) {
+                case JLREQ_VERT_CJK_BODY:            return 4;
+                case JLREQ_VERT_OPEN_BRACKET:        return 4;
+                case JLREQ_VERT_MIDDLE_DOT:          return 2;
+                case JLREQ_VERT_DASH:                return 4;
+                case JLREQ_VERT_EXCLAM_QUEST:        return 4;
+                case JLREQ_VERT_HALF_KANA:           return 4;
+                default: return 0;
+            }
+        case JLREQ_VERT_MIDDLE_DOT:
+            switch (next_class) {
+                case JLREQ_VERT_MIDDLE_DOT:          return 4;
+                // Every other class gets 0.25em around middle dot.
+                default:                             return 2;
+            }
+        case JLREQ_VERT_PERIOD:
+            switch (next_class) {
+                case JLREQ_VERT_CJK_BODY:            return 4;
+                case JLREQ_VERT_OPEN_BRACKET:        return 4;
+                case JLREQ_VERT_MIDDLE_DOT:          return 6; // 0.75em
+                case JLREQ_VERT_DASH:                return 4;
+                case JLREQ_VERT_EXCLAM_QUEST:        return 4;
+                case JLREQ_VERT_HALF_KANA:           return 4;
+                default: return 0;
+            }
+        case JLREQ_VERT_DASH:
+            switch (next_class) {
+                case JLREQ_VERT_OPEN_BRACKET:        return 4;
+                case JLREQ_VERT_MIDDLE_DOT:          return 2;
+                default: return 0;
+            }
+        case JLREQ_VERT_EXCLAM_QUEST:
+            switch (next_class) {
+                case JLREQ_VERT_CJK_BODY:            return 8; // 1.0em
+                case JLREQ_VERT_OPEN_BRACKET:        return 4;
+                case JLREQ_VERT_MIDDLE_DOT:          return 6;
+                case JLREQ_VERT_HALF_KANA:           return 8;
+                default: return 0;
+            }
+        case JLREQ_VERT_HALF_KANA:
+            switch (next_class) {
+                case JLREQ_VERT_OPEN_BRACKET:        return 4;
+                case JLREQ_VERT_MIDDLE_DOT:          return 2;
+                default: return 0;
+            }
+        case JLREQ_VERT_VERT_MARK:    // not in jfm-ujisv; treat as default body
+        case JLREQ_VERT_OTHER:
+            return 0;
+    }
+    return 0;
+}
+
 bool needsVerticalRotation90CW(lChar32 c)
 {
     // --- Horizontal-script characters: ROTATE ---

@@ -168,6 +168,28 @@ int getJLReqVertCwa(lChar32 c, int em_px);
 // since this header has no FT_Face dependency.
 lChar32 getVertPresentationForm(lChar32 c);
 
+// JFM inter-class glue base value in eighths of em.
+//
+// Implements LuaTeX-ja jfm-ujisv.lua [prev].glue[next] base value
+// (= the first element of each glue 3-tuple {base, stretch, shrink}).
+// Returns 0 for class pairs not explicitly listed (LuaTeX-ja default).
+//
+// LuaTeX-ja distributes this as TeX glue (justifiable), but crengine's
+// vertical layout uses fixed advance widths; we apply only the base
+// value as an inter-character kern.  Stretch/shrink are dropped — they
+// matter only for justification, which JLReq itself recommends against
+// for short paragraphs.
+//
+// Examples (BODY = class [0] CJK, OPEN = [1], CLOSE = [2] (incl. 、，)):
+//   getJLReqGlueKernEighths(CLOSE, BODY) → 4 (0.5em after 、 before next char)
+//   getJLReqGlueKernEighths(BODY, OPEN)  → 4 (0.5em before 「)
+//   getJLReqGlueKernEighths(CLOSE, OPEN) → 4 (between 」 and 「)
+//   getJLReqGlueKernEighths(MIDDLE_DOT, MIDDLE_DOT) → 4 (0.5em between ・・)
+//   getJLReqGlueKernEighths(PERIOD, MIDDLE_DOT)   → 6 (0.75em between 。and ・)
+//
+// Apply during layout as: `m_advance[i] += em_px * getJLReqGlueKernEighths(c_prev_class, c_class) / 8`
+int getJLReqGlueKernEighths(JLReqVertClass prev_class, JLReqVertClass next_class);
+
 // Per-face TTB glyph-metrics cache.  Lazily populated via
 // FT_LOAD_VERTICAL_LAYOUT on first lookup of each glyph.  Held as a
 // member of LVFreeTypeFace so lifetime tracks the face.

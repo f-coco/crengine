@@ -18,6 +18,7 @@
 #include "../include/cssdef.h"
 #include "../include/lvfnt.h"
 #include "../include/lvtextfm.h"
+#include "../include/lvfntman_vert.h"   // fork-only: JFM class + glue/kern helpers
 #include "../include/lvdrawbuf.h"
 #include "../include/fb2def.h"
 
@@ -2315,6 +2316,28 @@ public:
                                 }
                             }
                         }
+                        // Fork-only (Phase 5 of m-tky/koreader-tategumi#15): apply
+                        // LuaTeX-ja jfm-ujisv.lua glue/kern matrix as inter-character
+                        // padding.  We look AHEAD at the NEXT char and widen the
+                        // CURRENT char's slot so the glue appears AFTER current /
+                        // BEFORE next — matching LuaTeX-ja's visual order (e.g.
+                        // for "、X" the 0.5em appears between 、 and X, not below X).
+                        // Uses the same cumulative_width_removed accumulator as the
+                        // cjk_width_scale code above so the shift propagates to
+                        // subsequent chars in this fragment.
+                        if ( css_wm_is_vertical(m_writing_mode)
+                                && (start + k + 1) < m_length
+                                && (m_flags[start + k] & LCHAR_IS_CJK)
+                                && (m_flags[start + k + 1] & LCHAR_IS_CJK) ) {
+                            JLReqVertClass curr_cls = getJLReqVertClass(m_text[start + k]);
+                            JLReqVertClass next_cls = getJLReqVertClass(m_text[start + k + 1]);
+                            int eighths = getJLReqGlueKernEighths(curr_cls, next_cls);
+                            if (eighths > 0) {
+                                int extra = ((int)lastFont->getSize() * eighths) / 8;
+                                widths[k] += extra;
+                                cumulative_width_removed -= extra;
+                            }
+                        }
                         m_advance[start + k] = lastWidth + widths[k];
                         #if (USE_LIBUNIBREAK==1)
                         // Reset these flags if lastFont->measureText() has set them, as we trust
@@ -2773,6 +2796,17 @@ public:
     }
 
     int getFlexibleCJKWidthAdjustment( int pos, int start, int end, bool &can_add_space_before, bool &can_add_space_after) {
+        // Fork-only (Phase 5 follow-up of m-tky/koreader-tategumi#15): in
+        // vertical writing modes our Phase 3 (LuaTeX-ja JFM half-em compaction
+        // via getJLReqVertSlotWidth) already reduces word->width to em/2 for
+        // class [1]/[2]/[3]/[4]/[7] chars in measureText.  If upstream's
+        // wa8-based reduction below is allowed to run on top, it multiplies
+        // word->width again by wa8/8 (= halves it for line-start brackets),
+        // producing em/4 slots and visible "next char shifts into 「's slot"
+        // bugs.  Return 8 (= no further adjustment) in vertical mode so the
+        // JFM compaction is the single source of truth.  can_add_space_*
+        // is still set by upstream below — justification logic unaffected.
+        bool _fork_is_vertical = css_wm_is_vertical(m_writing_mode);
         // Note: start and end represent the context: they can be the full (0, m_text) indices
         // when checking for start or end or paragraph, or the start and end of a line when checking
         // how flexible the char is at its position (possibly start or end) in the line.
@@ -2843,7 +2877,7 @@ public:
                     }
                 }
             }
-            return m_srcs[pos]->lang_cfg->getCJKWidthAdjustment(cjkt_opening_bracket, prev_type);
+            return _fork_is_vertical ? 8 : m_srcs[pos]->lang_cfg->getCJKWidthAdjustment(cjkt_opening_bracket, prev_type);
         }
         else {
             can_add_space_before = false; // keep it near what it follows
@@ -2879,7 +2913,7 @@ public:
                 // char is a CJK letter or a western letter/digit, we may add another
                 // chk_type_t : cjkt_other_non_cjk and use it in the tables.
             }
-            return m_srcs[pos]->lang_cfg->getCJKWidthAdjustment(cjk_type, next_type);
+            return _fork_is_vertical ? 8 : m_srcs[pos]->lang_cfg->getCJKWidthAdjustment(cjk_type, next_type);
         }
     }
 
@@ -3637,14 +3671,27 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
                         if ( !(si->flags & LTEXT_SRC_IS_OBJECT) && si->t.font ) {
                             LVFont * fi = (LVFont *)si->t.font;
                             int font_sz = fi->getSize();
-                            // CJK punctuation has compressed TTB advances but occupies a full
-                            // font_size slot visually — enforce font_size as minimum.
+                            // CJK punctuation with VERY narrow HarfBuzz TTB advance (no Phase 3
+                            // override applied — i.e. font has no proper vmtx, advance < em/2)
+                            // needs a font_size minimum so the glyph doesn't overlap the next char.
+                            // BUT Phase 3 (LuaTeX-ja JFM half-em compaction, see
+                            // getJLReqVertSlotWidth) intentionally sets word->width = em/2 for
+                            // class [1] [2] [3] [4] [7] chars, and Phase 4 cwa positions the
+                            // bitmap correctly within that half-em slot.  We must NOT clamp those
+                            // up to em — that would re-introduce the same "char at top of em slot
+                            // with gap below" behaviour that Phase 4 is supposed to fix.
+                            //
                             // Non-CJK words (Latin, space) use the actual advance so that
                             // vert_layout_min_x matches the draw's vert_min_next_x tracking.
-                            // Without this, a U+0020 space before an inline box creates a gap
-                            // of (font_size - space_advance) above the box.
                             bool is_cjk = (wi->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_FLEXIBLE_WIDTH_CJK)) != 0;
-                            eff_w = (is_cjk && (int)wi->width < font_sz) ? font_sz : (int)wi->width;
+                            bool is_half_em_jfm = false;
+                            if ( is_cjk && si->t.text && wi->t.len > 0 ) {
+                                JLReqVertLayout layout = getJLReqVertLayout(
+                                    getJLReqVertClass(si->t.text[wi->t.start]) );
+                                is_half_em_jfm = (layout.width_halves == 1);
+                            }
+                            eff_w = (is_cjk && !is_half_em_jfm && (int)wi->width < font_sz)
+                                  ? font_sz : (int)wi->width;
                         }
                     }
                     // Mirror Draw()'s vert_min_next_x clamping: if a previous word's
@@ -7408,14 +7455,22 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             // because vert_min_next_x is always >= the previous slot end.
                             int clamped_x = vert_min_next_x;
                             y0 = y + frmline->x + clamped_x;
-                            // Advance vert_min_next_x by at least font_size.
-                            // After the TTB-reversal fix, word->width is the accurate
-                            // HarfBuzz TTB y_advance.  For most CJK chars this equals
-                            // font_size.  For compressed punctuation (。、) the HarfBuzz
-                            // advance is small but the full-size glyph would overlap the
-                            // next char if we used the raw advance — enforce font_size.
+                            // Advance vert_min_next_x.  Historically clamped to font_size to
+                            // keep compressed font-vmtx punctuation from overlapping the next
+                            // char, but Phase 3 (LuaTeX-ja half-em compaction) intentionally
+                            // sets word->width = em/2 for class [1] [2] [3] [4] [7] chars
+                            // and Phase 4 cwa positions the bitmap correctly within that
+                            // half-em slot — clamping would re-introduce a half-em gap below
+                            // the JFM-compacted char.  Skip the clamp for half-em JFM chars.
                             int font_size = font->getSize();
-                            int effective_width = ((int)word->width > font_size) ? (int)word->width : font_size;
+                            bool is_half_em_jfm_d = false;
+                            if ( srcline->t.text && word->t.len > 0 ) {
+                                JLReqVertLayout layout = getJLReqVertLayout(
+                                    getJLReqVertClass(srcline->t.text[word->t.start]) );
+                                is_half_em_jfm_d = (layout.width_halves == 1);
+                            }
+                            int effective_width = ((int)word->width > font_size || is_half_em_jfm_d)
+                                ? (int)word->width : font_size;
                             vert_min_next_x = clamped_x + effective_width;
                             // Cap vert_min_next_x at the column height so that compressed
                             // punctuation (。、 TTB < font_size) cannot push the next character
