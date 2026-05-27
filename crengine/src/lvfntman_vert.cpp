@@ -57,6 +57,99 @@ bool isUniformVerticalIdeograph(lChar32 c)
     return false;
 }
 
+// LuaTeX-ja JFM vertical character class (jfm-ujisv.lua port).
+// See enum JLReqVertClass in lvfntman_vert.h for class semantics and
+// LuaTeX-ja src/jfm-ujisv.lua for the reference definitions.
+JLReqVertClass getJLReqVertClass(lChar32 c)
+{
+    // --- Vertical marks first (overlap with several other ranges) ---
+    switch (c) {
+        case 0x30FC: // ー KATAKANA-HIRAGANA PROLONGED SOUND MARK
+        case 0x301C: // 〜 WAVE DASH
+        case 0xFF5E: // ～ FULLWIDTH TILDE
+        case 0x2025: // ‥ TWO DOT LEADER
+        case 0x2026: // … HORIZONTAL ELLIPSIS
+            return JLREQ_VERT_VERT_MARK;
+        default:
+            break;
+    }
+
+    // --- 開き括弧 (opening brackets, JFM class [1]) ---
+    switch (c) {
+        case 0x300C: // 「
+        case 0x300E: // 『
+        case 0x3008: // 〈
+        case 0x300A: // 《
+        case 0x3010: // 【
+        case 0x3014: // 〔
+        case 0x3016: // 〖
+        case 0x3018: // 〘
+        case 0x301A: // 〚
+        case 0x301D: // 〝
+        case 0xFF08: // （ FULLWIDTH LEFT PARENTHESIS
+        case 0xFF3B: // ［ FULLWIDTH LEFT SQUARE BRACKET
+        case 0xFF5B: // ｛ FULLWIDTH LEFT CURLY BRACKET
+            return JLREQ_VERT_OPEN_BRACKET;
+        default:
+            break;
+    }
+
+    // --- 閉じ括弧 + 読点 (closing brackets and comma, JFM class [2]) ---
+    switch (c) {
+        case 0x300D: // 」
+        case 0x300F: // 』
+        case 0x3009: // 〉
+        case 0x300B: // 》
+        case 0x3011: // 】
+        case 0x3015: // 〕
+        case 0x3017: // 〗
+        case 0x3019: // 〙
+        case 0x301B: // 〛
+        case 0x301E: // 〞
+        case 0x301F: // 〟
+        case 0xFF09: // ）
+        case 0xFF3D: // ］
+        case 0xFF5D: // ｝
+        case 0x3001: // 、 IDEOGRAPHIC COMMA
+        case 0xFF0C: // ， FULLWIDTH COMMA
+            return JLREQ_VERT_CLOSE_BRACKET_COMMA;
+        default:
+            break;
+    }
+
+    // --- 中点 (middle dot, JFM class [3]) ---
+    switch (c) {
+        case 0x30FB: // ・ KATAKANA MIDDLE DOT
+        case 0xFF1A: // ： FULLWIDTH COLON
+        case 0xFF1B: // ； FULLWIDTH SEMICOLON
+            return JLREQ_VERT_MIDDLE_DOT;
+        default:
+            break;
+    }
+
+    // --- 句点 (full stop, JFM class [4]) ---
+    if (c == 0x3002 /* 。 */ || c == 0xFF0E /* ． */)
+        return JLREQ_VERT_PERIOD;
+
+    // --- ダッシュ (full-em dashes, JFM class [5]) ---
+    if (c == 0x2014 /* — */ || c == 0x2015 /* ― */ || c == 0xFF0D /* － */)
+        return JLREQ_VERT_DASH;
+
+    // --- ！？ (exclamation/question, JFM class [6]) ---
+    if (c == 0xFF01 /* ！ */ || c == 0xFF1F /* ？ */)
+        return JLREQ_VERT_EXCLAM_QUEST;
+
+    // --- 半角カタカナ (halfwidth katakana, JFM class [7]) ---
+    if (c >= 0xFF61 && c <= 0xFF9F)
+        return JLREQ_VERT_HALF_KANA;
+
+    // --- Body CJK (JFM class [0]) ---
+    if (isUniformVerticalIdeograph(c))
+        return JLREQ_VERT_CJK_BODY;
+
+    return JLREQ_VERT_OTHER;
+}
+
 bool needsVerticalRotation90CW(lChar32 c)
 {
     // --- Horizontal-script characters: ROTATE ---
