@@ -56,31 +56,33 @@ bool isUniformVerticalIdeograph(lChar32 c);
 //
 // Reference: github.com/luatexja/luatexja  src/jfm-ujisv.lua
 // =============================================================================
+// Class list and layout fields ported from LuaTeX-ja src/jfm-ujisv.lua.
+// JLREQ_VERT_VERT_MARK has no counterpart in jfm-ujisv — it is a fork-only
+// auxiliary class for font-quality compensation, dispatched on
+// LFNT_HINT_VERTICAL_MARK rather than the classifier.
 enum JLReqVertClass {
-    JLREQ_VERT_CJK_BODY = 0,        // 漢字, ひらがな, カタカナ, Hangul, etc.
+    JLREQ_VERT_CJK_BODY = 0,        // jfm-ujisv [0]: default body CJK
                                     //   width = 1.0 em, align = middle
-    JLREQ_VERT_OPEN_BRACKET,        // 「『（〈《【〔〘 etc.
+                                    //   (includes ー 〜 ～ which are not
+                                    //    explicitly listed in jfm-ujisv)
+    JLREQ_VERT_OPEN_BRACKET,        // jfm-ujisv [1]: ‘ “ 〈 《 「 『 【 〔 〖 〘 〝 （ ［ ｛ ｟
                                     //   width = 0.5 em, align = right
-                                    //   → vertical-rl: glyph at slot bottom
-                                    //     (= top of next char's space)
-    JLREQ_VERT_CLOSE_BRACKET_COMMA, // 」』）〉》】〕〙、，
+    JLREQ_VERT_CLOSE_BRACKET_COMMA, // jfm-ujisv [2]: ’ ” 〉 》 」 』 】 〕 〗 〙 〟 ） ］ ｝ ｠ 、 ，
                                     //   width = 0.5 em, align = left
-                                    //   → vertical-rl: glyph at slot top
-                                    //     (right-side hang against previous char)
-    JLREQ_VERT_MIDDLE_DOT,          // ・：；
+    JLREQ_VERT_MIDDLE_DOT,          // jfm-ujisv [3]: ・ ： ； ·
                                     //   width = 0.5 em, align = middle
-    JLREQ_VERT_PERIOD,              // 。．
+    JLREQ_VERT_PERIOD,              // jfm-ujisv [4]: 。 ．
                                     //   width = 0.5 em, align = left
-    JLREQ_VERT_DASH,                // ―—  (full-em dashes; ー and ‥ … are vert marks)
-                                    //   width = 1.0 em, align = middle
-    JLREQ_VERT_EXCLAM_QUEST,        // ！？
-                                    //   width = 1.0 em, align = middle
-    JLREQ_VERT_HALF_KANA,           // Halfwidth katakana (0xFF61..0xFF9F)
+    JLREQ_VERT_DASH,                // jfm-ujisv [5]: — ― ‥ … 〳 〴 〵
+                                    //   width = 1.0 em, align = left
+    JLREQ_VERT_EXCLAM_QUEST,        // jfm-ujisv [6]: ？ ！ ‼ ⁇ ⁈ ⁉
+                                    //   width = 1.0 em, align = left
+    JLREQ_VERT_HALF_KANA,           // jfm-ujisv [7]: U+FF61..U+FF9F (halfwidth)
                                     //   width = 0.5 em, align = left
-    JLREQ_VERT_VERT_MARK,           // ー — ‥ … 〜 ～ — handled by
-                                    //   LFNT_HINT_VERTICAL_MARK (centred in column)
-    JLREQ_VERT_OTHER                // Latin/numerals/etc — routed through the
-                                    //   rotation path or treated like body CJK
+    JLREQ_VERT_VERT_MARK,           // fork-only compensation — NOT in jfm-ujisv.
+                                    //   Dispatched on LFNT_HINT_VERTICAL_MARK,
+                                    //   not on classifier output.  See lvfntman.cpp.
+    JLREQ_VERT_OTHER                // Latin/numerals/etc — rotation path or default
 };
 
 // Returns the JLReq vertical class for `c`.  Vertical marks already detected

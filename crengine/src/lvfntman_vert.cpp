@@ -57,93 +57,119 @@ bool isUniformVerticalIdeograph(lChar32 c)
     return false;
 }
 
-// LuaTeX-ja JFM vertical character class (jfm-ujisv.lua port).
-// See enum JLReqVertClass in lvfntman_vert.h for class semantics and
-// LuaTeX-ja src/jfm-ujisv.lua for the reference definitions.
+// LuaTeX-ja JFM vertical character class.
+//
+// Char lists ported verbatim from LuaTeX-ja src/jfm-ujisv.lua
+// (commit verified 2026-05-27).  Any deviation from that file should
+// be treated as a bug — keep the two in sync.
+//
+// Note: JLREQ_VERT_VERT_MARK does NOT correspond to a class in jfm-ujisv.
+// It is a fork-only auxiliary signal (see LFNT_HINT_VERTICAL_MARK in
+// lvfntman.h) used to compensate for fonts whose +vert glyph variants
+// have buggy hmtx/vmtx (e.g. Hiragino's vBX=0 on ー).  Per LuaTeX-ja's
+// own taxonomy, ー 〜 ～ are class [0] body CJK; ‥ … are class [5]
+// DASH; this function returns those classes per the source.  Callers
+// who want the fork compensation must dispatch on
+// LFNT_HINT_VERTICAL_MARK *before* consulting JLReqVertClass.
 JLReqVertClass getJLReqVertClass(lChar32 c)
 {
-    // --- Vertical marks first (overlap with several other ranges) ---
+    // --- 開き括弧 (class [1] in jfm-ujisv.lua) ---
     switch (c) {
-        case 0x30FC: // ー KATAKANA-HIRAGANA PROLONGED SOUND MARK
-        case 0x301C: // 〜 WAVE DASH
-        case 0xFF5E: // ～ FULLWIDTH TILDE
-        case 0x2025: // ‥ TWO DOT LEADER
-        case 0x2026: // … HORIZONTAL ELLIPSIS
-            return JLREQ_VERT_VERT_MARK;
-        default:
-            break;
-    }
-
-    // --- 開き括弧 (opening brackets, JFM class [1]) ---
-    switch (c) {
-        case 0x300C: // 「
-        case 0x300E: // 『
+        case 0x2018: // ‘
+        case 0x201C: // “
         case 0x3008: // 〈
         case 0x300A: // 《
+        case 0x300C: // 「
+        case 0x300E: // 『
         case 0x3010: // 【
         case 0x3014: // 〔
         case 0x3016: // 〖
         case 0x3018: // 〘
-        case 0x301A: // 〚
         case 0x301D: // 〝
-        case 0xFF08: // （ FULLWIDTH LEFT PARENTHESIS
-        case 0xFF3B: // ［ FULLWIDTH LEFT SQUARE BRACKET
-        case 0xFF5B: // ｛ FULLWIDTH LEFT CURLY BRACKET
+        case 0xFF08: // （
+        case 0xFF3B: // ［
+        case 0xFF5B: // ｛
+        case 0xFF5F: // ｟
             return JLREQ_VERT_OPEN_BRACKET;
         default:
             break;
     }
 
-    // --- 閉じ括弧 + 読点 (closing brackets and comma, JFM class [2]) ---
+    // --- 閉じ括弧 + 読点 (class [2]) ---
     switch (c) {
-        case 0x300D: // 」
-        case 0x300F: // 』
+        case 0x2019: // ’
+        case 0x201D: // ”
         case 0x3009: // 〉
         case 0x300B: // 》
+        case 0x300D: // 」
+        case 0x300F: // 』
         case 0x3011: // 】
         case 0x3015: // 〕
         case 0x3017: // 〗
         case 0x3019: // 〙
-        case 0x301B: // 〛
-        case 0x301E: // 〞
         case 0x301F: // 〟
         case 0xFF09: // ）
         case 0xFF3D: // ］
         case 0xFF5D: // ｝
-        case 0x3001: // 、 IDEOGRAPHIC COMMA
-        case 0xFF0C: // ， FULLWIDTH COMMA
+        case 0xFF60: // ｠
+        case 0x3001: // 、
+        case 0xFF0C: // ，
             return JLREQ_VERT_CLOSE_BRACKET_COMMA;
         default:
             break;
     }
 
-    // --- 中点 (middle dot, JFM class [3]) ---
+    // --- 中点 (class [3]) ---
     switch (c) {
-        case 0x30FB: // ・ KATAKANA MIDDLE DOT
-        case 0xFF1A: // ： FULLWIDTH COLON
-        case 0xFF1B: // ； FULLWIDTH SEMICOLON
+        case 0x30FB: // ・
+        case 0xFF1A: // ：
+        case 0xFF1B: // ；
+        case 0x00B7: // ·
             return JLREQ_VERT_MIDDLE_DOT;
         default:
             break;
     }
 
-    // --- 句点 (full stop, JFM class [4]) ---
+    // --- 句点 (class [4]) ---
     if (c == 0x3002 /* 。 */ || c == 0xFF0E /* ． */)
         return JLREQ_VERT_PERIOD;
 
-    // --- ダッシュ (full-em dashes, JFM class [5]) ---
-    if (c == 0x2014 /* — */ || c == 0x2015 /* ― */ || c == 0xFF0D /* － */)
-        return JLREQ_VERT_DASH;
+    // --- 分離禁止文字 (class [5] in jfm-ujisv — em dashes and leaders) ---
+    switch (c) {
+        case 0x2014: // —
+        case 0x2015: // ―
+        case 0x2025: // ‥
+        case 0x2026: // …
+        case 0x3033: // 〳
+        case 0x3034: // 〴
+        case 0x3035: // 〵
+            return JLREQ_VERT_DASH;
+        default:
+            break;
+    }
 
-    // --- ！？ (exclamation/question, JFM class [6]) ---
-    if (c == 0xFF01 /* ！ */ || c == 0xFF1F /* ？ */)
-        return JLREQ_VERT_EXCLAM_QUEST;
+    // --- 感嘆符・疑問符 (class [6]) ---
+    switch (c) {
+        case 0xFF01: // ！
+        case 0xFF1F: // ？
+        case 0x203C: // ‼
+        case 0x2047: // ⁇
+        case 0x2048: // ⁈
+        case 0x2049: // ⁉
+            return JLREQ_VERT_EXCLAM_QUEST;
+        default:
+            break;
+    }
 
-    // --- 半角カタカナ (halfwidth katakana, JFM class [7]) ---
+    // --- 半角カナ (class [7]) ---
     if (c >= 0xFF61 && c <= 0xFF9F)
         return JLREQ_VERT_HALF_KANA;
 
-    // --- Body CJK (JFM class [0]) ---
+    // --- Body CJK (class [0], default) ---
+    // jfm-ujisv treats ー (U+30FC), 〜 (U+301C), ～ (U+FF5E) as default body
+    // CJK — relying on font's vBX/vBY for positioning.  fork callers may
+    // override via LFNT_HINT_VERTICAL_MARK if the font's +vert form is
+    // mis-positioned (Hiragino-style).
     if (isUniformVerticalIdeograph(c))
         return JLREQ_VERT_CJK_BODY;
 
@@ -184,10 +210,16 @@ JLReqVertLayout getJLReqVertLayout(JLReqVertClass cls)
             out.align        = JLREQ_ALIGN_LEFT;
             break;
         case JLREQ_VERT_DASH:
-            // —―－ — full em, centred
+            // — ― ‥ … 〳 〴 〵 — full em, glyph at slot top (= align='left')
+            // per jfm-ujisv class [5].
+            out.width_halves = 2;
+            out.align        = JLREQ_ALIGN_LEFT;
             break;
         case JLREQ_VERT_EXCLAM_QUEST:
-            // ！？ — full em, centred
+            // ？！‼⁇⁈⁉ — full em, glyph at slot top (= align='left')
+            // per jfm-ujisv class [6].
+            out.width_halves = 2;
+            out.align        = JLREQ_ALIGN_LEFT;
             break;
         case JLREQ_VERT_HALF_KANA:
             // 半角カタカナ — half-em slot, glyph at slot top
