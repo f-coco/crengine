@@ -236,6 +236,27 @@ JLReqVertLayout getJLReqVertLayout(JLReqVertClass cls)
     return out;
 }
 
+int getJLReqVertSlotWidth(lChar32 c, int em_px, int natural_advance_px)
+{
+    JLReqVertClass cls = getJLReqVertClass(c);
+    if (cls == JLREQ_VERT_OTHER)
+        return natural_advance_px;        // not in jfm-ujisv → font's natural
+    JLReqVertLayout layout = getJLReqVertLayout(cls);
+    return (em_px * layout.width_halves) / 2;
+}
+
+int getJLReqVertCwa(lChar32 c, int em_px)
+{
+    JLReqVertLayout layout = getJLReqVertLayout(getJLReqVertClass(c));
+    // cwa = align_num * (fwidth - vadv) per ltj-setwidth.lua:269.
+    // align_num: 0 (left), 0.5 (middle), 1 (right) — our enum maps to
+    // 0, 1, 2; divide by 2 to recover the fractional value.
+    // vadv is the font's vertical advance, which for CJK = em.
+    int fwidth = (em_px * layout.width_halves) / 2;
+    int vadv   = em_px;
+    return (((int)layout.align) * (fwidth - vadv)) / 2;
+}
+
 bool needsVerticalRotation90CW(lChar32 c)
 {
     // --- Horizontal-script characters: ROTATE ---

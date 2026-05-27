@@ -3089,6 +3089,12 @@ public:
                                     // Font has no vertical metrics (no vmtx table).
                                     // Fall back to x_advance for vertical layout.
                                     advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance);
+                                // Fork-only: JFM (LuaTeX-ja jfm-ujisv.lua) half-em
+                                // compaction for punctuation/brackets.  Overrides the
+                                // font's natural em advance to em/2 for class [1] [2]
+                                // [3] [4] [7] chars (JLReq 行末半角詰め).
+                                if ( advance > 0 && hcl < len )
+                                    advance = getJLReqVertSlotWidth(text[hcl], _size, advance);
                             }
                             else if ( glyph_pos[hg].x_advance )
                                 advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance + _synth_weight_strength);
@@ -3103,6 +3109,8 @@ public:
                                     advance = abs(FONT_METRIC_TO_PX(glyph_pos[hg].y_advance));
                                 else if ( glyph_pos[hg].x_advance )
                                     advance = abs(FONT_METRIC_TO_PX(glyph_pos[hg].x_advance));
+                                if ( advance > 0 && hcl < len )
+                                    advance = getJLReqVertSlotWidth(text[hcl], _size, advance);
                             }
                             else if ( glyph_pos[hg].x_advance )
                                 advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance + _synth_weight_strength);
@@ -4409,6 +4417,12 @@ public:
                                 // x_advance.  Override w with abs(y_advance) when present.
                                 if (is_vertical_draw && glyph_pos[i].y_advance) {
                                     w = abs(FONT_METRIC_TO_PX(glyph_pos[i].y_advance + _synth_weight_strength));
+                                    // JFM (LuaTeX-ja jfm-ujisv) half-em compaction:
+                                    // override em advance with em/2 for half-em classes
+                                    // (punctuation, brackets).  Must match measureText.
+                                    lUInt32 ci = glyph_info[i].cluster;
+                                    if (ci < (lUInt32)len)
+                                        w = getJLReqVertSlotWidth(text[ci], _size, w);
                                 }
                                 #ifdef DEBUG_DRAW_TEXT
                                     printf("%x(x=%d+%d,w=%d) ", glyph_info[i].codepoint, x,
@@ -4555,6 +4569,22 @@ public:
                                                 gy = y;
                                         }
                                     }
+                                    // JFM cwa shift in advance direction (LuaTeX-ja
+                                    // ltj-setwidth.lua capsule_glyph_tate L269).  Half-em
+                                    // classes with align != LEFT get shifted backward in the
+                                    // advance direction (= up in tate) to overlap with the
+                                    // previous slot.  This is JLReq compaction:
+                                    //   「 (align=right): cwa = -em/2  → bracket overlaps
+                                    //                                     previous slot's
+                                    //                                     bottom half
+                                    //   、」(align=left): cwa = 0      → glyph at slot top,
+                                    //                                     compaction trails
+                                    //                                     via the half-em
+                                    //                                     advance (Phase 3)
+                                    //   ・   (align=mid):  cwa = -em/4 → centred half-em
+                                    // For full-em classes (CJK_BODY, DASH, EXCLAM_QUEST,
+                                    // VERT_MARK, OTHER): cwa = 0, no shift.
+                                    gy += getJLReqVertCwa(cluster_char, _size);
                                 }
                                 bool did_rotate = false;
                                 if (is_vertical_draw && item->bmp_pixelformat != 4) {

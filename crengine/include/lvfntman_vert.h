@@ -121,6 +121,21 @@ struct JLReqVertLayout {
 
 JLReqVertLayout getJLReqVertLayout(JLReqVertClass cls);
 
+// JFM slot width (advance dimension) for `c`, in pixels.  For named JFM
+// classes returns `em_px * width_halves / 2` (em or em/2).  For
+// JLREQ_VERT_OTHER (chars not in jfm-ujisv — e.g. Latin glyphs reaching
+// this path via a buggy classifier or future extension), returns
+// `natural_advance_px` so the font's own advance is preserved.
+int getJLReqVertSlotWidth(lChar32 c, int em_px, int natural_advance_px);
+
+// Convenience: JFM in-slot shift (cwa) in the advance direction for `c`,
+// in pixels.  Implements `cwa = align * (fwidth - vadv)` from LuaTeX-ja
+// ltj-setwidth.lua capsule_glyph_tate() line 269, with vadv = em (CJK
+// natural vertical advance).  Returns a NEGATIVE value for half-em
+// classes with align >= MIDDLE, shifting the glyph "backward" in
+// advance direction (= up in tate) to overlap with the previous slot.
+int getJLReqVertCwa(lChar32 c, int em_px);
+
 // Per-face TTB glyph-metrics cache.  Lazily populated via
 // FT_LOAD_VERTICAL_LAYOUT on first lookup of each glyph.  Held as a
 // member of LVFreeTypeFace so lifetime tracks the face.
