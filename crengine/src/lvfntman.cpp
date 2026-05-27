@@ -4541,7 +4541,22 @@ public:
                                         // (font's design variance) that the eye perceives
                                         // as vertical jitter — bitmap-centring uniformises
                                         // it without affecting optical X centring above.
-                                        gy = y + (_size - (int)item->bmp_height) / 2;
+                                        //
+                                        // For LFNT_HINT_VERTICAL_MARK chars (ー — — ‥ … 〜
+                                        // ～ ―): bias the bitmap toward slot bottom because
+                                        // bmh is typically ≈ 85% of em (32/38 in Noto and
+                                        // Hiragino), leaving only ~3 px gap on each side
+                                        // with bitmap-centre — the top gap perceptually
+                                        // disappears against the preceding glyph's descent.
+                                        // Shifting by an extra empty/2 lifts the bottom gap
+                                        // and increases the top gap to ~5 px, eliminating
+                                        // the "long mark touching previous char" effect.
+                                        int empty_h = (int)_size - (int)item->bmp_height;
+                                        if (empty_h < 0) empty_h = 0;
+                                        if (is_vert_mark)
+                                            gy = y + (empty_h * 3) / 4;   // 75% toward bottom
+                                        else
+                                            gy = y + empty_h / 2;          // centred
                                     } else {
                                         VertGlyphMetrics vm;
                                         if (_vert_metrics_cache.get(_face, glyph_info[i].codepoint, vm)) {
