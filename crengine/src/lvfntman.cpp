@@ -1864,10 +1864,18 @@ public:
             // HarfBuzz features for full text shaping
             addHBFeature("+kern");  // font kerning
             addHBFeature("+liga");  // ligatures
-            // Vertical text: enable vertical glyph substitution and kerning
+            // Vertical text: enable vertical glyph substitution and kerning.
+            //
+            // Fork-only: do NOT enable +vrt2.  Hiragino's +vrt2 substitution maps
+            // U+2014 (EM DASH) to a 2em-tall "二倍ダーシ" composite glyph (gid8857)
+            // that, when drawn per-character, overlaps adjacent slots and extends
+            // into surrounding text.  Sticking to +vert keeps U+2014 as a 1em
+            // horizontal-form glyph that the renderer rotates 90° CW (see
+            // needsVerticalRotation90CW + drawGlyphItemRotated90CW path), matching
+            // LuaTeX-ja's visual layout for —— (each dash occupies its em slot,
+            // adjacent dashes chain to form a continuous vertical bar of n*em).
             if ( is_vertical ) {
                 addHBFeature("+vert");  // enable vertical glyph substitution
-                addHBFeature("+vrt2");  // newer vertical feature
                 addHBFeature("+vkrn"); // vertical kerning (e.g. spacing around 。/、)
             }
         }
