@@ -262,10 +262,12 @@ int getJLReqVertHalfEmYOffset(lChar32 c, int em_px, int bmh_px)
     JLReqVertLayout layout = getJLReqVertLayout(getJLReqVertClass(c));
     if (layout.width_halves != 1)
         return -1;            // not a half-em class
-    int slot_h = em_px / 2;
+    // Anchor in FULL EM slot — see header doc for why we deviate from
+    // LuaTeX-ja's half-em slot here.
+    int slot_h = em_px;
     int empty  = slot_h - bmh_px;
     if (empty < 0)
-        empty = 0;            // bitmap taller than slot: clamp to slot top
+        empty = 0;
     switch (layout.align) {
         case JLREQ_ALIGN_LEFT:
             return 0;

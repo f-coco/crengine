@@ -3089,12 +3089,6 @@ public:
                                     // Font has no vertical metrics (no vmtx table).
                                     // Fall back to x_advance for vertical layout.
                                     advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance);
-                                // Fork-only: JFM (LuaTeX-ja jfm-ujisv.lua) half-em
-                                // compaction for punctuation/brackets.  Overrides the
-                                // font's natural em advance to em/2 for class [1] [2]
-                                // [3] [4] [7] chars (JLReq 行末半角詰め).
-                                if ( advance > 0 && hcl < len )
-                                    advance = getJLReqVertSlotWidth(text[hcl], _size, advance);
                             }
                             else if ( glyph_pos[hg].x_advance )
                                 advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance + _synth_weight_strength);
@@ -3109,8 +3103,6 @@ public:
                                     advance = abs(FONT_METRIC_TO_PX(glyph_pos[hg].y_advance));
                                 else if ( glyph_pos[hg].x_advance )
                                     advance = abs(FONT_METRIC_TO_PX(glyph_pos[hg].x_advance));
-                                if ( advance > 0 && hcl < len )
-                                    advance = getJLReqVertSlotWidth(text[hcl], _size, advance);
                             }
                             else if ( glyph_pos[hg].x_advance )
                                 advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance + _synth_weight_strength);
@@ -4417,12 +4409,6 @@ public:
                                 // x_advance.  Override w with abs(y_advance) when present.
                                 if (is_vertical_draw && glyph_pos[i].y_advance) {
                                     w = abs(FONT_METRIC_TO_PX(glyph_pos[i].y_advance + _synth_weight_strength));
-                                    // JFM (LuaTeX-ja jfm-ujisv) half-em compaction:
-                                    // override em advance with em/2 for half-em classes
-                                    // (punctuation, brackets).  Must match measureText.
-                                    lUInt32 ci = glyph_info[i].cluster;
-                                    if (ci < (lUInt32)len)
-                                        w = getJLReqVertSlotWidth(text[ci], _size, w);
                                 }
                                 #ifdef DEBUG_DRAW_TEXT
                                     printf("%x(x=%d+%d,w=%d) ", glyph_info[i].codepoint, x,

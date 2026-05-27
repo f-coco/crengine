@@ -28,7 +28,6 @@
 #include "../include/textlang.h"
 #include "../include/renderutil.h"
 #include "../include/lvtextfm_fork.h"
-#include "../include/lvfntman_vert.h"  // fork-only: JLReq vertical char class
 #endif
 
 #if USE_HARFBUZZ==1
@@ -3645,15 +3644,6 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
                             // Without this, a U+0020 space before an inline box creates a gap
                             // of (font_size - space_advance) above the box.
                             bool is_cjk = (wi->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_FLEXIBLE_WIDTH_CJK)) != 0;
-                            // Fork-only: JFM half-em compaction must not be clamped.
-                            // Without this, single-char punctuation/bracket words (the
-                            // common case in Japanese) get their em/2 word width clamped
-                            // back up to em, defeating Phase 3 of m-tky/koreader-tategumi#15.
-                            if ( is_cjk && si->t.text && wi->t.len > 0 ) {
-                                JLReqVertClass cls = getJLReqVertClass(si->t.text[wi->t.start]);
-                                if ( getJLReqVertLayout(cls).width_halves == 1 )
-                                    is_cjk = false;
-                            }
                             eff_w = (is_cjk && (int)wi->width < font_sz) ? font_sz : (int)wi->width;
                         }
                     }

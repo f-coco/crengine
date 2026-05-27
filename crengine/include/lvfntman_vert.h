@@ -136,30 +136,35 @@ int getJLReqVertSlotWidth(lChar32 c, int em_px, int natural_advance_px);
 // advance direction (= up in tate) to overlap with the previous slot.
 int getJLReqVertCwa(lChar32 c, int em_px);
 
-// JLReq-strict in-slot bitmap Y position for half-em classes.
+// In-slot bitmap Y offset for half-em JFM classes (brackets, punctuation,
+// halfwidth kana), in pixels relative to slot top.
 //
-// Returns the Y offset (relative to slot top) where the bitmap should be
-// placed for `c`, given the bitmap height `bmh_px`.  Deviates from
-// LuaTeX-ja's "trust font vBY + cwa shift" strategy by IGNORING the
-// font's vBY entirely for half-em classes (brackets, punctuation,
-// halfwidth kana) and anchoring the bitmap edge to a fixed slot
-// boundary per JLReq §3.1.5 / §3.1.10:
+// IMPORTANT: deviates from LuaTeX-ja jfm-ujisv on two counts:
 //
-//   align=LEFT   → bitmap top at slot top      (offset = 0)
-//   align=MIDDLE → bitmap centred in slot      (offset = (slot_h - bmh) / 2)
-//   align=RIGHT  → bitmap bottom at slot bottom (offset = slot_h - bmh)
+//   1. Anchors the bitmap directly to the SLOT edge, ignoring the font's
+//      vBY (which carries horizontal-mode design choices that misplace
+//      vertical-mode brackets in Noto / Hiragino +vert variants).
 //
-// where slot_h = em / 2 for half-em classes.
+//   2. Computes the offset relative to a FULL EM SLOT, not the half-em
+//      slot LuaTeX-ja's JFM specifies.  Half-em compaction (advance =
+//      em/2) shifts the entire slot up by em/2 per preceding half-em
+//      char — visually moving brackets and punctuation higher in the
+//      column than their natural per-em position.  We retain em-wide
+//      slots so adjacent chars sit where the eye expects, and apply
+//      align WITHIN the em slot only to bias the glyph toward its
+//      JLReq anchor edge.
+//
+// Behaviour at em_px:
+//   align=LEFT   →  0                  (bitmap top at slot top — used for
+//                                       」』〉》、，。．．half-width kana)
+//   align=MIDDLE →  (em_px - bmh)/2    (centred in em slot — used for ・)
+//   align=RIGHT  →  em_px - bmh        (bitmap bottom at slot bottom —
+//                                       used for 「『〈《【〔〘 etc.,
+//                                       brings bracket close to next char)
 //
 // Returns -1 for full-em classes (CJK_BODY, DASH, EXCLAM_QUEST, VERT_MARK,
-// OTHER) — caller should fall back to its default Y computation
+// OTHER); caller should fall back to its default Y computation
 // (bitmap-center or font's vBY).
-//
-// This is a fork-only deviation from LuaTeX-ja semantics, necessary
-// because Noto / Hiragino +vert form vBY values place brackets several
-// px off the JLReq-prescribed slot edges; the font designer's vBY
-// reflects horizontal-mode design choices, not JLReq vertical-mode
-// anchoring.
 int getJLReqVertHalfEmYOffset(lChar32 c, int em_px, int bmh_px);
 
 // Per-face TTB glyph-metrics cache.  Lazily populated via
