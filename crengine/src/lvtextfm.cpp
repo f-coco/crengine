@@ -3496,11 +3496,48 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
                 fmt->m_cjk_prev_line_added_space_mod = 0;
             }
             if ( extra_width > 0
+                    && (fmt->m_writing_mode == css_wm_vertical_rl
+                        || fmt->m_writing_mode == css_wm_vertical_lr) ) {
+                // Fork: LuaTeX-ja kanjiskip-style vertical line justification.
+                // Distribute extra_width as small kanjiskip between adjacent
+                // non-inline-box words (most CJK chars are 1-word, so this
+                // catches CJK-CJK and CJK-punctuation boundaries).  Cap the
+                // per-gap stretch so chars don't drift far past their natural
+                // grid positions (LuaTeX-ja default kanjiskip stretch = 0pt
+                // plus 0.4pt ≈ 1-2px at typical font sizes).  Total added
+                // ≤ extra_width so the line never exceeds maxHeight.
+                int gaps = 0;
+                for ( int i = 0; i < (int)frmline->word_count - 1; i++ ) {
+                    if ( !(frmline->words[i].flags & LTEXT_WORD_IS_INLINE_BOX)
+                       && !(frmline->words[i+1].flags & LTEXT_WORD_IS_INLINE_BOX) ) {
+                        gaps++;
+                    }
+                }
+                if ( gaps > 0 ) {
+                    // Per-gap stretch limit: ~10% of em (≈ kanjiskip 0.4pt at typical font sizes).
+                    int em_for_cap = fmt->m_pbuffer->strut_height > 0
+                                   ? fmt->m_pbuffer->strut_height : 20;
+                    int max_per_gap = em_for_cap / 10;
+                    if ( max_per_gap < 1 ) max_per_gap = 1;
+                    int per_gap = extra_width / gaps;
+                    if ( per_gap > max_per_gap ) per_gap = max_per_gap;
+                    int total_added = per_gap * gaps;
+                    int delta = 0;
+                    for ( int i = 0; i < (int)frmline->word_count; i++ ) {
+                        frmline->words[i].x += delta;
+                        if ( i < (int)frmline->word_count - 1
+                           && !(frmline->words[i].flags & LTEXT_WORD_IS_INLINE_BOX)
+                           && !(frmline->words[i+1].flags & LTEXT_WORD_IS_INLINE_BOX) ) {
+                            delta += per_gap;
+                        }
+                    }
+                    frmline->width += total_added;
+                }
+            }
+            else if ( extra_width > 0
                     && fmt->m_writing_mode != css_wm_vertical_rl
                     && fmt->m_writing_mode != css_wm_vertical_lr ) {
-                // distribute additional space (skip for vertical text: within-column
-                // character spacing should not be expanded; columns are already broken
-                // at page_height, so extra_width would push chars past clip.bottom)
+                // distribute additional space
                 int extraSpace = extra_width;
                 int addSpacePoints = 0;
                 int i;

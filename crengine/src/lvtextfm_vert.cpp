@@ -374,6 +374,61 @@ void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * f
     #endif
 }
 
+// 行頭禁則: characters that JLReq prohibits at the start of a line / column.
+// In addition to cjkt_closing_bracket (handled separately), LuaTeX-ja's
+// kinsoku_table prohibits: 長音記号 (ー), 漢字繰り返し記号 (々々), 仮名繰り返し記号
+// (ヽヾゝゞ), iteration mark (〻), and small kana (ぁぃぅぇぉっゃゅょゎ etc.).
+// These are pulled back into the previous column when they would otherwise
+// start a new column.
+static inline bool isVertLineStartProhibitedExt(lChar32 ch) {
+    switch (ch) {
+        case 0x30FC: // ー KATAKANA-HIRAGANA PROLONGED SOUND MARK
+        case 0x3005: // 々 IDEOGRAPHIC ITERATION MARK
+        case 0x303B: // 〻 VERTICAL IDEOGRAPHIC ITERATION MARK
+        case 0x309D: // ゝ HIRAGANA ITERATION MARK
+        case 0x309E: // ゞ HIRAGANA VOICED ITERATION MARK
+        case 0x30FD: // ヽ KATAKANA ITERATION MARK
+        case 0x30FE: // ヾ KATAKANA VOICED ITERATION MARK
+        case 0x3031: // 〱 VERTICAL KANA REPEAT MARK
+        case 0x3032: // 〲 VERTICAL KANA REPEAT WITH VOICED SOUND MARK
+        case 0x3033: // 〳 VERTICAL KANA REPEAT MARK UPPER HALF
+        case 0x3034: // 〴 VERTICAL KANA REPEAT WITH VOICED SOUND MARK UPPER HALF
+        case 0x3035: // 〵 VERTICAL KANA REPEAT MARK LOWER HALF
+        // Small hiragana
+        case 0x3041: // ぁ
+        case 0x3043: // ぃ
+        case 0x3045: // ぅ
+        case 0x3047: // ぇ
+        case 0x3049: // ぉ
+        case 0x3063: // っ
+        case 0x3083: // ゃ
+        case 0x3085: // ゅ
+        case 0x3087: // ょ
+        case 0x308E: // ゎ
+        case 0x3095: // ゕ
+        case 0x3096: // ゖ
+        // Small katakana
+        case 0x30A1: // ァ
+        case 0x30A3: // ィ
+        case 0x30A5: // ゥ
+        case 0x30A7: // ェ
+        case 0x30A9: // ォ
+        case 0x30C3: // ッ
+        case 0x30E3: // ャ
+        case 0x30E5: // ュ
+        case 0x30E7: // ョ
+        case 0x30EE: // ヮ
+        case 0x30F5: // ヵ
+        case 0x30F6: // ヶ
+        // Bopomofo iteration (Chinese)
+        case 0x309B: // ゛ (combining voiced sound mark, sometimes line-start prohibited)
+        case 0x309C: // ゜ (combining semi-voiced sound mark)
+            return true;
+        default:
+            return false;
+    }
+}
+
 // Returns true if 'ch' is one of the Japanese horizontal-mark characters
 // that must be routed through the CJK +vert path in vertical mode.
 // needsVerticalRotation90CW() also returns true for Latin/ASCII, so it cannot
@@ -923,11 +978,15 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                     }
                 }
             }
-            // 行頭禁則 wrap-back (追い込み): 閉じ括弧 (」）】〕 etc.) must not start a column.
-            // If the first char of the next column is a closing bracket, pull the break
-            // back by one so the bracket follows normal text into the next column.
+            // 行頭禁則 wrap-back (追い込み): chars that JLReq prohibits at column start
+            // must not start a column.  In addition to closing brackets (」）】〕 etc.),
+            // LuaTeX-ja's kinsoku_table also lists 長音 (ー), 繰り返し記号 (々ヽヾゝゞ〻),
+            // and small kana (ぁぃぅぇぉっゃゅょゎ etc.).  Pull the break back by one
+            // so the prohibited char follows normal text into the previous column.
             if ( lastMandatoryWrap < 0 && endp > pos + 1 && endp < fmt->m_length ) {
-                if ( getCJKCharType(fmt->m_text[endp]) == cjkt_closing_bracket ) {
+                lChar32 endp_ch = fmt->m_text[endp];
+                if ( getCJKCharType(endp_ch) == cjkt_closing_bracket
+                     || isVertLineStartProhibitedExt(endp_ch) ) {
                     wrapPos--;
                     endp--;
                 }
