@@ -27,6 +27,20 @@ struct VertGlyphMetrics {
     lUInt16 advance;    // vertAdvance in pixels
 };
 
+// True for characters that should be placed by the central-baseline /
+// virtual-body model in vertical-rl/lr layout (JLReq, CSS Writing Modes 3,
+// upTeX/LuaTeX-ja JFM): ideographs and syllabic kana/Hangul that occupy a
+// uniform 1em virtual body centred on the column axis.  Per-glyph vmtx
+// variation in CJK fonts is generated noise, not authorial intent, and
+// mainstream typesetting systems normalise it.  Caller bitmap-centres
+// these glyphs in the column for visually uniform body text.
+//
+// Excludes:
+//   - CJK punctuation block (U+3001..U+303F): position is by font design
+//   - Halfwidth/Fullwidth Forms (U+FF00..U+FFEF): mixed semantics
+//   - Vertical marks (ー — — ‥ … etc.): handled via LFNT_HINT_VERTICAL_MARK
+bool isUniformVerticalIdeograph(lChar32 c);
+
 // Per-face TTB glyph-metrics cache.  Lazily populated via
 // FT_LOAD_VERTICAL_LAYOUT on first lookup of each glyph.  Held as a
 // member of LVFreeTypeFace so lifetime tracks the face.

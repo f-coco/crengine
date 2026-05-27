@@ -35,6 +35,28 @@
 // upright (or substituted via +vert) and therefore NOT rotated.
 // All other scripts (Latin, Greek, Cyrillic, digits, ASCII punctuation …)
 // are "horizontal" scripts and must be laid sideways in vertical text.
+bool isUniformVerticalIdeograph(lChar32 c)
+{
+    // Hiragana
+    if (c >= 0x3041 && c <= 0x309F) return true;
+    // Katakana, excluding ー (0x30FC) which is handled as a vert mark
+    if (c >= 0x30A0 && c <= 0x30FB) return true;
+    if (c >= 0x30FD && c <= 0x30FF) return true;
+    // Bopomofo
+    if (c >= 0x3105 && c <= 0x312F) return true;
+    // CJK Unified Ideographs Extension A
+    if (c >= 0x3400 && c <= 0x4DBF) return true;
+    // CJK Unified Ideographs
+    if (c >= 0x4E00 && c <= 0x9FFF) return true;
+    // Hangul Syllables
+    if (c >= 0xAC00 && c <= 0xD7A3) return true;
+    // CJK Compatibility Ideographs
+    if (c >= 0xF900 && c <= 0xFAFF) return true;
+    // CJK Unified Ideographs Extension B and beyond
+    if (c >= 0x20000) return true;
+    return false;
+}
+
 bool needsVerticalRotation90CW(lChar32 c)
 {
     // --- Horizontal-script characters: ROTATE ---

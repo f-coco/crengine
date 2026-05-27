@@ -4482,36 +4482,78 @@ public:
                                 // Upstream glyph placement.
                                 int gx = x + item->origin_x + FONT_METRIC_TO_PX(glyph_pos[i].x_offset);
                                 int gy = y + _baseline - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset);
-                                // Fork-only: vertical-rl/lr override.  Prefer vmtx-based
-                                // placement (matching HarfBuzz TTB shaping above) when the
-                                // font has vhea; fall back to an em-square-top formula on
-                                // horizontal metrics otherwise.
+                                // Fork-only: vertical-rl/lr placement.
+                                //
+                                // Virtual-body / central-baseline model (JLReq 2.1.1, CSS
+                                // Writing Modes 3 central baseline, upTeX/LuaTeX-ja JFM):
+                                // CJK ideographs, kana, Hangul, and vertical marks (ー — ‥
+                                // … 〜 ～ ―) occupy a uniform 1em virtual body whose letter
+                                // face (= bitmap) is centred on BOTH the horizontal and
+                                // vertical centres of the character frame.  In screen
+                                // coords for vertical-rl this means bitmap-centred X
+                                // (= column axis) and bitmap-centred Y (= slot vertical
+                                // centre).  Per-glyph vmtx variation in CJK fonts is
+                                // generated noise, not authorial intent — mainstream
+                                // typesetting systems (Chromium, WebKit, InDesign,
+                                // pTeX/LuaTeX-ja) all normalise it.  Centring on bitmap
+                                // dimensions rather than vBX/vBY also makes the position
+                                // font-independent (Noto vs Hiragino differ by a few px
+                                // in vmtx values for the same character).
+                                //
+                                // Punctuation (、。), brackets (「」 etc.) and other glyphs
+                                // whose in-slot position IS by design fall through to the
+                                // vmtx-based path: 、。 anchor at the bottom-right of the
+                                // virtual body (hanging close to the preceding character,
+                                // JLReq 行末半角詰め), brackets follow corner conventions.
+                                // HarfBuzz TTB writes x_offset = −vertOriginX and y_offset
+                                // = −vertOriginY into glyph_pos[] (compensation for an
+                                // LTR-style pen) — we place the pen at the vertical origin
+                                // ourselves and read vBX/vBY from our own cache, so
+                                // HarfBuzz's offsets must NOT be added on top — that would
+                                // double-displace the glyph.
                                 if (is_vertical_draw) {
-                                    VertGlyphMetrics vm;
-                                    if (_vert_metrics_cache.get(_face, glyph_info[i].codepoint, vm)) {
-                                        // Pen at (col_centre, slot_top) = vmtx vertical origin.
-                                        // HarfBuzz TTB returns x_offset = -vertOriginX and
-                                        // y_offset = -vertOriginY (compensation for an LTR-style
-                                        // pen) — we've already placed pen at the vertical origin
-                                        // ourselves, so adding them would double-displace.  Use
-                                        // vmtx bearings alone.
-                                        int col_center = x + _size / 2;
-                                        gx = col_center + vm.origin_x;
-                                        gy = y + vm.origin_y;
+                                    lChar32 cluster_char = 0;
+                                    lUInt32 cluster_idx = glyph_info[i].cluster;
+                                    if (cluster_idx < (lUInt32)len)
+                                        cluster_char = text[cluster_idx];
+                                    bool use_uniform_body = is_vert_mark
+                                        || isUniformVerticalIdeograph(cluster_char);
+                                    if (use_uniform_body) {
+                                        // X: bitmap-centred for vert marks (font-independent
+                                        // centring needed for ー — ‥ …, where some fonts
+                                        // leave +vert form vBX = 0); for body CJK, use vBX
+                                        // which encodes the font designer's *optical* centre
+                                        // (matters for asymmetric glyphs like し ら っ
+                                        // where ink rect centre ≠ ink visual centre — bitmap-
+                                        // centring would visibly shift these from the column
+                                        // axis even though their bitmap rect is on it).
+                                        VertGlyphMetrics vm;
+                                        if (!is_vert_mark
+                                                && _vert_metrics_cache.get(_face,
+                                                       glyph_info[i].codepoint, vm)) {
+                                            int col_center = x + _size / 2;
+                                            gx = col_center + vm.origin_x;
+                                        } else {
+                                            gx = x + (_size - (int)item->bmp_width) / 2;
+                                        }
+                                        // Y: bitmap-centred (JLReq virtual body Y centre).
+                                        // Per-glyph vBY for body CJK creates 6-7 px Y spread
+                                        // (font's design variance) that the eye perceives
+                                        // as vertical jitter — bitmap-centring uniformises
+                                        // it without affecting optical X centring above.
+                                        gy = y + (_size - (int)item->bmp_height) / 2;
                                     } else {
-                                        // No vhea (Noto, DroidSansMono, etc.): em-square-top
-                                        // formula on horizontal metrics — keeps the glyph in
-                                        // its slot without leaking into the next.
-                                        int em_top = _size - (_height - _baseline);
-                                        gy = y + em_top - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset);
-                                        if (gy < y)
-                                            gy = y;
-                                    }
-                                    // Vert marks (ー/—/…): always centre the bitmap in the
-                                    // em column.  Some fonts (Hiragino-style) leave their
-                                    // +vert form's bearing at 0, which would left-align.
-                                    if (is_vert_mark) {
-                                        gx = x + (_size - (int)item->bmp_width) / 2;
+                                        VertGlyphMetrics vm;
+                                        if (_vert_metrics_cache.get(_face, glyph_info[i].codepoint, vm)) {
+                                            int col_center = x + _size / 2;
+                                            gx = col_center + vm.origin_x;
+                                            gy = y + vm.origin_y;
+                                        } else {
+                                            int em_top = _size - (_height - _baseline);
+                                            gy = y + em_top - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset);
+                                            if (gy < y)
+                                                gy = y;
+                                        }
                                     }
                                 }
                                 bool did_rotate = false;
