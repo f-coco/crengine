@@ -257,6 +257,26 @@ int getJLReqVertCwa(lChar32 c, int em_px)
     return (((int)layout.align) * (fwidth - vadv)) / 2;
 }
 
+int getJLReqVertHalfEmYOffset(lChar32 c, int em_px, int bmh_px)
+{
+    JLReqVertLayout layout = getJLReqVertLayout(getJLReqVertClass(c));
+    if (layout.width_halves != 1)
+        return -1;            // not a half-em class
+    int slot_h = em_px / 2;
+    int empty  = slot_h - bmh_px;
+    if (empty < 0)
+        empty = 0;            // bitmap taller than slot: clamp to slot top
+    switch (layout.align) {
+        case JLREQ_ALIGN_LEFT:
+            return 0;
+        case JLREQ_ALIGN_MIDDLE:
+            return empty / 2;
+        case JLREQ_ALIGN_RIGHT:
+        default:
+            return empty;
+    }
+}
+
 bool needsVerticalRotation90CW(lChar32 c)
 {
     // --- Horizontal-script characters: ROTATE ---

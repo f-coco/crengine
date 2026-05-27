@@ -4569,22 +4569,30 @@ public:
                                                 gy = y;
                                         }
                                     }
-                                    // JFM cwa shift in advance direction (LuaTeX-ja
-                                    // ltj-setwidth.lua capsule_glyph_tate L269).  Half-em
-                                    // classes with align != LEFT get shifted backward in the
-                                    // advance direction (= up in tate) to overlap with the
-                                    // previous slot.  This is JLReq compaction:
-                                    //   「 (align=right): cwa = -em/2  → bracket overlaps
-                                    //                                     previous slot's
-                                    //                                     bottom half
-                                    //   、」(align=left): cwa = 0      → glyph at slot top,
-                                    //                                     compaction trails
-                                    //                                     via the half-em
-                                    //                                     advance (Phase 3)
-                                    //   ・   (align=mid):  cwa = -em/4 → centred half-em
-                                    // For full-em classes (CJK_BODY, DASH, EXCLAM_QUEST,
-                                    // VERT_MARK, OTHER): cwa = 0, no shift.
-                                    gy += getJLReqVertCwa(cluster_char, _size);
+                                    // JLReq-strict in-slot Y for half-em classes (brackets,
+                                    // punctuation, halfwidth kana).  Overrides the font's
+                                    // vBY because Noto / Hiragino +vert form bearings reflect
+                                    // horizontal-mode design choices and place brackets
+                                    // several px off the JLReq-prescribed slot edges.  See
+                                    // getJLReqVertHalfEmYOffset() in lvfntman_vert.cpp.
+                                    //
+                                    //   「『（〈《【〔〘 (align=right): bitmap bottom at
+                                    //       slot bottom → bracket near the next character
+                                    //       (compaction-before-bracket)
+                                    //   」』〉》】〕〙、，。．! 半角カナ (align=left):
+                                    //       bitmap top at slot top → punctuation near the
+                                    //       previous character (compaction-after-punct)
+                                    //   ・：；·    (align=middle): centred in half-em slot.
+                                    //
+                                    // For full-em classes (body CJK, dash, exclam, vert mark,
+                                    // other): fall through to cwa = 0 → no shift.
+                                    int halfem_off = getJLReqVertHalfEmYOffset(
+                                        cluster_char, _size, (int)item->bmp_height);
+                                    if (halfem_off >= 0) {
+                                        gy = y + halfem_off;
+                                    } else {
+                                        gy += getJLReqVertCwa(cluster_char, _size);
+                                    }
                                 }
                                 bool did_rotate = false;
                                 if (is_vertical_draw && item->bmp_pixelformat != 4) {

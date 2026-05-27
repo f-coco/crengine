@@ -136,6 +136,32 @@ int getJLReqVertSlotWidth(lChar32 c, int em_px, int natural_advance_px);
 // advance direction (= up in tate) to overlap with the previous slot.
 int getJLReqVertCwa(lChar32 c, int em_px);
 
+// JLReq-strict in-slot bitmap Y position for half-em classes.
+//
+// Returns the Y offset (relative to slot top) where the bitmap should be
+// placed for `c`, given the bitmap height `bmh_px`.  Deviates from
+// LuaTeX-ja's "trust font vBY + cwa shift" strategy by IGNORING the
+// font's vBY entirely for half-em classes (brackets, punctuation,
+// halfwidth kana) and anchoring the bitmap edge to a fixed slot
+// boundary per JLReq §3.1.5 / §3.1.10:
+//
+//   align=LEFT   → bitmap top at slot top      (offset = 0)
+//   align=MIDDLE → bitmap centred in slot      (offset = (slot_h - bmh) / 2)
+//   align=RIGHT  → bitmap bottom at slot bottom (offset = slot_h - bmh)
+//
+// where slot_h = em / 2 for half-em classes.
+//
+// Returns -1 for full-em classes (CJK_BODY, DASH, EXCLAM_QUEST, VERT_MARK,
+// OTHER) — caller should fall back to its default Y computation
+// (bitmap-center or font's vBY).
+//
+// This is a fork-only deviation from LuaTeX-ja semantics, necessary
+// because Noto / Hiragino +vert form vBY values place brackets several
+// px off the JLReq-prescribed slot edges; the font designer's vBY
+// reflects horizontal-mode design choices, not JLReq vertical-mode
+// anchoring.
+int getJLReqVertHalfEmYOffset(lChar32 c, int em_px, int bmh_px);
+
 // Per-face TTB glyph-metrics cache.  Lazily populated via
 // FT_LOAD_VERTICAL_LAYOUT on first lookup of each glyph.  Held as a
 // member of LVFreeTypeFace so lifetime tracks the face.
