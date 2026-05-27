@@ -257,28 +257,6 @@ int getJLReqVertCwa(lChar32 c, int em_px)
     return (((int)layout.align) * (fwidth - vadv)) / 2;
 }
 
-int getJLReqVertHalfEmYOffset(lChar32 c, int em_px, int bmh_px)
-{
-    JLReqVertLayout layout = getJLReqVertLayout(getJLReqVertClass(c));
-    if (layout.width_halves != 1)
-        return -1;            // not a half-em class
-    // Anchor in FULL EM slot — see header doc for why we deviate from
-    // LuaTeX-ja's half-em slot here.
-    int slot_h = em_px;
-    int empty  = slot_h - bmh_px;
-    if (empty < 0)
-        empty = 0;
-    switch (layout.align) {
-        case JLREQ_ALIGN_LEFT:
-            return 0;
-        case JLREQ_ALIGN_MIDDLE:
-            return empty / 2;
-        case JLREQ_ALIGN_RIGHT:
-        default:
-            return empty;
-    }
-}
-
 bool needsVerticalRotation90CW(lChar32 c)
 {
     // --- Horizontal-script characters: ROTATE ---

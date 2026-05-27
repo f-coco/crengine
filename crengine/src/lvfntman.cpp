@@ -3089,6 +3089,12 @@ public:
                                     // Font has no vertical metrics (no vmtx table).
                                     // Fall back to x_advance for vertical layout.
                                     advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance);
+                                // Phase 3 (LuaTeX-ja jfm-ujisv.lua half-em compaction):
+                                // Override font's natural em advance with JFM-specified slot
+                                // width.  Class [1] [2] [3] [4] [7] get em/2; others stay em.
+                                // See getJLReqVertSlotWidth() in lvfntman_vert.cpp.
+                                if ( advance > 0 && hcl < len )
+                                    advance = getJLReqVertSlotWidth(text[hcl], _size, advance);
                             }
                             else if ( glyph_pos[hg].x_advance )
                                 advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance + _synth_weight_strength);
@@ -3103,6 +3109,8 @@ public:
                                     advance = abs(FONT_METRIC_TO_PX(glyph_pos[hg].y_advance));
                                 else if ( glyph_pos[hg].x_advance )
                                     advance = abs(FONT_METRIC_TO_PX(glyph_pos[hg].x_advance));
+                                if ( advance > 0 && hcl < len )
+                                    advance = getJLReqVertSlotWidth(text[hcl], _size, advance);
                             }
                             else if ( glyph_pos[hg].x_advance )
                                 advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance + _synth_weight_strength);
@@ -4409,6 +4417,13 @@ public:
                                 // x_advance.  Override w with abs(y_advance) when present.
                                 if (is_vertical_draw && glyph_pos[i].y_advance) {
                                     w = abs(FONT_METRIC_TO_PX(glyph_pos[i].y_advance + _synth_weight_strength));
+                                    // Phase 3 (LuaTeX-ja jfm-ujisv.lua half-em compaction):
+                                    // override em advance with em/2 for half-em classes
+                                    // (punctuation, brackets, halfwidth kana).  Must match
+                                    // measureText so layout and draw agree on slot width.
+                                    lUInt32 ci = glyph_info[i].cluster;
+                                    if (ci < (lUInt32)len)
+                                        w = getJLReqVertSlotWidth(text[ci], _size, w);
                                 }
                                 #ifdef DEBUG_DRAW_TEXT
                                     printf("%x(x=%d+%d,w=%d) ", glyph_info[i].codepoint, x,
@@ -4512,87 +4527,59 @@ public:
                                 // HarfBuzz's offsets must NOT be added on top — that would
                                 // double-displace the glyph.
                                 if (is_vertical_draw) {
+                                    // LuaTeX-ja unified vertical placement (jfm-ujisv.lua +
+                                    // ltj-setwidth.lua capsule_glyph_tate()):
+                                    //
+                                    //   gx = col_center + vBX           (font's vmtx vertBearingX)
+                                    //   gy = slot_top  + vBY + cwa      (vmtx vertBearingY + JFM shift)
+                                    //
+                                    // where:
+                                    //
+                                    //   cwa = align * (fwidth - vadv)   -- JFM in-slot shift
+                                    //   align : 0 (left)  | 0.5 (middle) | 1 (right)
+                                    //                       -- mapped from JFM class
+                                    //   fwidth: em or em/2 per JFM class (already applied to
+                                    //                       advance in Phase 3 above)
+                                    //   vadv  : font's natural vertical advance (= em for CJK)
+                                    //
+                                    // Per-class behaviour after this formula:
+                                    //   [0] CJK body / vert marks    align=middle, fwidth=em → cwa=0
+                                    //                                  → pure vBY-based (vmtx parity)
+                                    //   [1] open bracket             align=right , fwidth=em/2 → cwa=-em/2
+                                    //                                  → shift to slot bottom (close to next char)
+                                    //   [2] close bracket, comma     align=left  , fwidth=em/2 → cwa=0
+                                    //                                  → stay at slot top (close to prev char)
+                                    //   [3] middle dot               align=middle, fwidth=em/2 → cwa=-em/4
+                                    //                                  → centred in half-em slot
+                                    //   [4] period                   align=left  , fwidth=em/2 → cwa=0
+                                    //   [5] dash                     align=left  , fwidth=em   → cwa=0
+                                    //   [6] exclam/quest             align=left  , fwidth=em   → cwa=0
+                                    //   [7] halfwidth kana           align=left  , fwidth=em/2 → cwa=0
+                                    //
+                                    // The font's vBY is trusted: well-designed CJK fonts
+                                    // (Hiragino, Noto Serif JP) place +vert glyphs at JLReq-
+                                    // correct positions in their vmtx tables.  For fonts whose
+                                    // vmtx is missing or unreliable, fall through to the
+                                    // bitmap-origin fallback below.
                                     lChar32 cluster_char = 0;
                                     lUInt32 cluster_idx = glyph_info[i].cluster;
                                     if (cluster_idx < (lUInt32)len)
                                         cluster_char = text[cluster_idx];
-                                    bool use_uniform_body = is_vert_mark
-                                        || isUniformVerticalIdeograph(cluster_char);
-                                    if (use_uniform_body) {
-                                        // X: bitmap-centred for vert marks (font-independent
-                                        // centring needed for ー — ‥ …, where some fonts
-                                        // leave +vert form vBX = 0); for body CJK, use vBX
-                                        // which encodes the font designer's *optical* centre
-                                        // (matters for asymmetric glyphs like し ら っ
-                                        // where ink rect centre ≠ ink visual centre — bitmap-
-                                        // centring would visibly shift these from the column
-                                        // axis even though their bitmap rect is on it).
-                                        VertGlyphMetrics vm;
-                                        if (!is_vert_mark
-                                                && _vert_metrics_cache.get(_face,
-                                                       glyph_info[i].codepoint, vm)) {
-                                            int col_center = x + _size / 2;
-                                            gx = col_center + vm.origin_x;
-                                        } else {
-                                            gx = x + (_size - (int)item->bmp_width) / 2;
-                                        }
-                                        // Y: bitmap-centred (JLReq virtual body Y centre).
-                                        // Per-glyph vBY for body CJK creates 6-7 px Y spread
-                                        // (font's design variance) that the eye perceives
-                                        // as vertical jitter — bitmap-centring uniformises
-                                        // it without affecting optical X centring above.
-                                        //
-                                        // For LFNT_HINT_VERTICAL_MARK chars (ー — — ‥ … 〜
-                                        // ～ ―): bias the bitmap toward slot bottom because
-                                        // bmh is typically ≈ 85% of em (32/38 in Noto and
-                                        // Hiragino), leaving only ~3 px gap on each side
-                                        // with bitmap-centre — the top gap perceptually
-                                        // disappears against the preceding glyph's descent.
-                                        // Shifting by an extra empty/2 lifts the bottom gap
-                                        // and increases the top gap to ~5 px, eliminating
-                                        // the "long mark touching previous char" effect.
-                                        int empty_h = (int)_size - (int)item->bmp_height;
-                                        if (empty_h < 0) empty_h = 0;
-                                        if (is_vert_mark)
-                                            gy = y + (empty_h * 3) / 4;   // 75% toward bottom
-                                        else
-                                            gy = y + empty_h / 2;          // centred
+                                    int cwa = getJLReqVertCwa(cluster_char, _size);
+                                    VertGlyphMetrics vm;
+                                    if (_vert_metrics_cache.get(_face, glyph_info[i].codepoint, vm)) {
+                                        int col_center = x + _size / 2;
+                                        gx = col_center + vm.origin_x;
+                                        gy = y + vm.origin_y + cwa;
                                     } else {
-                                        VertGlyphMetrics vm;
-                                        if (_vert_metrics_cache.get(_face, glyph_info[i].codepoint, vm)) {
-                                            int col_center = x + _size / 2;
-                                            gx = col_center + vm.origin_x;
-                                            gy = y + vm.origin_y;
-                                        } else {
-                                            int em_top = _size - (_height - _baseline);
-                                            gy = y + em_top - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset);
-                                            if (gy < y)
-                                                gy = y;
-                                        }
-                                    }
-                                    // JLReq-strict in-slot Y for half-em classes (brackets,
-                                    // punctuation, halfwidth kana).  Overrides the font's
-                                    // vBY because Noto / Hiragino +vert form bearings reflect
-                                    // horizontal-mode design choices and place brackets
-                                    // several px off the JLReq-prescribed slot edges.  See
-                                    // getJLReqVertHalfEmYOffset() in lvfntman_vert.cpp.
-                                    //
-                                    //   「『（〈《【〔〘 (align=right): bitmap bottom at
-                                    //       slot bottom → bracket near the next character
-                                    //       (compaction-before-bracket)
-                                    //   」』〉》】〕〙、，。．! 半角カナ (align=left):
-                                    //       bitmap top at slot top → punctuation near the
-                                    //       previous character (compaction-after-punct)
-                                    //   ・：；·    (align=middle): centred in half-em slot.
-                                    //
-                                    // For full-em classes (body CJK, dash, exclam, vert mark,
-                                    // other): fall through to cwa = 0 → no shift.
-                                    int halfem_off = getJLReqVertHalfEmYOffset(
-                                        cluster_char, _size, (int)item->bmp_height);
-                                    if (halfem_off >= 0) {
-                                        gy = y + halfem_off;
-                                    } else {
-                                        gy += getJLReqVertCwa(cluster_char, _size);
+                                        // No vmtx: bitmap-centre X, slot-edge Y with cwa shift.
+                                        gx = x + (_size - (int)item->bmp_width) / 2;
+                                        int em_top = _size - (_height - _baseline);
+                                        gy = y + em_top - item->origin_y
+                                             - FONT_METRIC_TO_PX(glyph_pos[i].y_offset)
+                                             + cwa;
+                                        if (gy < y && cwa >= 0)
+                                            gy = y;
                                     }
                                 }
                                 bool did_rotate = false;

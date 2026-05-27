@@ -136,37 +136,6 @@ int getJLReqVertSlotWidth(lChar32 c, int em_px, int natural_advance_px);
 // advance direction (= up in tate) to overlap with the previous slot.
 int getJLReqVertCwa(lChar32 c, int em_px);
 
-// In-slot bitmap Y offset for half-em JFM classes (brackets, punctuation,
-// halfwidth kana), in pixels relative to slot top.
-//
-// IMPORTANT: deviates from LuaTeX-ja jfm-ujisv on two counts:
-//
-//   1. Anchors the bitmap directly to the SLOT edge, ignoring the font's
-//      vBY (which carries horizontal-mode design choices that misplace
-//      vertical-mode brackets in Noto / Hiragino +vert variants).
-//
-//   2. Computes the offset relative to a FULL EM SLOT, not the half-em
-//      slot LuaTeX-ja's JFM specifies.  Half-em compaction (advance =
-//      em/2) shifts the entire slot up by em/2 per preceding half-em
-//      char — visually moving brackets and punctuation higher in the
-//      column than their natural per-em position.  We retain em-wide
-//      slots so adjacent chars sit where the eye expects, and apply
-//      align WITHIN the em slot only to bias the glyph toward its
-//      JLReq anchor edge.
-//
-// Behaviour at em_px:
-//   align=LEFT   →  0                  (bitmap top at slot top — used for
-//                                       」』〉》、，。．．half-width kana)
-//   align=MIDDLE →  (em_px - bmh)/2    (centred in em slot — used for ・)
-//   align=RIGHT  →  em_px - bmh        (bitmap bottom at slot bottom —
-//                                       used for 「『〈《【〔〘 etc.,
-//                                       brings bracket close to next char)
-//
-// Returns -1 for full-em classes (CJK_BODY, DASH, EXCLAM_QUEST, VERT_MARK,
-// OTHER); caller should fall back to its default Y computation
-// (bitmap-center or font's vBY).
-int getJLReqVertHalfEmYOffset(lChar32 c, int em_px, int bmh_px);
-
 // Per-face TTB glyph-metrics cache.  Lazily populated via
 // FT_LOAD_VERTICAL_LAYOUT on first lookup of each glyph.  Held as a
 // member of LVFreeTypeFace so lifetime tracks the face.
