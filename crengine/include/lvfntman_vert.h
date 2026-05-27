@@ -88,6 +88,37 @@ enum JLReqVertClass {
 // JLREQ_VERT_VERT_MARK here too (callers may dispatch on either signal).
 JLReqVertClass getJLReqVertClass(lChar32 c);
 
+// Per-class JFM layout (LuaTeX-ja jfm-ujisv.lua port).
+//
+//   width_halves    1 = half-em (= em/2), 2 = full em.  This is the slot's
+//                   advance dimension (Y in vertical-rl).  Half-em classes
+//                   are JLReq's "compacted" punctuation/brackets that sit
+//                   close to their target glyph.
+//   align           Alignment within the slot in the advance direction:
+//                   JLREQ_ALIGN_LEFT   = start of slot (top in tate)
+//                   JLREQ_ALIGN_MIDDLE = centre
+//                   JLREQ_ALIGN_RIGHT  = end of slot (bottom in tate)
+//                   For full-em slots whose glyph is also full em, align is
+//                   moot (no shift).  For half-em slots, align decides where
+//                   the glyph sits within the smaller slot, leaving the
+//                   other half as compaction whitespace.
+//
+// X position (perpendicular to advance, = column axis in vertical-rl) is
+// NOT controlled by JFM — that comes from the font's vmtx vBX, applied
+// uniformly for all classes.  JFM only governs advance-direction layout.
+enum JLReqVertAlign {
+    JLREQ_ALIGN_LEFT   = 0,
+    JLREQ_ALIGN_MIDDLE = 1,
+    JLREQ_ALIGN_RIGHT  = 2,
+};
+
+struct JLReqVertLayout {
+    lUInt8 width_halves;
+    lUInt8 align;
+};
+
+JLReqVertLayout getJLReqVertLayout(JLReqVertClass cls);
+
 // Per-face TTB glyph-metrics cache.  Lazily populated via
 // FT_LOAD_VERTICAL_LAYOUT on first lookup of each glyph.  Held as a
 // member of LVFreeTypeFace so lifetime tracks the face.

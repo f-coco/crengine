@@ -150,6 +150,60 @@ JLReqVertClass getJLReqVertClass(lChar32 c)
     return JLREQ_VERT_OTHER;
 }
 
+// Per-class layout — mirrors LuaTeX-ja jfm-ujisv.lua's char_data
+// (width / align fields).  See enum JLReqVertClass in lvfntman_vert.h.
+JLReqVertLayout getJLReqVertLayout(JLReqVertClass cls)
+{
+    JLReqVertLayout out;
+    out.width_halves = 2;            // full em by default
+    out.align        = JLREQ_ALIGN_MIDDLE;
+    switch (cls) {
+        case JLREQ_VERT_CJK_BODY:
+            // full em, centred — natural placement for ideographs/kana
+            break;
+        case JLREQ_VERT_OPEN_BRACKET:
+            // 「『（〈《【〔〘 — half-em slot, glyph at slot bottom
+            //   (compaction whitespace BEFORE the bracket, JLReq 3.1.10)
+            out.width_halves = 1;
+            out.align        = JLREQ_ALIGN_RIGHT;
+            break;
+        case JLREQ_VERT_CLOSE_BRACKET_COMMA:
+            // 」』）〉》】〕〙、，— half-em, glyph at slot top
+            //   (compaction whitespace AFTER, JLReq 3.1.10)
+            out.width_halves = 1;
+            out.align        = JLREQ_ALIGN_LEFT;
+            break;
+        case JLREQ_VERT_MIDDLE_DOT:
+            // ・：； — half-em, centred
+            out.width_halves = 1;
+            out.align        = JLREQ_ALIGN_MIDDLE;
+            break;
+        case JLREQ_VERT_PERIOD:
+            // 。．— half-em, glyph at slot top (JLReq 3.1.5: top-right corner)
+            out.width_halves = 1;
+            out.align        = JLREQ_ALIGN_LEFT;
+            break;
+        case JLREQ_VERT_DASH:
+            // —―－ — full em, centred
+            break;
+        case JLREQ_VERT_EXCLAM_QUEST:
+            // ！？ — full em, centred
+            break;
+        case JLREQ_VERT_HALF_KANA:
+            // 半角カタカナ — half-em slot, glyph at slot top
+            out.width_halves = 1;
+            out.align        = JLREQ_ALIGN_LEFT;
+            break;
+        case JLREQ_VERT_VERT_MARK:
+            // ー — ‥ … 〜 ～ — full em, centred (vertical bar/dot pattern)
+            break;
+        case JLREQ_VERT_OTHER:
+            // Latin/numerals routed elsewhere; treat as full-em fallback
+            break;
+    }
+    return out;
+}
+
 bool needsVerticalRotation90CW(lChar32 c)
 {
     // --- Horizontal-script characters: ROTATE ---
