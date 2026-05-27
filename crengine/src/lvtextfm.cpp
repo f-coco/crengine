@@ -642,7 +642,7 @@ public:
             // giving extra_width ≥ 0 and no spurious space reduction.  The previous
             // (page_height - strut_height) value caused extra_width = -strut which
             // triggered space reduction, shifting ruby inline-box word->x values
-            // upward without the vert_min_next_x clamping that protects plain chars.
+            // upward without the vstate.vert_min_next_x clamping that protects plain chars.
             if ( m_pbuffer->writing_mode == css_wm_vertical_rl ||
                  m_pbuffer->writing_mode == css_wm_vertical_lr ) {
                 offset_x = 0;
@@ -2322,22 +2322,23 @@ public:
                         // CURRENT char's slot so the glue appears AFTER current /
                         // BEFORE next — matching LuaTeX-ja's visual order (e.g.
                         // for "、X" the 0.5em appears between 、 and X, not below X).
-                        // Uses the same cumulative_width_removed accumulator as the
-                        // cjk_width_scale code above so the shift propagates to
-                        // subsequent chars in this fragment.
-                        if ( css_wm_is_vertical(m_writing_mode)
-                                && (start + k + 1) < m_length
-                                && (m_flags[start + k] & LCHAR_IS_CJK)
-                                && (m_flags[start + k + 1] & LCHAR_IS_CJK) ) {
-                            JLReqVertClass curr_cls = getJLReqVertClass(m_text[start + k]);
-                            JLReqVertClass next_cls = getJLReqVertClass(m_text[start + k + 1]);
-                            int eighths = getJLReqGlueKernEighths(curr_cls, next_cls);
-                            if (eighths > 0) {
-                                int extra = ((int)lastFont->getSize() * eighths) / 8;
-                                widths[k] += extra;
-                                cumulative_width_removed -= extra;
-                            }
-                        }
+                        //
+                        // class [100] (nox_alchar) proxy: when one side of the pair
+                        // is non-CJK, jfm-ujisv (lines 294-302) treats it as a proxy
+                        // for class [0] (BODY) in glue lookups.  This gives e.g.
+                        // 0.5em after 、 before Latin (CLOSE→BODY=0.5em).  We need
+                        // at least ONE side to be CJK to apply JFM glue — when both
+                        // are non-CJK, Latin spacing rules govern.
+                        // Phase 5 inter-class glue is applied at Draw / LAYOUT post-pass
+                        // time (via vstate.vert_min_next_x / vert_layout_min_x), NOT baked into
+                        // widths[] / m_advance.  Baking glue into widths[k] would make
+                        // word->width for chars with trailing glue (e.g. 》 followed by
+                        // BODY: CLOSE_BRACKET_COMMA→BODY = 0.5em) larger than the
+                        // glyph's actual visual width, so the highlight rect would
+                        // extend past the glyph into the glue space.  Keeping word->width
+                        // = compacted slot width and shifting position via Draw-time
+                        // glue (same mechanism as CJK↔non-CJK xkanjiskip) makes the
+                        // highlight rect match the glyph exactly.
                         m_advance[start + k] = lastWidth + widths[k];
                         #if (USE_LIBUNIBREAK==1)
                         // Reset these flags if lastFont->measureText() has set them, as we trust
@@ -2398,85 +2399,13 @@ public:
                                 already_rendered = true;
                             }
                         }
-                        // Pre-compute render_w for ruby inline boxes: m_pbuffer->width equals
-                        // the column height in vertical mode (large), so we can't use it as
-                        // the available width for rendering a narrow ruby table.  Instead
-                        // estimate max(base_depth, annot_depth) from char counts and font sizes.
-                        bool vert_inline_box = (m_pbuffer->writing_mode == css_wm_vertical_rl ||
-                                                m_pbuffer->writing_mode == css_wm_vertical_lr);
-                        int advance_per_char_pre = lastFont ? lastFont->getSize()
-                                                 : (m_pbuffer->strut_height > 0 ? m_pbuffer->strut_height : 1);
-                        int base_char_count_pre = 0;
-                        int annot_char_count_pre = 0;
-                        int annot_font_size_pre = 0;
-                        // Actual horizontal advance of base text (for Latin chars in vertical ruby).
-                        // getCharWidth() returns the horizontal advance of each glyph; summing these
-                        // gives the visual column depth when the word is rendered rotated 90°.
-                        // For CJK chars getCharWidth ≈ font_size, so this is a no-op for CJK ruby.
-                        int base_horiz_advance_pre = 0;
-                        // Only apply ruby-specific logic when this inlineBox wraps a ruby table.
-                        bool is_ruby_inline_pre = vert_inline_box && isRubyInlineBox(node);
-                        if (is_ruby_inline_pre && advance_per_char_pre > 0) {
-                            // Post-boxing structure:
-                            //   inlineBox → rbox1(erm_table) → [rbox2_base(T="rbc"), rbox2_annot(T="rtc")]
-                            // Both rbox2 elements have nodeId el_rubyBox, so we can't
-                            // distinguish them by nodeId alone. Distinguish by first child:
-                            //   rbox2_annot first child = el_rt/el_rtc → annotation row
-                            //   rbox2_base first child  = el_rubyBox/el_rb → base row
-                            ldomNode * rbox1_pre = node->getChildNode(0);
-                            int cc_pre = rbox1_pre->getChildCount();
-                            for (int ci = 0; ci < cc_pre; ci++) {
-                                ldomNode * rbox2 = rbox1_pre->getChildNode(ci);
-                                if (!rbox2 || !rbox2->isElement()) continue;
-                                lUInt16 cid = rbox2->getNodeId();
-                                bool is_annot = isRubyAnnotId(cid);
-                                if (!is_annot && rbox2->getChildCount() > 0) {
-                                    ldomNode * fc = rbox2->getChildNode(0);
-                                    if (fc && fc->isElement())
-                                        is_annot = isRubyAnnotId(fc->getNodeId());
-                                }
-                                if (is_annot) {
-                                    lString32 t = rbox2->getText();
-                                    for (int k = 0; k < t.length(); k++)
-                                        if (t[k] > 0x20) annot_char_count_pre++;
-                                    if (annot_font_size_pre == 0) {
-                                        ldomNode * rt = (cid == el_rt || cid == el_rtc) ? rbox2
-                                                      : (rbox2->getChildCount() > 0 ? rbox2->getChildNode(0) : NULL);
-                                        if (rt) {
-                                            LVFontRef f = rt->getFont();
-                                            if (!f.isNull()) annot_font_size_pre = f->getSize();
-                                        }
-                                    }
-                                } else {
-                                    lString32 t = rbox2->getText();
-                                    LVFontRef base_font = rbox2->getFont();
-                                    bool has_font = !base_font.isNull();
-                                    for (int k = 0; k < t.length(); k++) {
-                                        lChar32 c = t[k];
-                                        if (c > 0x20) {
-                                            base_char_count_pre++;
-                                            if (has_font)
-                                                base_horiz_advance_pre += base_font->getCharWidth(c);
-                                        }
-                                    }
-                                }
-                            }
-                            if (base_char_count_pre < 1) base_char_count_pre = 1;
-                            if (annot_font_size_pre == 0 && advance_per_char_pre > 1)
-                                annot_font_size_pre = advance_per_char_pre / 2;
-                        } else if (vert_inline_box && advance_per_char_pre > 0) {
-                            base_char_count_pre = 1;
-                        }
-                        // annot_depth is shared by both the render_w estimate and the advance override.
-                        int annot_depth = annot_char_count_pre * annot_font_size_pre;
-                        // Compute render_w here so it's available for both rendering and logging.
-                        int render_w;
-                        if (is_ruby_inline_pre && advance_per_char_pre > 0) {
-                            int base_depth = base_char_count_pre * advance_per_char_pre;
-                            render_w = annot_depth > base_depth ? annot_depth : base_depth;
-                        } else {
-                            render_w = m_pbuffer->width;
-                        }
+                        // Fork: extracted vertical ruby inline-box metrics to lvtextfm_vert.cpp.
+                        VertRubyInlineBoxMetrics rbm = computeVertRubyInlineBoxMetrics(m_pbuffer, node, lastFont);
+                        bool vert_inline_box      = rbm.vert_inline_box;
+                        bool is_ruby_inline_pre   = rbm.is_ruby_inline_pre;
+                        int  annot_depth          = rbm.annot_depth;
+                        int  base_horiz_advance_pre = rbm.base_horiz_advance_pre;
+                        int  render_w             = rbm.render_w;
                         if ( !already_rendered ) {
                             LVRendPageContext alt_context( NULL, m_pbuffer->page_height, 0, false );
                             // inline-block and inline-table have a baseline, that renderBlockElement()
@@ -2576,7 +2505,7 @@ public:
                         // (the word is rendered rotated 90°), which is measured via getCharWidth().
                         // Override advance with the measured horizontal value so that:
                         //   o.width  → frmline layout uses visual depth (no phantom spacing)
-                        //   letter_spacing → vert_min_next_x set to visual end of the word
+                        //   letter_spacing → vstate.vert_min_next_x set to visual end of the word
                         // For CJK base text, getCharWidth ≈ font_size, so result is unchanged.
                         int advance;
                         if (is_ruby_inline_pre && base_horiz_advance_pre > 0) {
@@ -2588,7 +2517,7 @@ public:
                         m_srcs[start]->o.width = advance; // word->width uses o.width for frmline advance
                         m_srcs[start]->o.height = height;
                         m_srcs[start]->o.baseline = baseline;
-                        // Store the visual column depth in letter_spacing so vert_min_next_x
+                        // Store the visual column depth in letter_spacing so vstate.vert_min_next_x
                         // in Draw() is set to the actual visual end of the inline box.
                         if (is_ruby_inline_pre && vert_inline_box) {
                             m_srcs[start]->letter_spacing = (lInt16)advance;
@@ -3448,7 +3377,7 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
             // reduce spaces to fit line
             // (skipped for vertical text: the formatter already limits column content
             // via char_count_adv, and space reduction shifts inline-box word->x values
-            // without the vert_min_next_x clamping that protects plain characters,
+            // without the vstate.vert_min_next_x clamping that protects plain characters,
             // causing ruby groups to appear shifted upward on screen)
             int extraSpace = -extra_width;
             int totalSpace = 0;
@@ -3537,40 +3466,11 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
             }
         }
         else if ( alignment==LTEXT_ALIGN_CENTER ) {
-            // For ruby inner annotation cells in vertical-rl: when the annotation has
-            // multiple chars and the slot divides evenly into sub-slots that are exactly
-            // 2× each annotation char width (N:N ruby with 2:1 font ratio), distribute
-            // chars evenly so each annotation char is centred over its corresponding base
-            // char (JLReq mono-ruby / 対応ルビ positioning).
-            //
-            // For all other cases (including the base inner cell which fills its slot,
-            // or N:M ruby) use round-half-up block centering.
+            // Fork: extracted N:N ruby mono-ruby distribution to lvtextfm_vert.cpp.
             bool used_even_dist = false;
-            if ( is_inner_vert_cell && (int)frmline->word_count >= 2 && extra_width > 0 ) {
-                int N = (int)frmline->word_count;
-                int slot = fmt->m_pbuffer->width;
-                if ( slot > 0 && slot % N == 0 ) {
-                    int sub_slot = slot / N;
-                    int char_w = (int)frmline->words[0].width;
-                    bool equal_widths = (char_w > 0);
-                    for ( int wi = 1; wi < N && equal_widths; wi++ )
-                        if ( (int)frmline->words[wi].width != char_w ) equal_widths = false;
-                    // Detect 2:1 font ratio N:N ruby: each sub-slot is exactly twice char_w.
-                    if ( equal_widths && char_w > 0 && sub_slot == 2 * char_w ) {
-                        int next_x = 0;
-                        for ( int wi = 0; wi < N; wi++ ) {
-                            int sub_start = (wi * slot) / N;
-                            int sub_end   = ((wi + 1) * slot) / N;
-                            int sub_mid   = (sub_start + sub_end) / 2;
-                            int w_start   = sub_mid - char_w / 2;
-                            if ( w_start < next_x ) w_start = next_x;
-                            frmline->words[wi].x = w_start;
-                            next_x = w_start + char_w;
-                        }
-                        frmline->width = next_x;
-                        used_even_dist = true;
-                    }
-                }
+            if ( is_inner_vert_cell ) {
+                used_even_dist = applyVerticalNNRubyCenterDistribution(
+                    frmline, fmt->m_pbuffer->width, extra_width);
             }
             if ( !used_even_dist ) {
                 // Standard round-half-up block centering (also correct for base inner cells).
@@ -3642,182 +3542,13 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
                 }
             }
         }
-        if ( hasInlineBoxes ) {
-            #if MATHML_SUPPORT==1
-                lUInt16 needed_baseline = frmline->baseline;
-                lUInt16 needed_height = frmline->height;
-            #endif
-            // Now that we have the final x of each word, we can update
-            // the RenderRectAccessor x/y of each word that is a inlineBox
-            // (needed to correctly draw highlighted text in them).
-            //
-            // In vertical mode we also mirror the vert_min_next_x clamping that
-            // Draw() applies at render time.  Without this, getRect() returns the
-            // pre-clamp layout position, causing sbox.y to sit above the rendered
-            // glyph by clamp_delta (≈ 1/5 em when the ruby group nearly touches
-            // the preceding character).
-            bool is_vert_frmline = (fmt->m_pbuffer->writing_mode == css_wm_vertical_rl ||
-                                    fmt->m_pbuffer->writing_mode == css_wm_vertical_lr);
-            int vert_layout_min_x = 0;  // mirrors vert_min_next_x in Draw()
-            for ( int i=0; i<frmline->word_count; i++ ) {
-                formatted_word_t * wi = &frmline->words[i];
-                if ( is_vert_frmline && !(wi->flags & LTEXT_WORD_IS_INLINE_BOX) ) {
-                    // Plain / space word: advance vert_layout_min_x past it.
-                    int eff_w = (int)wi->width;
-                    // Guard: only access t.font when the source fragment is a text
-                    // fragment (not an image, inline-box pad, or other object type).
-                    if ( (int)wi->src_text_index < fmt->m_pbuffer->srctextlen ) {
-                        src_text_fragment_t * si = &fmt->m_pbuffer->srctext[wi->src_text_index];
-                        if ( !(si->flags & LTEXT_SRC_IS_OBJECT) && si->t.font ) {
-                            LVFont * fi = (LVFont *)si->t.font;
-                            int font_sz = fi->getSize();
-                            // CJK punctuation with VERY narrow HarfBuzz TTB advance (no Phase 3
-                            // override applied — i.e. font has no proper vmtx, advance < em/2)
-                            // needs a font_size minimum so the glyph doesn't overlap the next char.
-                            // BUT Phase 3 (LuaTeX-ja JFM half-em compaction, see
-                            // getJLReqVertSlotWidth) intentionally sets word->width = em/2 for
-                            // class [1] [2] [3] [4] [7] chars, and Phase 4 cwa positions the
-                            // bitmap correctly within that half-em slot.  We must NOT clamp those
-                            // up to em — that would re-introduce the same "char at top of em slot
-                            // with gap below" behaviour that Phase 4 is supposed to fix.
-                            //
-                            // Non-CJK words (Latin, space) use the actual advance so that
-                            // vert_layout_min_x matches the draw's vert_min_next_x tracking.
-                            bool is_cjk = (wi->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_FLEXIBLE_WIDTH_CJK)) != 0;
-                            bool is_half_em_jfm = false;
-                            if ( is_cjk && si->t.text && wi->t.len > 0 ) {
-                                JLReqVertLayout layout = getJLReqVertLayout(
-                                    getJLReqVertClass(si->t.text[wi->t.start]) );
-                                is_half_em_jfm = (layout.width_halves == 1);
-                            }
-                            eff_w = (is_cjk && !is_half_em_jfm && (int)wi->width < font_sz)
-                                  ? font_sz : (int)wi->width;
-                        }
-                    }
-                    // Mirror Draw()'s vert_min_next_x clamping: if a previous word's
-                    // effective advance pushed vert_layout_min_x past this word's layout
-                    // position, update word->x so getRect() returns the rendered position,
-                    // not the raw layout position. This prevents highlights from appearing
-                    // above the actual glyph when font CJK advances are slightly < font_size.
-                    if ( (int)wi->x < vert_layout_min_x )
-                        wi->x = (lInt16)vert_layout_min_x;
-                    int next_x = wi->x + eff_w;
-                    if ( next_x > vert_layout_min_x )
-                        vert_layout_min_x = next_x;
-                    continue;
-                }
-                if ( frmline->words[i].flags & LTEXT_WORD_IS_INLINE_BOX ) {
-                    formatted_word_t * word = &frmline->words[i];
-                    src_text_fragment_t * srcline = &fmt->m_pbuffer->srctext[word->src_text_index];
-                    ldomNode * node = (ldomNode *) srcline->object;
-                    ldomNode * source_node = node->getEffectiveNode();
-                    if ( source_node != node ) {
-                        // We ended up positionning the cloneNode for an inlineBox on
-                        // the ::first-line of the paragraph, which means the original
-                        // inlineBox has not been positionned and won't be shown.
-                        // Flag that original node as not-rendered/discarded, so that
-                        // getRect(), when called on a xpointer to the original source,
-                        // know it has to climb to its clondeNode and use its rect.
-                        RenderRectAccessor source_fmt( source_node );
-                        RENDER_RECT_SET_FLAG(source_fmt, BOX_IS_DISCARDED);
-                    }
-                    RenderRectAccessor node_fmt( node );
-                    bool vert_mode = (fmt->m_pbuffer->writing_mode == css_wm_vertical_rl ||
-                                      fmt->m_pbuffer->writing_mode == css_wm_vertical_lr);
-                    if ( RENDER_RECT_HAS_FLAG(node_fmt, BOX_IS_POSITIONNED) ) {
-                        if ( is_vert_frmline ) {
-                            // Still advance vert_layout_min_x even if already positioned.
-                            int clamped_x = node_fmt.getX() - frmline->x;
-                            int nx = clamped_x + (int)word->width;
-                            if ( nx > vert_layout_min_x ) vert_layout_min_x = nx;
-                        }
-                        continue;
-                    }
-                    RENDER_RECT_SET_FLAG(node_fmt, BOX_IS_POSITIONNED);
-                    if ( is_vert_frmline ) {
-                        // Apply the same clamping that Draw() will use at render time
-                        // so getRect() returns the rendered (not pre-clamp) position.
-                        int ib_word_x    = word->x;
-                        int clamped_ib_x = (ib_word_x < vert_layout_min_x)
-                                           ? vert_layout_min_x : ib_word_x;
-                        node_fmt.setX( frmline->x + clamped_ib_x );
-                        vert_layout_min_x = clamped_ib_x + (int)word->width;
-                    } else {
-                        node_fmt.setX( frmline->x + word->x );
-                    }
-                    // In vertical mode, Y encodes the horizontal offset from the right edge.
-                    // Baseline alignment (a vertical concept in horizontal text) must not be
-                    // applied as a horizontal shift; doing so displaces ruby base characters
-                    // rightward by (baseline - ruby_baseline). Use frmline->y directly.
-                    bool is_vert = vert_mode;
-                    // For vertical mode: position the ruby block so the annotation
-                    // overhangs to the right of the column (per JLReq) for all
-                    // line-spacing values.
-                    // col_width is always strut_height (no inflation for ruby).
-                    //
-                    // For ruby inline boxes (display:ruby): annotation is at doc_y=0
-                    // (rightmost on screen), base at doc_y=annotation_h.  The body
-                    // font em is independent of line-height, so
-                    //   vert_y_adjust = em - box_h = -annotation_h
-                    // places the annotation to the right of the column boundary
-                    // regardless of col_w.  The base char is right-aligned within
-                    // the column (sbox.right = column right = line_x_col), which
-                    // keeps the annotation directly adjacent to the base (JLReq).
-                    //
-                    // For other small inline boxes: centre within strut.
-                    int vert_y_adjust = 0;
-                    if ( is_vert ) {
-                        int box_h = word->o.height;
-                        int col_w = fmt->m_pbuffer->strut_height;
-                        bool is_ruby_box = isRubyInlineBox(node);
-                        if ( is_ruby_box ) {
-                            LVFontRef fnt = node->getFont();
-                            int em = !fnt.isNull() ? fnt->getSize() : 0;
-                            if ( em > 0 && em < col_w )
-                                vert_y_adjust = (col_w + em) / 2 - box_h;  // centred
-                            else
-                                vert_y_adjust = col_w - box_h; // fallback
-                        } else if ( col_w > box_h ) {
-                            vert_y_adjust = (col_w - box_h) / 2;  // centre small box
-                        } else if ( box_h > col_w ) {
-                            vert_y_adjust = col_w - box_h;  // negative: annotation overhangs right
-                        }
-                    }
-                    node_fmt.setY( (int)frmline->y + (is_vert ? vert_y_adjust : (int)frmline->baseline - (int)word->o.baseline + (int)word->y) );
-                    node_fmt.push();
-                    #if MATHML_SUPPORT==1
-                        ldomNode * unboxedParent = node->getUnboxedParent();
-                        if ( unboxedParent ) {
-                            lUInt16 unboxedParentId = unboxedParent->getNodeId();
-                            if ( unboxedParentId >= EL_MATHML_START && unboxedParentId <= EL_MATHML_END ) {
-                                ensureMathMLVerticalStretch(node, frmline->y, frmline->baseline, frmline->height,
-                                                                                needed_baseline, needed_height);
-                            }
-                        }
-                    #endif
-                }
-            }
-            #if MATHML_SUPPORT==1
-                if ( needed_height > frmline->height ) {
-                    frmline->height = needed_height;
-                }
-                if ( needed_baseline > frmline->baseline ) {
-                    int baseline_shift = needed_baseline - frmline->baseline;
-                    frmline->baseline = needed_baseline;
-                    // We need to update all the inlineBoxes absolute positions in the paragraph,
-                    // as they are all to be positionned relative to the baseline, which has moved.
-                    for ( int i=0; i<frmline->word_count; i++ ) {
-                        if ( frmline->words[i].flags & LTEXT_WORD_IS_INLINE_BOX ) {
-                            formatted_word_t * word = &frmline->words[i];
-                            src_text_fragment_t * srcline = &fmt->m_pbuffer->srctext[word->src_text_index];
-                            ldomNode * node = (ldomNode *) srcline->object;
-                            RenderRectAccessor node_fmt( node );
-                            node_fmt.setY( node_fmt.getY() + baseline_shift );
-                            node_fmt.push();
-                        }
-                    }
-                }
-            #endif
+        // Fork: extracted IB-positioning + vertical-mode post-pass (Phase 5
+        // LuaTeX-ja JFM mirror) into lvtextfm_vert.cpp so this function stays
+        // close to upstream.  Runs for any line with inline boxes OR any
+        // vertical-mode line (the Phase 5 mirror must run on every vertical
+        // line, not just those with ruby — see ruby_position_spec.lua).
+        if ( hasInlineBoxes || css_wm_is_vertical(fmt->m_pbuffer->writing_mode) ) {
+            alignLineHorizontalVerticalPostPass( fmt, frmline, hasInlineBoxes );
         }
     }
 
@@ -5404,40 +5135,8 @@ void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fr
             fmt->activateInitialLetterInlineBoxExclusion(frmline, word);
         }
 
-        // Vertical text: fix up line dimensions
-        // The formatter computes width/height as if horizontal. For vertical text:
-        // - frmline->height = column WIDTH on screen (cross-column extent)
-        // - frmline->width  = column WIDTH on screen (used by visibility checks)
-        // Symmetry with horizontal mode: in horizontal mode, lines grow taller to
-        // accommodate inline boxes that exceed strut_height (e.g. ruby with annotation
-        // makes the line 36px tall instead of 30px).  Per JLReq, the same should apply
-        // in vertical mode: columns containing ruby grow wider so the base character
-        // stays aligned with body-text characters and the annotation fits inside the
-        // column rather than overflowing into adjacent columns.
-        //
-        // We can't use frmline->height directly because it may have been grown by
-        // baseline-adjustment logic (lines 1996-2010) to a value LARGER than the
-        // tallest inline box (e.g. baseline-shift for box.baseline != strut.baseline
-        // gives frmline->height = strut + shift + box descender, which can exceed h_box).
-        // Using such an inflated value would make col_width larger than h_box and the
-        // ruby base character (positioned at the box's left edge) would appear shifted
-        // right relative to plain characters (which sit at column_left).  Iterate
-        // through the words to find the actual max inline-box height instead.
-        if ( css_wm_is_vertical(fmt->m_writing_mode) ) {
-            // Column width is always strut_height regardless of inline box (ruby) height.
-            // Per JLReq, ruby annotations overhang into the inter-column gap rather than
-            // inflating the column.  The inter-column gap (strut - em) is wide enough to
-            // accommodate a half-em annotation without overlapping adjacent column text.
-            int col_width = fmt->m_pbuffer->strut_height;
-            // Exception: a frmline consisting of a single image uses the image's physical
-            // width (= block-direction / screen-X extent in vertical-rl) so the page
-            // splitter and clip calculations see the correct horizontal span.
-            if ( frmline->word_count == 1 && (frmline->words[0].flags & LTEXT_WORD_IS_IMAGE) ) {
-                col_width = (int)frmline->words[0].width;
-            }
-            frmline->height = col_width;
-            frmline->width = col_width;
-        }
+        // Fork: extracted vertical frmline dimensions fixup to lvtextfm_vert.cpp.
+        applyVerticalFrmlineDimensions(fmt, frmline);
 
         // Get ready for next line
         fmt->m_line_advance += frmline->height;
@@ -6653,32 +6352,8 @@ static void drawBorder(LVDrawBuf * buf, int x0, int x1, int y, int h, ldomNode *
     }
 }
 
-// Fork-only helper for vertical-rl mode.
-// CSS physical left/right borders map to thin stripes at the column's right
-// (bdidx=1) or left (bdidx=3) screen-X edge, spanning y_start..y_end in screen-Y
-// (the element's inline extent).
-// Delegates to drawBorder() for the actual draw so color/style/dot/interval
-// resolution stays single-sourced — any upstream change to drawBorder() is
-// picked up automatically.  drawBorder()'s left/right path issues
-// DrawLine(x0, y, x1, y+h, ..., 1), which is exactly the geometry we want;
-// we just supply screen-X edges of the column and screen-Y as h.
-static void drawBorderVertical(LVDrawBuf * buf, int line_x, int col_width,
-                               int y_start, int y_end,
-                               ldomNode * borderNode, int bdidx) {
-    int bw = measureBorder(borderNode, bdidx);
-    int x0, x1;
-    if ( bdidx == 1 ) {          // right border → right edge of column
-        x0 = line_x - bw;
-        x1 = line_x;
-    } else if ( bdidx == 3 ) {   // left border → left edge of column
-        x0 = line_x - col_width;
-        x1 = line_x - col_width + bw;
-    } else {
-        assert(0); // vertical helper only handles left/right
-        return;
-    }
-    drawBorder(buf, x0, x1, y_start, y_end - y_start, borderNode, bdidx);
-}
+// drawBorderVertical (fork-only vertical-rl border helper) moved to
+// lvtextfm_vert.cpp — see its definition there for documentation.
 
 // -----------------------------------------------------------------------------
 // LFormattedText::Draw
@@ -6699,29 +6374,12 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
     buf->GetClipRect( &clip );
     const lChar32 * str;
     bool is_vertical = (css_wm_is_vertical(m_pbuffer->writing_mode));
-    ltext_fmt_calls++;
-    if (is_vertical) ltext_fmt_vert_calls++;
-    if (is_vertical) {
-        // DrawDocument passes (actual_Y, actual_X) as (x, y) due to the Y=X
-        // coordinate mapping used throughout the rendering/page-split pipeline.
-        // Swap them back to screen coordinates.
-        int tmp = x; x = y; y = tmp;
-    }
+    // Fork: extracted Y=X swap + line_x setup to lvtextfm_vert.cpp.
+    int line_x = initVerticalDrawSetup(m_pbuffer, buf, x, y, clip);
+    if ( !is_vertical )
+        line_x = x;
     int line_y = y;
-    // For vertical-rl: line_x is the right edge of the first (rightmost) column.
-    // x = draw_y = doc_y + y0 encodes the horizontal document offset.
-    // clip.right - x maps this to the column's screen X position, ensuring:
-    //  - doc_y=0 (first block) → line_x near clip.right (rightmost)
-    //  - doc_y increases → line_x decreases (columns shift left)
-    // Using only x (not y which encodes vertical position) avoids accidental
-    // column overlap between blocks with different doc_x ancestry.
-    // For vertical-rl: use the stored column anchor rather than the buffer's current
-    // clip.right. content_overflow_clip.right may have been widened to allow ruby
-    // annotations to draw into the right margin; that must not shift the column anchor.
     draw_extra_info_t * draw_extra_info = (draw_extra_info_t*)buf->GetDrawExtraInfo();
-    int vert_anchor = (is_vertical && draw_extra_info && draw_extra_info->vert_column_clip_right)
-        ? draw_extra_info->vert_column_clip_right : clip.right;
-    int line_x = is_vertical ? (vert_anchor - x) : x;
 
     // Build the lineRect used by ldomMarkedRange::intersects() for marks/bookmarks.
     // In vertical-rl, frmline->width is set to strut_height (column WIDTH on screen),
@@ -6763,8 +6421,10 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
     // the ruby group overlaps the character above it.
     // Counters accessible via doc._document:resetVertBleedCounters() /
     // getVertBleedStats().
-    int vert_prev_plain_y0 = -1;         // y0 of last drawn plain/CJK char in this column
-    int vert_prev_effective_width = 0;   // effective_width of that char (= its slot height)
+    //
+    // Fork: bundle all per-column vertical state into one struct so we can
+    // pass it by reference to applyVerticalWordDraw() / inline-box draw.
+    VerticalDrawState vstate;
 
     for (i=0; i<m_pbuffer->frmlinecount; i++)
     {
@@ -6794,17 +6454,9 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
             // to appear on both prev and next pages.)
             bool restore_orig_clip = false;
             lvRect origClip;
-            // For vertical text, track the minimum next-allowed word->x position.
-            // Japanese punctuation (、。) has negative advances stored as large lUInt16
-            // values (e.g., -24 → 65512), causing word->x to retrograde (decrease) and
-            // producing character overlap. When a retrograde is detected, we advance by
-            // the previous normal word width instead, ensuring monotonically increasing
-            // y positions for all glyphs.
-            int vert_min_next_x = 0;
-            // Reset per-column plain-char tracking at the start of each frmline (column)
-            // to avoid false-positive overlap reports across column boundaries.
-            vert_prev_plain_y0 = -1;
-            vert_prev_effective_width = 0;
+            // Fork: reset per-column vertical state.  See VerticalDrawState
+            // in include/lvtextfm_fork.h for member documentation.
+            vstate.resetForNewFrmline();
             if ( line_y >= clip.top && line_y + frmline->height <= clip.bottom ) {
                 if ( draw_extra_info ) {
                     restore_orig_clip = true;
@@ -7012,41 +6664,9 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         bool is_mirrored = word->flags & LTEXT_WORD_DIRECTION_IS_RTL; // will be drawn as if on the other side
                         ldomNode * node = (ldomNode *) srcline->object;
                         if (is_vertical) {
-                            // In vertical-rl mode, x/y roles are swapped: x + frmline->x + word->x
-                            // is a screen-Y value (inline position), not screen-X.  Route to the
-                            // vertical helper which draws at the column's screen-X edge.
-                            // The border spans the element's inline (screen-Y) extent; find the
-                            // paired PAD to determine the other boundary.
-                            if ( is_right_pad != is_mirrored ) { // right border at line_x (column right edge)
-                                // Right PAD marks element end; scan backward for the left PAD.
-                                // Use y+frmline->x (not y+x+frmline->x): x=draw_y0 is block-direction
-                                // (screen-X), adding it to a screen-Y value gives a wrong coordinate.
-                                int y_end = y + (int)frmline->x + (int)word->x;
-                                int y_start = y + (int)frmline->x; // fallback: frmline inline start
-                                for (int k = j - 1; k >= 0; k--) {
-                                    formatted_word_t * pw = &frmline->words[k];
-                                    if ((pw->flags & LTEXT_WORD_IS_PAD) &&
-                                        (m_pbuffer->srctext[pw->src_text_index].object == srcline->object)) {
-                                        y_start = y + (int)frmline->x + (int)pw->x + (int)pw->width;
-                                        break;
-                                    }
-                                }
-                                drawBorderVertical(buf, line_x, (int)frmline->height, y_start, y_end, node, 1);
-                            } else { // left border at left column edge
-                                // Left PAD marks element start; scan forward for the right PAD.
-                                int y_start = y + (int)frmline->x + (int)word->x + (int)word->width;
-                                int y_end = -1;
-                                for (int k = j + 1; k < frmline->word_count; k++) {
-                                    formatted_word_t * pw = &frmline->words[k];
-                                    if ((pw->flags & LTEXT_WORD_IS_PAD) &&
-                                        (m_pbuffer->srctext[pw->src_text_index].object == srcline->object)) {
-                                        y_end = y + (int)frmline->x + (int)pw->x;
-                                        break;
-                                    }
-                                }
-                                if (y_end >= y_start)
-                                    drawBorderVertical(buf, line_x, (int)frmline->height, y_start, y_end, node, 3);
-                            }
+                            // Fork: extracted to lvtextfm_vert.cpp.
+                            drawVerticalPadBorders(buf, m_pbuffer, frmline, srcline, word, j,
+                                y, line_x, node, is_right_pad, is_mirrored);
                         } else {
                             if ( is_right_pad != is_mirrored ) { // unmirrored right pad, or mirrored left pad
                                 int x0 = x + frmline->x + word->x + word->o.height - word->o.baseline;
@@ -7152,16 +6772,9 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         if ( img.isNull() )
                             img = LVCreateDummyImageSource( node, word->width, word->o.height );
                         if (is_vertical) {
-                            // In vertical-rl mode after the x/y swap at Draw() entry:
-                            //   x   = column advance (doc_y, ≈0 for first column)
-                            //   y   = screen-Y origin of the block
-                            //   line_x = clip.right - x = right edge of current column group
-                            // word->width   = image physical width  = block-direction (screen-X) extent
-                            // word->o.height = image physical height = inline-direction (screen-Y) extent
-                            // Place the right edge of the image at line_x; clamp left to 0.
-                            int x0 = line_x - (int)word->width;
-                            if ( x0 < 0 ) x0 = 0;
-                            int y0 = y + (int)frmline->x + (int)word->x;
+                            // Fork: extracted to lvtextfm_vert.cpp.
+                            int x0, y0;
+                            applyVerticalImageDraw(frmline, word, y, line_x, x0, y0);
                             buf->Draw( img, x0, y0, word->width, word->o.height );
                         } else {
                             int xx = x + frmline->x + word->x;
@@ -7188,68 +6801,9 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         // x0_inline carries the vertical (Y-screen) position:
                         //   y_child = x0_inline = y + node_x (vertical offset + parent top)
                         //
-                        // Clamp the inline box start to vert_min_next_x so it never
-                        // starts before the preceding character's visual end.  However,
-                        // ib_word_x (TTB-advance-based) is kept as a lower bound: if it
-                        // exceeds vert_min_next_x (which can happen when the inline box
-                        // has its own layout position further into the column), use it.
-                        {
-                            int ib_word_x = node_x - frmline->x;
-                            int clamped_ib_x = ib_word_x < vert_min_next_x ? vert_min_next_x : ib_word_x;
-                            int clamp_delta = clamped_ib_x - ib_word_x;  // ≥ 0
-                            // Diagnostic: ib_word_x > vert_min_next_x means the layout
-                            // placed this box further than the draw tracker expected — a gap
-                            // above the box.  Should be 0 when vert_layout_min_x correctly
-                            // mirrors vert_min_next_x (e.g. spaces use actual advance, not
-                            // font_size, so no inflation).
-                            if (ib_word_x > vert_min_next_x) {
-                                int gap = ib_word_x - vert_min_next_x;
-                                ltext_vert_ib_layout_gap_total += gap;
-                                if (gap > ltext_vert_ib_layout_gap_max)
-                                    ltext_vert_ib_layout_gap_max = gap;
-                            }
-                            // P14 overlap diagnostic: save the OLD vert_min_next_x
-                            // (= end of the preceding character) BEFORE updating it.
-                            // After update, vert_min_next_x = end of THIS inline box.
-                            int preceding_end = y + (int)frmline->x + vert_min_next_x;
-                            x0 = y + node_x + clamp_delta;  // draw_x_rb = y + frmline->x + clamped_ib_x
-                            // Use actual vertical depth (render_w from letter_spacing) so
-                            // the next character starts after the ruby group's visual end,
-                            // preventing the "文字が被る" overlap.  Fall back to o.width if
-                            // letter_spacing was not set (non-ruby inline boxes, horizontal mode).
-                            {
-                                int ib_actual_depth = (srcline->letter_spacing > 0)
-                                    ? (int)srcline->letter_spacing
-                                    : (int)word->width;
-                                vert_min_next_x = clamped_ib_x + ib_actual_depth;
-                                vert_prev_plain_y0 = y + (int)frmline->x + clamped_ib_x;
-                                vert_prev_effective_width = ib_actual_depth;
-                            }
-                            doc_x_ib = 0 - node_x;  // anchor to original node_x
-                            // y0 must be x + node_y so the inner Draw places the ruby
-                            // base column at the correct screen-X offset.
-                            // Without this assignment, y0 is uninitialized (≈ 0 on
-                            // the stack), causing all ruby groups to draw at column
-                            // clip.right − annot_width regardless of their accumulated
-                            // column advance node_y → displaced N columns right.
-                            // y0 = x + node_y: places the inner Draw at the correct
-                            // column offset so the ruby base column lands at
-                            //   clip.right − node_y − annot_width.
-                            // doc_y_ib = −node_y: cancels inline_box.getY()=node_y
-                            // in DrawDocument so children see doc_y = 0 at this level.
-                            y0 = x + node_y;
-                            doc_y_ib = 0 - node_y;
-                            // draw_x_inner = x0 + doc_x_ib + node_x = y + node_x + clamp_delta
-                            // (DrawDocument accumulates doc_x += inline_box.getX() = node_x).
-                            // If draw_x_inner < preceding_end, ruby overlaps the char above.
-                            int draw_x_inner = x0 + doc_x_ib + node_x;
-                            if ( draw_x_inner < preceding_end ) {
-                                ltext_vert_bleed_count++;
-                                int overlap_px = preceding_end - draw_x_inner;
-                                if ( overlap_px > ltext_vert_bleed_max_px )
-                                    ltext_vert_bleed_max_px = overlap_px;
-                            }
-                        }
+                        // Fork: extracted to lvtextfm_vert.cpp.
+                        applyVerticalInlineBoxDraw(frmline, srcline, word, node_x, node_y,
+                            x, y, vstate, x0, y0, doc_x_ib, doc_y_ib);
                     } else {
                         x0 = x + node_x;
                         y0 = y + node_y;
@@ -7342,38 +6896,12 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                     lUInt32 drawFlags = srcline->flags & LTEXT_TD_MASK;
                     // and chars direction, and if word begins or ends paragraph (for Harfbuzz)
                     drawFlags |= WORD_FLAGS_TO_FNT_FLAGS(word->flags);
-                    // In vertical-rl/lr mode, signal to DrawTextString that vertical OpenType
-                    // features (+vert/+vrt2) should be applied, substituting glyphs like ー→|.
-                    // TCY words and non-CJK (Latin etc.) words are drawn horizontally.
-                    // For non-CJK words, we render horizontally then rotate 90° CW as a block.
-                    // Fork-only: Japanese horizontal marks (―, —, …, 〜, ―, etc.) are
-                    // classified as non-CJK by lStr_isCJK (they're below U+2E80) and would
-                    // default to the Latin-in-vertical render+rotate-as-block path — which
-                    // composites consecutive glyphs into one rotated bitmap that sits flush
-                    // against the previous character's slot bottom, with no internal padding.
-                    // Route them through the CJK +vert path so the font's properly-designed
-                    // vertical glyph (with built-in bearings) is used; per-glyph rotation
-                    // falls back gracefully when +vert is absent.
-                    bool word_is_vert_mark = is_vertical
-                        && !(word->flags & LTEXT_WORD_IS_TCY)
-                        && isWordAllVertRotationChars(srcline->t.text + word->t.start, (int)word->t.len);
-                    bool word_is_latin_in_vertical = is_vertical
-                        && !(word->flags & LTEXT_WORD_IS_TCY)
-                        && !(word->flags & LTEXT_WORD_IS_CJK)
-                        && !(word->flags & LTEXT_WORD_IS_FLEXIBLE_WIDTH_CJK)
-                        && !(word->flags & LTEXT_WORD_IS_IMAGE)
-                        && !(word->flags & LTEXT_WORD_IS_INLINE_BOX)
-                        && !word_is_vert_mark;
-                    if (is_vertical && !(word->flags & LTEXT_WORD_IS_TCY) && !word_is_latin_in_vertical)
-                        drawFlags |= LFNT_HINT_IS_VERTICAL;
-                    if (word_is_latin_in_vertical)
-                        drawFlags |= LFNT_HINT_RENDER_ROTATE_FOR_VERTICAL;
-                    if (word_is_vert_mark)
-                        drawFlags |= LFNT_HINT_VERTICAL_MARK;
                     // For debugging, to visually see overlap/italic correction:
                     // if (word->flags & LTEXT_WORD__AVAILABLE_BIT_16__ ) drawFlags |= LTEXT_TD_OVERLINE;
                     int x0, y0, w, h;
                     bool vert_skip_draw = false;
+                    bool word_is_latin_in_vertical = false;
+                    bool word_is_vert_mark = false;
                     if ( srcline->flags & LTEXT_MATH_TRANSFORM ) {
                         ldomNode * node = (ldomNode *) srcline->object;
                         // Parent of text node, which, having this flag, must be erm_final
@@ -7386,123 +6914,14 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         drawFlags |= LFNT_HINT_TRANSFORM_STRETCH;
                     }
                     else {
-                        if (is_vertical && (word->flags & LTEXT_WORD_IS_TCY)) {
-                            // TCY (tate-chu-yoko): draw text horizontally within vertical column.
-                            // The span occupies 1 em of column depth; text is centered in the column.
-                            int em = font->getSize();
-                            int clamped_x = (int)word->x < vert_min_next_x ? vert_min_next_x : (int)word->x;
-                            // Horizontal: center the em-box within the column width
-                            x0 = line_x - frmline->height + (frmline->height - em) / 2;
-                            // Vertical: center font height in the 1-em slot
-                            int y_slot_start = y + frmline->x + clamped_x;
-                            y0 = y_slot_start + (em - font->getHeight()) / 2;
-                            // Advance 1 em in the column direction
-                            vert_min_next_x = clamped_x + em;
-                            vert_prev_plain_y0 = y_slot_start;
-                            if (y_slot_start + em > clip.bottom)
-                                vert_skip_draw = true;
-                        } else if (word_is_latin_in_vertical) {
-                            // Non-CJK word (Latin etc.) in vertical column:
-                            // render horizontally then rotate 90° CW as a single block.
-                            // After rotation the block is font_height wide and _adv tall.
-                            // vert_min_next_x and vert_prev_effective_width are updated below
-                            // after DrawTextString using _adv (actual horizontal advance),
-                            // so no intermediate TTB-advance assignment is needed here.
-                            int font_h = font->getHeight();
-                            // Center the rotated block (height=font_h) within the column width
-                            x0 = line_x - frmline->height + (frmline->height - font_h) / 2;
-                            // Vertical start of the block: vert_min_next_x is the column position
-                            y0 = y + frmline->x + vert_min_next_x;
-                            vert_prev_plain_y0 = y0;
-                            // Skip draw if the word starts past the column bottom
-                            if (y0 >= clip.bottom)
-                                vert_skip_draw = true;
-                        } else if (is_vertical) {
-                            // For vertical-rl: line_x is the column's RIGHT edge.
-                            // frmline->height = col_width = strut_height (the full column cell).
-                            // Using line_x - frmline->height places the glyph's LEFT edge at
-                            // the column's LEFT boundary, so full-width CJK glyphs fit exactly
-                            // [line_x - col_width, line_x] with no overflow into adjacent columns.
-                            // word->y encodes horizontal-mode baseline alignment (pushes small
-                            // chars downward in horizontal text).  In vertical-rl this must NOT
-                            // shift the glyph leftward inside the column.  Only inline-box words
-                            // legitimately use word->y to select their sub-column position (e.g.
-                            // ruby annotation vs base).  For all plain-text words, ignore it.
-                            x0 = line_x - frmline->height;
-                            // Centre plain-text chars on the column axis (JLReq 組版).
-                            // Only apply when the column is NOT inflated by a ruby inline box.
-                            // When frmline->height > strut, a ruby box has widened the column
-                            // to accommodate the annotation sub-column.  In that case the body
-                            // text sits at line_x - frmline->height (the left edge of the full
-                            // column), which already aligns it with the base characters drawn
-                            // by the inner ruby sub-formatter.  Adding (strut-em)/2 would push
-                            // the glyph rightward into the annotation zone and mis-align it with
-                            // the ruby base chars (verified via debug logging: 4px offset).
-                            {
-                                int em    = font->getSize();
-                                int strut = m_pbuffer->strut_height;
-                                if ( (int)frmline->height <= strut && em < strut )
-                                    x0 += (strut - em) / 2;
-                            }
-                            // Use vert_min_next_x as the authoritative column position.
-                            // word->x is derived from cumulative TTB y_advances; for CJK-only
-                            // text word->x == vert_min_next_x (both track em_size advances).
-                            // When Latin words precede this char, their TTB advance (full em)
-                            // inflates word->x past the actual visual position.  Using
-                            // vert_min_next_x (updated from _adv after each Latin draw) ensures
-                            // CJK chars start immediately after the Latin word's visual end.
-                            // Punctuation retrograde (large uint16 word->x) is handled naturally
-                            // because vert_min_next_x is always >= the previous slot end.
-                            int clamped_x = vert_min_next_x;
-                            y0 = y + frmline->x + clamped_x;
-                            // Advance vert_min_next_x.  Historically clamped to font_size to
-                            // keep compressed font-vmtx punctuation from overlapping the next
-                            // char, but Phase 3 (LuaTeX-ja half-em compaction) intentionally
-                            // sets word->width = em/2 for class [1] [2] [3] [4] [7] chars
-                            // and Phase 4 cwa positions the bitmap correctly within that
-                            // half-em slot — clamping would re-introduce a half-em gap below
-                            // the JFM-compacted char.  Skip the clamp for half-em JFM chars.
-                            int font_size = font->getSize();
-                            bool is_half_em_jfm_d = false;
-                            if ( srcline->t.text && word->t.len > 0 ) {
-                                JLReqVertLayout layout = getJLReqVertLayout(
-                                    getJLReqVertClass(srcline->t.text[word->t.start]) );
-                                is_half_em_jfm_d = (layout.width_halves == 1);
-                            }
-                            int effective_width = ((int)word->width > font_size || is_half_em_jfm_d)
-                                ? (int)word->width : font_size;
-                            vert_min_next_x = clamped_x + effective_width;
-                            // Cap vert_min_next_x at the column height so that compressed
-                            // punctuation (。、 TTB < font_size) cannot push the next character
-                            // past clip.bottom and cause it to be silently dropped.
-                            if (vert_min_next_x > clip.bottom - y)
-                                vert_min_next_x = clip.bottom - y;
-                            // Detect character overlap in the height (column) direction.
-                            // If this character's slot start (y0) is before the previous
-                            // character's slot end (vert_prev_plain_y0 + vert_prev_effective_width),
-                            // two characters overlap — the "文字が被る" bug.
-                            if (vert_prev_plain_y0 >= 0 && !vert_skip_draw && y0 < clip.bottom) {
-                                int slot_end_prev = vert_prev_plain_y0 + vert_prev_effective_width;
-                                int overlap_px = slot_end_prev - y0;
-                                if (overlap_px > 0) {
-                                    ltext_vert_char_overlap_count++;
-                                    if (overlap_px > ltext_vert_char_overlap_max_px)
-                                        ltext_vert_char_overlap_max_px = overlap_px;
-                                }
-                            }
-                            // Track this plain-text character's y0 and effective_width for the
-                            // next character's overlap check and the inline-box bleed check.
-                            vert_prev_plain_y0 = y0;
-                            vert_prev_effective_width = effective_width;
-                            // Skip only when the character SLOT START (y0) is at or past
-                            // clip.bottom — the glyph bitmap is then completely outside the
-                            // visible column and shouldn't be drawn.
-                            // Do NOT check y0 + descent: the descent can legitimately extend
-                            // a few pixels past clip.bottom for the last character of a column
-                            // (especially after the TTB m_advance fix which may place one more
-                            // character in the column).  buf->Draw() clips to clip.bottom anyway.
-                            if (y0 >= clip.bottom)
-                                vert_skip_draw = true;
+                        if ( is_vertical ) {
+                            // Fork: extracted to lvtextfm_vert.cpp.  Sets x0/y0/
+                            // vert_skip_draw + drawFlags vertical bits + word_is_*
+                            // flags, and updates vstate (vert_min_next_x etc.).
+                            applyVerticalWordDraw(m_pbuffer, frmline, srcline, word, font,
+                                y, line_x, clip, drawFlags, vstate,
+                                x0, y0, vert_skip_draw,
+                                word_is_latin_in_vertical, word_is_vert_mark);
                         } else {
                             x0 = x + frmline->x + word->x;
                             y0 = line_y + (frmline->baseline - font->getBaseline()) + word->y;
@@ -7557,54 +6976,15 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             word->width,
                             text_decoration_back_gap,
                             w, h) : 0;
-                        // For word_is_latin_in_vertical, DrawTextString returns the
-                        // actual horizontal (x_advance) width, which may be smaller
-                        // than word->width (TTB y_advance) for fonts with full-em vmtx.
-                        // Update vert_min_next_x so the next char follows directly
-                        // without a blank gap.
-                        if (word_is_latin_in_vertical && _adv > 0) {
-                            // vert_min_next_x was left at the word's start; add _adv to advance
-                            // to the word's visual end (actual horizontal advance, not TTB).
-                            vert_min_next_x += _adv;
-                            if (vert_min_next_x > clip.bottom - y)
-                                vert_min_next_x = clip.bottom - y;
-                            vert_prev_effective_width = _adv;
+                        // Fork: extracted post-draw state update for Latin-in-vertical.
+                        if (word_is_latin_in_vertical) {
+                            applyVerticalLatinPostDraw(_adv, (int)word->width, vstate, clip, y);
                         }
                     }
-                    // Draw 圏点/傍点 (text-emphasis marks) in vertical mode
-                    if ( is_vertical && !vert_skip_draw && (srcline->flags & LTEXT_HAS_EXTRA) ) {
-                        int em_style = getLTextExtraProperty(srcline, LTEXT_EXTRA_CSS_TEXT_EMPHASIS);
-                        if ( em_style > 0 ) {
-                            // Map style enum to Unicode mark character
-                            lChar32 mark;
-                            switch (em_style) {
-                                case css_tes_open_dot:    mark = 0x25CB; break; // ○
-                                case css_tes_open_circle: mark = 0x25CB; break; // ○
-                                case css_tes_filled_sesame: mark = 0xFE45; break; // ﹅
-                                case css_tes_open_sesame:   mark = 0xFE46; break; // ﹆
-                                case css_tes_filled_dc:     mark = 0x25C9; break; // ◉
-                                case css_tes_open_dc:       mark = 0x25CE; break; // ◎
-                                case css_tes_filled_tri:    mark = 0x25B2; break; // ▲
-                                case css_tes_open_tri:      mark = 0x25B3; break; // △
-                                default:                    mark = 0x25CF; break; // ● filled dot/circle
-                            }
-                            int em = font->getSize();
-                            // In vertical-rl, draw marks to the right of each char (= "before" dir)
-                            // x_mark = line_x (right edge of column) — in inter-column space
-                            int x_mark = line_x;
-                            // Each char occupies ~1 em of column depth
-                            int char_count = word->t.len;
-                            int clamped_x = word->x;
-                            if (clamped_x < vert_min_next_x - em * char_count)
-                                clamped_x = vert_min_next_x - em * char_count;
-                            for (int mc = 0; mc < char_count; mc++) {
-                                int y_mark = y + frmline->x + clamped_x + mc * em;
-                                if (y_mark >= clip.top && y_mark + em <= clip.bottom) {
-                                    font->DrawTextString(buf, x_mark, y_mark, &mark, 1, '?',
-                                        NULL, false, NULL, 0, 0, em, 0, 0, 0);
-                                }
-                            }
-                        }
+                    // Fork: extracted vertical-mode emphasis marks (圏点/傍点).
+                    if ( is_vertical && !vert_skip_draw ) {
+                        drawVerticalEmphasisMarks(buf, frmline, srcline, word, font,
+                            y, line_x, clip, vstate);
                     }
                     /* To display the added letter spacing % at end of line
                     if (j == frmline->word_count-1 && word->added_letter_spacing ) {

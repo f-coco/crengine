@@ -165,6 +165,13 @@ JLReqVertClass getJLReqVertClass(lChar32 c)
     if (c >= 0xFF61 && c <= 0xFF9F)
         return JLREQ_VERT_HALF_KANA;
 
+    // --- 縦書き踊り字 (class [200]) ---
+    // jfm-ujisv: t[200] = copy(t[0]) with width = 2.0; chars = {'〱', '〲'}.
+    // These vertical kana repeat marks occupy two column slots and have
+    // a 2em-tall glyph designed by the font.
+    if (c == 0x3031 || c == 0x3032)
+        return JLREQ_VERT_KANA_REPEAT;
+
     // --- Body CJK (class [0], default) ---
     // jfm-ujisv treats ー (U+30FC), 〜 (U+301C), ～ (U+FF5E) as default body
     // CJK — relying on font's vBX/vBY for positioning.  fork callers may
@@ -228,6 +235,12 @@ JLReqVertLayout getJLReqVertLayout(JLReqVertClass cls)
             break;
         case JLREQ_VERT_VERT_MARK:
             // ー — ‥ … 〜 ～ — full em, centred (vertical bar/dot pattern)
+            break;
+        case JLREQ_VERT_KANA_REPEAT:
+            // 〱 〲 — two-em wide (= 2-slot-tall in column), centred.
+            // jfm-ujisv class [200] inherits class [0] except width=2.0.
+            out.width_halves = 4;            // 2em (= 4 half-ems)
+            out.align        = JLREQ_ALIGN_MIDDLE;
             break;
         case JLREQ_VERT_OTHER:
             // Latin/numerals routed elsewhere; treat as full-em fallback
@@ -367,6 +380,47 @@ int getJLReqGlueKernEighths(JLReqVertClass prev_class, JLReqVertClass next_class
             return 0;
     }
     return 0;
+}
+
+int getJLReqCjkToNonCjkEighths(JLReqVertClass curr_cls)
+{
+    // CJK_curr.glue[100] = CJK_curr.glue[0] (per LuaTeX-ja ltj-jfont.lua:294-302),
+    // EXCEPT class [6] (EXCLAM_QUEST) which is explicitly excluded from this
+    // propagation.  Where no entry exists, xkanjiskip = 0.25em (= 2 eighths) applies.
+    switch (curr_cls) {
+        case JLREQ_VERT_CJK_BODY:            return 2; // [0]: no glue[0]   → xkanjiskip
+        case JLREQ_VERT_OPEN_BRACKET:        return 0; // [1].glue[0]=0     (explicit)
+        case JLREQ_VERT_CLOSE_BRACKET_COMMA: return 4; // [2].glue[0]=0.5em
+        case JLREQ_VERT_MIDDLE_DOT:          return 2; // [3].glue[0]=0.25em
+        case JLREQ_VERT_PERIOD:              return 4; // [4].glue[0]=0.5em
+        case JLREQ_VERT_DASH:                return 2; // [5]: no glue[0]   → xkanjiskip
+        case JLREQ_VERT_EXCLAM_QUEST:        return 2; // [6] EXCLUDED from prop. → xkanjiskip
+        case JLREQ_VERT_HALF_KANA:           return 2; // [7]: no glue[0]   → xkanjiskip
+        case JLREQ_VERT_VERT_MARK:           return 2; // fork-only, treat as body
+        case JLREQ_VERT_KANA_REPEAT:         return 2; // [200] inherits [0]
+        case JLREQ_VERT_OTHER:               return 0; // shouldn't happen (both non-CJK)
+    }
+    return 2;
+}
+
+int getJLReqNonCjkToCjkEighths(JLReqVertClass next_cls)
+{
+    // [100].glue[next] = [0].glue[next] (full body CJK propagation).
+    // Entries from jfm-ujisv [0].glue (line 18-28).  No entry → xkanjiskip.
+    switch (next_cls) {
+        case JLREQ_VERT_CJK_BODY:            return 2; // [0]→[0] no entry  → xkanjiskip
+        case JLREQ_VERT_OPEN_BRACKET:        return 4; // [0]→[1] = 0.5em
+        case JLREQ_VERT_CLOSE_BRACKET_COMMA: return 0; // [0]→[2] = 0       (explicit)
+        case JLREQ_VERT_MIDDLE_DOT:          return 2; // [0]→[3] = 0.25em
+        case JLREQ_VERT_PERIOD:              return 0; // [0]→[4] = 0       (explicit)
+        case JLREQ_VERT_DASH:                return 2; // [0]: no [5] entry → xkanjiskip
+        case JLREQ_VERT_EXCLAM_QUEST:        return 0; // [0]→[6] = 0       (explicit)
+        case JLREQ_VERT_HALF_KANA:           return 0; // [0]→[7] = 0       (explicit)
+        case JLREQ_VERT_VERT_MARK:           return 2; // fork-only, treat as body
+        case JLREQ_VERT_KANA_REPEAT:         return 2; // [200]: no [0]→[200] → xkanjiskip
+        case JLREQ_VERT_OTHER:               return 0; // shouldn't happen
+    }
+    return 2;
 }
 
 bool needsVerticalRotation90CW(lChar32 c)

@@ -82,6 +82,10 @@ enum JLReqVertClass {
     JLREQ_VERT_VERT_MARK,           // fork-only compensation — NOT in jfm-ujisv.
                                     //   Dispatched on LFNT_HINT_VERTICAL_MARK,
                                     //   not on classifier output.  See lvfntman.cpp.
+    JLREQ_VERT_KANA_REPEAT,         // jfm-ujisv [200]: 〱 〲 (vertical kana repeat marks)
+                                    //   width = 2.0 em, align = middle.
+                                    //   These spans TWO column slots; the font's
+                                    //   glyph is designed to fill 2em of column depth.
     JLREQ_VERT_OTHER                // Latin/numerals/etc — rotation path or default
 };
 
@@ -189,6 +193,27 @@ lChar32 getVertPresentationForm(lChar32 c);
 //
 // Apply during layout as: `m_advance[i] += em_px * getJLReqGlueKernEighths(c_prev_class, c_class) / 8`
 int getJLReqGlueKernEighths(JLReqVertClass prev_class, JLReqVertClass next_class);
+
+// JFM inter-class spacing for CJK ↔ non-CJK boundary, eighths of em.
+//
+// LuaTeX-ja models non-CJK chars in CJK context as a virtual class [100]
+// (nox_alchar).  The class [100] propagation logic (ltj-jfont.lua:294-302)
+// copies the explicit [curr].glue[0] entry to [curr].glue[100] for each
+// class except [6] (exclamation/question, explicitly excluded).  When no
+// entry exists (= the default), the **xkanjiskip = 0.25em** fallback
+// applies (jfm-ujisv.lua line 14: xkanjiskip = { 0.25, 0.25, .125 }).
+//
+// We model this with two direction-specific helpers:
+//
+//   getJLReqCjkToNonCjkEighths(curr_cls)  for CJK followed by non-CJK
+//                                           (e.g., 「あ A」)
+//   getJLReqNonCjkToCjkEighths(next_cls)  for non-CJK followed by CJK
+//                                           (e.g., 「A あ」)
+//
+// Both return the base value in eighths of em.  Caller multiplies by
+// em / 8 to get pixel spacing.
+int getJLReqCjkToNonCjkEighths(JLReqVertClass curr_cls);
+int getJLReqNonCjkToCjkEighths(JLReqVertClass next_cls);
 
 // Per-face TTB glyph-metrics cache.  Lazily populated via
 // FT_LOAD_VERTICAL_LAYOUT on first lookup of each glyph.  Held as a

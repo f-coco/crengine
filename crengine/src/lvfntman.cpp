@@ -3118,9 +3118,23 @@ public:
                                 // Phase 3 (LuaTeX-ja jfm-ujisv.lua half-em compaction):
                                 // Override font's natural em advance with JFM-specified slot
                                 // width.  Class [1] [2] [3] [4] [7] get em/2; others stay em.
-                                // See getJLReqVertSlotWidth() in lvfntman_vert.cpp.
-                                if ( advance > 0 && hcl < len )
-                                    advance = getJLReqVertSlotWidth(text[hcl], _size, advance);
+                                // For JLREQ_VERT_OTHER (= non-CJK chars: Latin, space, digits)
+                                // use horizontal advance instead — Draw renders these as a
+                                // rotated horizontal block whose visual extent in the column
+                                // equals the sum of horizontal advances, NOT the TTB em.
+                                // Without this fix, m_advance accumulates em-per-Latin-char
+                                // while Draw's vert_min_next_x advances by _adv (smaller),
+                                // causing highlight rects to drift away from visible glyphs.
+                                if ( advance > 0 && hcl < len ) {
+                                    if ( getJLReqVertClass(text[hcl]) == JLREQ_VERT_OTHER ) {
+                                        hb_position_t h_adv = hb_font_get_glyph_h_advance(
+                                            _hb_font, glyph_info[hg].codepoint);
+                                        if ( h_adv > 0 )
+                                            advance = FONT_METRIC_TO_PX(h_adv);
+                                    } else {
+                                        advance = getJLReqVertSlotWidth(text[hcl], _size, advance);
+                                    }
+                                }
                             }
                             else if ( glyph_pos[hg].x_advance )
                                 advance = FONT_METRIC_TO_PX(glyph_pos[hg].x_advance + _synth_weight_strength);
@@ -4457,12 +4471,22 @@ public:
                                 if (is_vertical_draw && glyph_pos[i].y_advance) {
                                     w = abs(FONT_METRIC_TO_PX(glyph_pos[i].y_advance + _synth_weight_strength));
                                     // Phase 3 (LuaTeX-ja jfm-ujisv.lua half-em compaction):
-                                    // override em advance with em/2 for half-em classes
-                                    // (punctuation, brackets, halfwidth kana).  Must match
-                                    // measureText so layout and draw agree on slot width.
+                                    // override em advance with em/2 for half-em classes.
+                                    // For non-CJK (Latin/space/digits): use horizontal
+                                    // advance so per-glyph y-position advances match the
+                                    // measureText/m_advance side.  See full comment in
+                                    // measureText.
                                     lUInt32 ci = glyph_info[i].cluster;
-                                    if (ci < (lUInt32)len)
-                                        w = getJLReqVertSlotWidth(text[ci], _size, w);
+                                    if (ci < (lUInt32)len) {
+                                        if (getJLReqVertClass(text[ci]) == JLREQ_VERT_OTHER) {
+                                            hb_position_t h_adv = hb_font_get_glyph_h_advance(
+                                                _hb_font, glyph_info[i].codepoint);
+                                            if (h_adv > 0)
+                                                w = FONT_METRIC_TO_PX(h_adv);
+                                        } else {
+                                            w = getJLReqVertSlotWidth(text[ci], _size, w);
+                                        }
+                                    }
                                 }
                                 #ifdef DEBUG_DRAW_TEXT
                                     printf("%x(x=%d+%d,w=%d) ", glyph_info[i].codepoint, x,
