@@ -136,6 +136,38 @@ int getJLReqVertSlotWidth(lChar32 c, int em_px, int natural_advance_px);
 // advance direction (= up in tate) to overlap with the previous slot.
 int getJLReqVertCwa(lChar32 c, int em_px);
 
+// LuaTeX-ja vform table port (ltj-jfont.lua:945-957, ltj-pretreat.lua:171-175).
+//
+// Returns the Unicode "presentation form for vertical" codepoint that should
+// replace `c` in vertical writing modes, or `c` itself if no mapping exists.
+//
+// Mapping is the standard JLReq mapping for CJK Compatibility Forms block:
+//   2014 EM DASH                   → FE31 PRES. FORM FOR VERT EM DASH
+//   2013 EN DASH                   → FE32 PRES. FORM FOR VERT EN DASH
+//   2025 TWO DOT LEADER            → FE30 PRES. FORM FOR VERT TWO DOT LEADER
+//   2026 HORIZONTAL ELLIPSIS       → FE19 PRES. FORM FOR VERT HORIZ ELLIPSIS
+//   3001 IDEOGRAPHIC COMMA         → FE11 PRES. FORM FOR VERT IDEOG COMMA
+//   3002 IDEOGRAPHIC FULL STOP     → FE12 PRES. FORM FOR VERT IDEOG FULL STOP
+//   3008..3011 angle/lenticular brackets → FE3F..FE3C
+//   3014/3015 〔〕                  → FE39/FE3A
+//   3016/3017 〖〗                  → FE17/FE18
+//   300A..300F 《》「」『』           → FE3D..FE44
+//   FF08/FF09 fullwidth ( )         → FE35/FE36
+//   FF3B/FF3D fullwidth [ ]         → FE47/FE48
+//   FF3F fullwidth _                → FE33
+//   FF5B/FF5D fullwidth { }         → FE37/FE38
+//
+// IMPORTANT: caller must apply this substitution to a SEPARATE buffer used
+// only for HarfBuzz shaping.  JFM class lookup, line-break logic, and
+// highlight-rect computation must still see the ORIGINAL character.  See
+// LuaTeX-ja's ltjs.orig_char_table mechanism for the same separation.
+//
+// Returns the same `c` if `c` is not in the table; callers should pass the
+// result to HarfBuzz directly.  Font-availability check (does the font
+// actually have a glyph for the FE-form?) is the caller's responsibility,
+// since this header has no FT_Face dependency.
+lChar32 getVertPresentationForm(lChar32 c);
+
 // Per-face TTB glyph-metrics cache.  Lazily populated via
 // FT_LOAD_VERTICAL_LAYOUT on first lookup of each glyph.  Held as a
 // member of LVFreeTypeFace so lifetime tracks the face.

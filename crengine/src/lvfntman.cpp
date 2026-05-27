@@ -2868,14 +2868,32 @@ public:
             bool is_fallback_font = hints & LFNT_HINT_IS_FALLBACK_FONT;
             LVFontRef fallback = is_fallback_font ? getNextFallbackFont() : getFallbackFont();
             bool has_fallback_font = !fallback.isNull();
+            // Fork-only (Phase 5a of m-tky/koreader-tategumi#15): in vertical
+            // writing modes, substitute selected codepoints to their CJK
+            // Compatibility Forms vertical presentation variants (U+FE10..FE48)
+            // before HarfBuzz shaping, per LuaTeX-ja's vform_table (ltj-jfont.lua
+            // 945-957, ltj-pretreat.lua 173-175).  Without this, fonts whose +vert
+            // GSUB returns a 2em-tall ligature for U+2014+U+2014 (Noto Serif JP
+            // gid16762) draw the bar in the wrong slot.  Substituting U+2014 →
+            // U+FE31 produces a 1em-tall glyph per — that chains naturally.
+            // Font-conditional: only substitute when the font cmap actually
+            // contains the FE-form glyph (LuaTeX-ja line 996: `if t.characters[v]`).
+            bool is_vertical_subst = (hints & LFNT_HINT_IS_VERTICAL) != 0;
+            auto subst_for_vert = [&](lChar32 ch) -> lChar32 {
+                if (!is_vertical_subst) return ch;
+                lChar32 v = getVertPresentationForm(ch);
+                if (v != ch && FT_Get_Char_Index(_face, v) != 0)
+                    return v;
+                return ch;
+            };
             if ( has_fallback_font ) { // It has a fallback font, add chars as-is
                 for (i = 0; i < len; i++) {
-                    hb_buffer_add(_hb_buffer, (hb_codepoint_t)(text[i]), i);
+                    hb_buffer_add(_hb_buffer, (hb_codepoint_t)subst_for_vert(text[i]), i);
                 }
             }
             else { // No fallback font, check codepoint presence or get replacement char
                 for (i = 0; i < len; i++) {
-                    hb_buffer_add(_hb_buffer, (hb_codepoint_t)filterChar(text[i], def_char), i);
+                    hb_buffer_add(_hb_buffer, (hb_codepoint_t)filterChar(subst_for_vert(text[i]), def_char), i);
                 }
             }
             // Note: hb_buffer_add_codepoints(_hb_buffer, (hb_codepoint_t*)text, len, 0, len)
@@ -4146,14 +4164,27 @@ public:
             bool is_fallback_font = flags & LFNT_HINT_IS_FALLBACK_FONT;
             LVFontRef fallback = is_fallback_font ? getNextFallbackFont() : getFallbackFont();
             bool has_fallback_font = !fallback.isNull();
+            // Fork-only Phase 5a: vform substitution before HB shaping (see
+            // measureText for full doc).  text[] (caller's buffer) stays
+            // untouched, so JFM-class lookups, getRectEx, line-break logic
+            // all continue to read original codepoints.  HB sees the FE-form
+            // when the font has it.
+            bool is_vertical_subst_d = (flags & LFNT_HINT_IS_VERTICAL) != 0;
+            auto subst_for_vert_d = [&](lChar32 ch) -> lChar32 {
+                if (!is_vertical_subst_d) return ch;
+                lChar32 v = getVertPresentationForm(ch);
+                if (v != ch && FT_Get_Char_Index(_face, v) != 0)
+                    return v;
+                return ch;
+            };
             if ( has_fallback_font ) { // It has a fallback font, add chars as-is
                 for (i = 0; i < len; i++) {
-                    hb_buffer_add(_hb_buffer, (hb_codepoint_t)(text[i]), i);
+                    hb_buffer_add(_hb_buffer, (hb_codepoint_t)subst_for_vert_d(text[i]), i);
                 }
             }
             else { // No fallback font, check codepoint presence or get replacement char
                 for (i = 0; i < len; i++) {
-                    hb_buffer_add(_hb_buffer, (hb_codepoint_t)filterChar(text[i], def_char), i);
+                    hb_buffer_add(_hb_buffer, (hb_codepoint_t)filterChar(subst_for_vert_d(text[i]), def_char), i);
                 }
             }
             hb_buffer_set_content_type(_hb_buffer, HB_BUFFER_CONTENT_TYPE_UNICODE);

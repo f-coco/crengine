@@ -257,6 +257,48 @@ int getJLReqVertCwa(lChar32 c, int em_px)
     return (((int)layout.align) * (fwidth - vadv)) / 2;
 }
 
+lChar32 getVertPresentationForm(lChar32 c)
+{
+    // LuaTeX-ja vert_form_table port (ltj-jfont.lua:948-957).
+    // 27 codepoint mappings to U+FE10-FE48 (CJK Compatibility Forms block).
+    switch (c) {
+        // Punctuation
+        case 0x3001: return 0xFE11; // 、 → ︑
+        case 0x3002: return 0xFE12; // 。 → ︒
+        case 0x2025: return 0xFE30; // ‥ → ︰
+        case 0x2026: return 0xFE19; // … → ︙
+        // Dashes / underscore
+        case 0x2014: return 0xFE31; // — → ︱
+        case 0x2013: return 0xFE32; // – → ︲
+        case 0xFF3F: return 0xFE33; // ＿ → ︳
+        // Angle brackets
+        case 0x3008: return 0xFE3F; // 〈 → ︿
+        case 0x3009: return 0xFE40; // 〉 → ﹀
+        case 0x300A: return 0xFE3D; // 《 → ︽
+        case 0x300B: return 0xFE3E; // 》 → ︾
+        // Corner brackets
+        case 0x300C: return 0xFE41; // 「 → ﹁
+        case 0x300D: return 0xFE42; // 」 → ﹂
+        case 0x300E: return 0xFE43; // 『 → ﹃
+        case 0x300F: return 0xFE44; // 』 → ﹄
+        // Lenticular / hollow brackets
+        case 0x3010: return 0xFE3B; // 【 → ︻
+        case 0x3011: return 0xFE3C; // 】 → ︼
+        case 0x3014: return 0xFE39; // 〔 → ︹
+        case 0x3015: return 0xFE3A; // 〕 → ︺
+        case 0x3016: return 0xFE17; // 〖 → ︗
+        case 0x3017: return 0xFE18; // 〗 → ︘
+        // Fullwidth ASCII brackets
+        case 0xFF08: return 0xFE35; // （ → ︵
+        case 0xFF09: return 0xFE36; // ） → ︶
+        case 0xFF3B: return 0xFE47; // ［ → ﹇
+        case 0xFF3D: return 0xFE48; // ］ → ﹈
+        case 0xFF5B: return 0xFE37; // ｛ → ︷
+        case 0xFF5D: return 0xFE38; // ｝ → ︸
+        default:     return c;
+    }
+}
+
 bool needsVerticalRotation90CW(lChar32 c)
 {
     // --- Horizontal-script characters: ROTATE ---
