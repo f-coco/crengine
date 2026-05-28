@@ -84,13 +84,17 @@ VertRubyInlineBoxMetrics computeVertRubyInlineBoxMetrics(
 // image lines use the image physical width.
 void applyVerticalFrmlineDimensions(LVFormatter * fmt, formatted_line_t * frmline);
 
-// N:N ruby annotation centering for vertical ruby inner cells (defined in
-// lvtextfm_vert.cpp).  Applies JLReq mono-ruby (対応ルビ) positioning when
-// the slot divides evenly into per-char sub-slots that are exactly 2× the
-// annotation char width.  Returns true if the special distribution was
-// applied (caller must skip default block centering).
+// N:N (mono-ruby / 対応ルビ) and N:M (jukugo-ruby) annotation centering
+// for vertical ruby inner cells (defined in lvtextfm_vert.cpp).  Per-char
+// distribution applies when the source fragment lives inside <rt>/<rtc>/<rp>
+// (verified via DOM ancestor walk).  N == M produces JLReq mono-ruby
+// alignment (each annot[i] over base[i]); N != M distributes annot chars
+// evenly across the base width with overflow allowed (jukugo-style overhang).
+// Returns true when distribution was applied (caller must skip default
+// block centering).
 bool applyVerticalNNRubyCenterDistribution(
-    formatted_line_t * frmline, int slot_width, int extra_width);
+    formatted_line_t * frmline, int slot_width, int extra_width,
+    LVFormatter * fmt);
 
 // Vertical-mode PAD border drawing (defined in lvtextfm_vert.cpp).  Handles
 // both right-pad and left-pad cases.  Scans frmline->words[] for the paired

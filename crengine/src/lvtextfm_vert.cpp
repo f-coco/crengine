@@ -1258,26 +1258,60 @@ void applyVerticalFrmlineDimensions(LVFormatter * fmt, formatted_line_t * frmlin
     frmline->width = col_width;
 }
 
+// Walks up the DOM from a source text fragment to detect whether the
+// fragment lives inside a ruby annotation cell (rt / rtc / rp).  Used by
+// applyVerticalNNRubyCenterDistribution to gate per-char annotation
+// distribution: applies only when this frmline IS a ruby annotation
+// cell, not when it's some other narrow centred block (e.g. headings).
+static bool isInsideRubyAnnotation(LVFormatter * fmt, formatted_line_t * frmline)
+{
+    if ( frmline->word_count < 1 ) return false;
+    formatted_word_t * w0 = &frmline->words[0];
+    if ( (int)w0->src_text_index >= fmt->m_pbuffer->srctextlen ) return false;
+    src_text_fragment_t * src = &fmt->m_pbuffer->srctext[w0->src_text_index];
+    if ( src->flags & LTEXT_SRC_IS_OBJECT ) return false;
+    ldomNode * n = (ldomNode *)src->object;
+    if ( !n ) return false;
+    // Limit traversal depth so a deeply nested fragment doesn't burn time.
+    for ( int depth = 0; depth < 8 && n; depth++ ) {
+        if ( n->isElement() && isRubyAnnotId(n->getNodeId()) )
+            return true;
+        n = n->getParentNode();
+    }
+    return false;
+}
+
 // =============================================================================
 // applyVerticalNNRubyCenterDistribution
 //
-// For ruby inner annotation cells in vertical-rl: when the annotation has
-// multiple chars and the slot divides evenly into sub-slots that are exactly
-// 2× each annotation char width (N:N ruby with 2:1 font ratio), distribute
-// chars evenly so each annotation char is centred over its corresponding
-// base char (JLReq mono-ruby / 対応ルビ positioning).  Returns true if the
-// special distribution was applied; caller falls back to standard centering
-// otherwise.
+// Per-char distribution for ruby inner annotation cells in vertical-rl:
+//
+//   N == M (mono-ruby / 対応ルビ): canonical case where annot char count
+//     equals base char count.  Each annot char sits at its sub-slot
+//     centre, aligning with the corresponding base char.
+//
+//   N != M (jukugo-ruby / N:M ruby): annot has different count from base.
+//     Same even-distribution math; the `w_start < next_x` clamp lets annot
+//     chars overflow past slot_width when N > M (consistent with
+//     LuaTeX-ja's rubyzr-style overhang into adjacent character spaces).
+//
+// Gating: requires both
+//   (1) uniform annot char widths (mixed-width Latin etc. falls through
+//       to block centering — proportional weighting is future work), AND
+//   (2) the source fragment must live inside <rt>/<rtc>/<rp> — without
+//       this DOM check the function would misfire on narrow non-ruby
+//       centred content (e.g. short headings inside narrow containers).
+//
+// Returns true when per-char distribution was applied; caller falls back
+// to standard block centering otherwise (= group-ruby behaviour).
 // =============================================================================
 bool applyVerticalNNRubyCenterDistribution(
-    formatted_line_t * frmline, int slot_width, int extra_width)
+    formatted_line_t * frmline, int slot_width, int extra_width,
+    LVFormatter * fmt)
 {
     if ( (int)frmline->word_count < 2 || extra_width <= 0 || slot_width <= 0 )
         return false;
     int N = (int)frmline->word_count;
-    if ( slot_width % N != 0 )
-        return false;
-    int sub_slot = slot_width / N;
     int char_w = (int)frmline->words[0].width;
     if ( char_w <= 0 )
         return false;
@@ -1285,8 +1319,8 @@ bool applyVerticalNNRubyCenterDistribution(
         if ( (int)frmline->words[wi].width != char_w )
             return false;
     }
-    // Detect 2:1 font ratio N:N ruby: each sub-slot is exactly twice char_w.
-    if ( sub_slot != 2 * char_w )
+    // DOM-based ruby context check — see function comment for rationale.
+    if ( !isInsideRubyAnnotation(fmt, frmline) )
         return false;
     int next_x = 0;
     for ( int wi = 0; wi < N; wi++ ) {

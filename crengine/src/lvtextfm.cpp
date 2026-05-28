@@ -3466,11 +3466,14 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
             }
         }
         else if ( alignment==LTEXT_ALIGN_CENTER ) {
-            // Fork: extracted N:N ruby mono-ruby distribution to lvtextfm_vert.cpp.
+            // Fork: extracted N:N / N:M ruby distribution to lvtextfm_vert.cpp.
+            // Caller-side narrowness gate (is_inner_vert_cell) combined with
+            // the function's DOM-based ruby-context check correctly limits
+            // per-char distribution to actual ruby annotation cells.
             bool used_even_dist = false;
             if ( is_inner_vert_cell ) {
                 used_even_dist = applyVerticalNNRubyCenterDistribution(
-                    frmline, fmt->m_pbuffer->width, extra_width);
+                    frmline, fmt->m_pbuffer->width, extra_width, fmt);
             }
             if ( !used_even_dist ) {
                 // Standard round-half-up block centering (also correct for base inner cells).
