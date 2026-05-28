@@ -254,6 +254,16 @@ int getJLReqVertSlotWidth(lChar32 c, int em_px, int natural_advance_px)
     JLReqVertClass cls = getJLReqVertClass(c);
     if (cls == JLREQ_VERT_OTHER)
         return natural_advance_px;        // not in jfm-ujisv → font's natural
+    // Multi-em composite glyph: when +vrt2 substitutes a char with a
+    // composite (e.g. Hiragino's gid8857 "二倍ダーシ" for U+2014, with
+    // vertAdvance == 2em), the font's natural_advance is what positions
+    // the next char so consecutive composites chain end-to-end.  Force-
+    // overriding to JFM-class em width would mangle this: subsequent
+    // chars would overlap the composite.  Threshold of 1.5 × em safely
+    // catches 2em / 3em composites while leaving normal-advance glyphs
+    // unaffected.
+    if (natural_advance_px > (em_px * 3) / 2)
+        return natural_advance_px;
     JLReqVertLayout layout = getJLReqVertLayout(cls);
     return (em_px * layout.width_halves) / 2;
 }
@@ -274,15 +284,23 @@ lChar32 getVertPresentationForm(lChar32 c)
 {
     // LuaTeX-ja vert_form_table port (ltj-jfont.lua:948-957).
     // 27 codepoint mappings to U+FE10-FE48 (CJK Compatibility Forms block).
+    //
+    // NOTE: dashes / leaders (U+2014, U+2013, U+2025, U+2026) are DELIBERATELY
+    // omitted here, even though LuaTeX-ja's vert_form_table lists them.
+    // LuaTeX-ja nullifies vform entries that the font's `vert`/`vrt2` feature
+    // already handles (ltj-jfont.lua:1011-1014 `if w==i then vform[j]=k` and
+    // `vform[j]=nil` paths), so for fonts whose `vrt2` substitutes — / ‥ / …
+    // with multi-em composite glyphs (Hiragino's gid8857 二倍ダーシ, etc.),
+    // LuaTeX-ja does NOT substitute via vform first.  We don't replicate the
+    // dynamic per-font nullification logic; instead we simply skip these chars
+    // unconditionally so the font's `vrt2` feature can produce composites.
+    // For fonts without composite vrt2 mappings, +vert + the
+    // needsVerticalRotation90CW fallback still gives correct vertical glyphs.
     switch (c) {
         // Punctuation
         case 0x3001: return 0xFE11; // 、 → ︑
         case 0x3002: return 0xFE12; // 。 → ︒
-        case 0x2025: return 0xFE30; // ‥ → ︰
-        case 0x2026: return 0xFE19; // … → ︙
-        // Dashes / underscore
-        case 0x2014: return 0xFE31; // — → ︱
-        case 0x2013: return 0xFE32; // – → ︲
+        // Underscore
         case 0xFF3F: return 0xFE33; // ＿ → ︳
         // Angle brackets
         case 0x3008: return 0xFE3F; // 〈 → ︿

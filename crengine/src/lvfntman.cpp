@@ -1857,26 +1857,30 @@ public:
     void setupHBFeatures(bool is_vertical = false) {
         _hb_features.clear();
         if ( _kerningMode == KERNING_MODE_HARFBUZZ ) {
-            // We reserve 2 for those we're adding now, +2 for possibly added CSS font features
-            // (otherwise, LVArray would expand from 2 to 11 on the next addition - it will
-            // then expand from 4 to 14 on the 3rd added CSS font feature).
-            _hb_features.reserve(4);
+            // We reserve 2 for those we're adding now, +3 for vertical features
+            // (+vert, +vrt2, +vkrn) added when is_vertical is set, plus headroom
+            // for possibly added CSS font features (otherwise, LVArray would
+            // expand on each additional feature).
+            _hb_features.reserve(5);
             // HarfBuzz features for full text shaping
             addHBFeature("+kern");  // font kerning
             addHBFeature("+liga");  // ligatures
             // Vertical text: enable vertical glyph substitution and kerning.
             //
-            // Fork-only: do NOT enable +vrt2.  Hiragino's +vrt2 substitution maps
-            // U+2014 (EM DASH) to a 2em-tall "二倍ダーシ" composite glyph (gid8857)
-            // that, when drawn per-character, overlaps adjacent slots and extends
-            // into surrounding text.  Sticking to +vert keeps U+2014 as a 1em
-            // horizontal-form glyph that the renderer rotates 90° CW (see
-            // needsVerticalRotation90CW + drawGlyphItemRotated90CW path), matching
-            // LuaTeX-ja's visual layout for —— (each dash occupies its em slot,
-            // adjacent dashes chain to form a continuous vertical bar of n*em).
+            // Enable +vrt2 to match LuaTeX-ja's `auto_enable_vrt2` default
+            // (ltj-jfont.lua:334-339, 466-467): when the user hasn't
+            // overridden the feature, LuaTeX-ja prefers +vrt2 over +vert.
+            // The key benefit is composite-glyph substitution like
+            // Hiragino's gid8857 "二倍ダーシ" for U+2014 (vertAdvance =
+            // 2em).  Phase 3 (getJLReqVertSlotWidth) preserves the
+            // composite's natural advance when it exceeds 1.5em, so
+            // consecutive composites are positioned at 2em intervals and
+            // chain end-to-end — producing the continuous —— stroke that
+            // the font designer intended.
             if ( is_vertical ) {
-                addHBFeature("+vert");  // enable vertical glyph substitution
-                addHBFeature("+vkrn"); // vertical kerning (e.g. spacing around 。/、)
+                addHBFeature("+vert");  // vertical glyph substitution (base)
+                addHBFeature("+vrt2");  // vertical rotation (composite glyphs)
+                addHBFeature("+vkrn");  // vertical kerning
             }
         }
         else if (_kerningMode == KERNING_MODE_HARFBUZZ_LIGHT) {
