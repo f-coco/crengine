@@ -124,11 +124,14 @@ void drawVerticalEmphasisMarks(
     const VerticalDrawState & state);
 
 // Vertical-mode image draw positioning (defined in lvtextfm_vert.cpp).
-// Computes (x0, y0) for an image word in vertical mode.  Image is
-// right-aligned in the column with width clamped to >= 0.
+// Computes (x0, y0) for an image word in vertical mode and advances the
+// per-column vert_min_next_x tracker past the image so the following word
+// is placed after it (otherwise the next CJK char clamps back to the
+// pre-image tracker value and overlaps the image).  Image is centred on the
+// column axis with the left edge clamped to >= 0.
 void applyVerticalImageDraw(
     formatted_line_t * frmline, formatted_word_t * word,
-    int y, int line_x,
+    int y, int line_x, VerticalDrawState & state,
     int & x0_out, int & y0_out);
 
 // Vertical-mode inline-box (ruby) draw positioning (defined in lvtextfm_vert.cpp).

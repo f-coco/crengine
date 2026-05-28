@@ -6818,7 +6818,7 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         if (is_vertical) {
                             // Fork: extracted to lvtextfm_vert.cpp.
                             int x0, y0;
-                            applyVerticalImageDraw(frmline, word, y, line_x, x0, y0);
+                            applyVerticalImageDraw(frmline, word, y, line_x, vstate, x0, y0);
                             buf->Draw( img, x0, y0, word->width, word->o.height );
                         } else {
                             int xx = x + frmline->x + word->x;

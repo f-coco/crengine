@@ -1555,17 +1555,37 @@ void drawVerticalEmphasisMarks(
 // =============================================================================
 void applyVerticalImageDraw(
     formatted_line_t * frmline, formatted_word_t * word,
-    int y, int line_x,
+    int y, int line_x, VerticalDrawState & state,
     int & x0_out, int & y0_out)
 {
     // In vertical-rl after the x/y swap at Draw() entry:
     //   line_x = clip.right − x = right edge of current column group.
     // word->width  = image physical width  = block-direction (screen-X) extent.
     // word->o.height = image physical height = inline-direction (screen-Y) extent.
-    // Place the right edge of the image at line_x; clamp left to 0.
-    x0_out = line_x - (int)word->width;
+    // Center the image across the column the same way plain glyphs are centered
+    // (x0 = line_x − strut + (strut − em)/2).  Right-aligning to line_x instead
+    // pushed a narrow inline image (e.g. a 1em ● gaiji bullet, narrower than the
+    // strut) toward the column's right edge, off the column axis and visually
+    // colliding with the text.  Clamp left to 0.
+    int strut = (int)frmline->height;
+    int img_w = (int)word->width;
+    x0_out = line_x - strut + (strut - img_w) / 2;
     if ( x0_out < 0 ) x0_out = 0;
     y0_out = y + (int)frmline->x + (int)word->x;
+    // Advance the per-column tracker past the image.  Plain CJK words derive
+    // their draw position SOLELY from state.vert_min_next_x (see
+    // applyVerticalWordDraw: clamped_x = state.vert_min_next_x), so a word
+    // that does not advance it leaves the following char clamped to the
+    // pre-image value — drawing it on top of the image (the "● overlaps 「 by
+    // 1em" gaiji-bullet bug).  Mirror the LAYOUT side
+    // (alignLineHorizontalVerticalPostPass): the image's effective advance is
+    // word->width, and word->x already carries the CJK→non-CJK xkanjiskip the
+    // layout inserted before it.  The image is non-CJK, so the next CJK char
+    // must get its own xkanjiskip and no inter-class glue from the image.
+    state.vert_min_next_x = (int)word->x + (int)word->width;
+    state.vert_prev_plain_y0 = y0_out;
+    state.vert_prev_was_non_cjk_word = true;
+    state.vert_prev_cjk_class = -1;
 }
 
 // =============================================================================
