@@ -275,11 +275,23 @@ void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * f
             RenderRectAccessor node_fmt( node );
             bool vert_mode = (fmt->m_pbuffer->writing_mode == css_wm_vertical_rl ||
                               fmt->m_pbuffer->writing_mode == css_wm_vertical_lr);
+            // Inline-box advance MUST match the Draw side's ib_actual_depth
+            // (lvtextfm.cpp applyVerticalInlineBoxDraw): the actual visual
+            // column depth is stored in srcline->letter_spacing by measureText
+            // (= base text horizontal advance for ruby), which can be up to
+            // half an em SHORTER than word->width (the TTB-based advance) for
+            // ruby boxes.  Advancing vert_layout_min_x by word->width here
+            // while Draw advances vert_min_next_x by letter_spacing would put
+            // the following char's highlight rect (positioned by word->x) half
+            // an em BELOW its glyph.  Use the same fallback chain as Draw.
+            int ib_layout_depth = (srcline->letter_spacing > 0)
+                ? (int)srcline->letter_spacing
+                : (int)word->width;
             if ( RENDER_RECT_HAS_FLAG(node_fmt, BOX_IS_POSITIONNED) ) {
                 if ( is_vert_frmline ) {
                     // Still advance vert_layout_min_x even if already positioned.
                     int clamped_x = node_fmt.getX() - frmline->x;
-                    int nx = clamped_x + (int)word->width;
+                    int nx = clamped_x + ib_layout_depth;
                     if ( nx > vert_layout_min_x ) vert_layout_min_x = nx;
                 }
                 continue;
@@ -292,7 +304,7 @@ void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * f
                 int clamped_ib_x = (ib_word_x < vert_layout_min_x)
                                    ? vert_layout_min_x : ib_word_x;
                 node_fmt.setX( frmline->x + clamped_ib_x );
-                vert_layout_min_x = clamped_ib_x + (int)word->width;
+                vert_layout_min_x = clamped_ib_x + ib_layout_depth;
                 // Inline box ends the JFM class chain.
                 vert_layout_prev_cjk_class = -1;
                 vert_layout_prev_class = 0;
