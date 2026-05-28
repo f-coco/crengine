@@ -9481,10 +9481,87 @@ int renderBlockElement( LVRendPageContext & context, ldomNode * enode, int x, in
                                         direction, baseline, enode->getDocument()->getRenderBlockRenderingFlags() );
 }
 
+// === FORK (vertical-rl) =====================================================
+// DrawBorderVertical: draw a block's CSS borders in vertical-rl/lr writing mode.
+//
+// Upstream DrawBorder() draws straight to the buffer from the doc-space
+// (Y=X swapped) rect (x0+doc_x, y0+doc_y, fmt.getWidth/Height) without the
+// swap+mirror that LFormattedText::Draw applies to text.  In vertical mode that
+// misplaces block borders: e.g. a "border-top" comes out as a full-width
+// horizontal line near the page top instead of a short cap at the box's screen
+// top edge.  We map the doc-space border box to screen coordinates exactly as
+// initVerticalDrawSetup() maps text:
+//     screen_y = x0 + doc_x              (block's doc-X axis -> screen Y)
+//     screen_x = anchor - (y0 + doc_y)   (block's doc-Y axis -> screen X, mirrored)
+// with anchor = draw_extra_info->vert_column_clip_right (fallback clip.right).
+// So getHeight() (doc-Y extent) is the box's screen WIDTH and getWidth() its
+// screen HEIGHT.  CSS physical borders stay physical on screen (as browsers do).
+// Only solid borders are drawn precisely (FillRect per edge); other styles are
+// approximated as solid and border-radius corners are squared - acceptable for
+// the vertical heading decorations real EPUBs use.  Keeping this separate leaves
+// the large upstream DrawBorder body untouched (it just early-dispatches here).
+static void DrawBorderVertical(ldomNode *enode, LVDrawBuf & drawbuf,
+                               int x0, int y0, int doc_x, int doc_y, RenderRectAccessor fmt)
+{
+    css_style_ref_t style = enode->getStyle();
+    bool hasTop    = (style->border_style_top    >= css_border_solid);
+    bool hasRight  = (style->border_style_right  >= css_border_solid);
+    bool hasBottom = (style->border_style_bottom >= css_border_solid);
+    bool hasLeft   = (style->border_style_left   >= css_border_solid);
+
+    css_length_t bw;
+    bw = style->border_width[0]; hasTop    = hasTop    & !(bw.value==0 && bw.type>css_val_unspecified);
+    bw = style->border_width[1]; hasRight  = hasRight  & !(bw.value==0 && bw.type>css_val_unspecified);
+    bw = style->border_width[2]; hasBottom = hasBottom & !(bw.value==0 && bw.type>css_val_unspecified);
+    bw = style->border_width[3]; hasLeft   = hasLeft   & !(bw.value==0 && bw.type>css_val_unspecified);
+
+    lUInt32 colTop    = style->border_color[0].type != css_val_unspecified ? style->border_color[0].value : style->color.value;
+    lUInt32 colRight  = style->border_color[1].type != css_val_unspecified ? style->border_color[1].value : style->color.value;
+    lUInt32 colBottom = style->border_color[2].type != css_val_unspecified ? style->border_color[2].value : style->color.value;
+    lUInt32 colLeft   = style->border_color[3].type != css_val_unspecified ? style->border_color[3].value : style->color.value;
+    hasTop    = hasTop    & !IS_COLOR_FULLY_TRANSPARENT(colTop);
+    hasRight  = hasRight  & !IS_COLOR_FULLY_TRANSPARENT(colRight);
+    hasBottom = hasBottom & !IS_COLOR_FULLY_TRANSPARENT(colBottom);
+    hasLeft   = hasLeft   & !IS_COLOR_FULLY_TRANSPARENT(colLeft);
+
+    if ( !(hasTop || hasRight || hasBottom || hasLeft) )
+        return;
+
+    int wpct = 0; // % border widths are invalid, so this is unused
+    int twidth = lengthToPx(enode, style->border_width[0], wpct); if (twidth==0) twidth = DEFAULT_BORDER_WIDTH;
+    int rwidth = lengthToPx(enode, style->border_width[1], wpct); if (rwidth==0) rwidth = DEFAULT_BORDER_WIDTH;
+    int bwidth = lengthToPx(enode, style->border_width[2], wpct); if (bwidth==0) bwidth = DEFAULT_BORDER_WIDTH;
+    int lwidth = lengthToPx(enode, style->border_width[3], wpct); if (lwidth==0) lwidth = DEFAULT_BORDER_WIDTH;
+
+    lvRect clip;
+    drawbuf.GetClipRect(&clip);
+    draw_extra_info_t * dei = (draw_extra_info_t*)drawbuf.GetDrawExtraInfo();
+    int anchor = (dei && dei->vert_column_clip_right) ? dei->vert_column_clip_right : clip.right;
+
+    int box_w = fmt.getWidth();   // doc-X extent -> screen height
+    int box_h = fmt.getHeight();  // doc-Y extent -> screen width
+    int screen_top    = x0 + doc_x;
+    int screen_bottom = screen_top + box_w;
+    int screen_right  = anchor - (y0 + doc_y);
+    int screen_left   = screen_right - box_h;
+
+    if (hasTop)    drawbuf.FillRect(screen_left,          screen_top,            screen_right,         screen_top + twidth, colTop);
+    if (hasBottom) drawbuf.FillRect(screen_left,          screen_bottom - bwidth, screen_right,        screen_bottom,       colBottom);
+    if (hasRight)  drawbuf.FillRect(screen_right - rwidth, screen_top,           screen_right,         screen_bottom,       colRight);
+    if (hasLeft)   drawbuf.FillRect(screen_left,          screen_top,            screen_left + lwidth, screen_bottom,       colLeft);
+}
+// === END FORK ===============================================================
+
 //draw border lines,support color,width,all styles, not support border-collapse
 void DrawBorder(ldomNode *enode,LVDrawBuf & drawbuf,int x0,int y0,int doc_x,int doc_y,RenderRectAccessor fmt)
 {
     css_style_ref_t style = enode->getStyle();
+    // FORK (vertical-rl): borders need the Y=X swap+mirror; handle separately
+    // so the upstream physical-edge drawing below stays untouched.
+    if ( css_wm_is_vertical(style->writing_mode) ) {
+        DrawBorderVertical(enode, drawbuf, x0, y0, doc_x, doc_y, fmt);
+        return;
+    }
     bool hastopBorder = (style->border_style_top >=css_border_solid);
     bool hasrightBorder = (style->border_style_right >=css_border_solid);
     bool hasbottomBorder = (style->border_style_bottom >=css_border_solid);
