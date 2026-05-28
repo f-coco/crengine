@@ -1296,26 +1296,32 @@ static bool isInsideRubyAnnotation(LVFormatter * fmt, formatted_line_t * frmline
 // =============================================================================
 // applyVerticalNNRubyCenterDistribution
 //
-// Per-char distribution for ruby inner annotation cells in vertical-rl:
+// Per-char distribution for MONO-RUBY (対応ルビ) annotation cells in
+// vertical-rl: when the annotation char count equals the base char count
+// (N:N) and the font ratio is 2:1, distribute the annotation chars so each
+// sits centred over its corresponding base char.
 //
-//   N == M (mono-ruby / 対応ルビ): canonical case where annot char count
-//     equals base char count.  Each annot char sits at its sub-slot
-//     centre, aligning with the corresponding base char.
+// The `sub_slot == 2 * char_w` test is the mono-ruby signature:
+//   slot_width = N_base × base_em  (annotation cell spans the base width)
+//   sub_slot   = slot_width / N_annot
+//   char_w     = annot_em = base_em / 2  (2:1 ruby font ratio)
+//   sub_slot == 2 × char_w  ⇔  slot_width == N_annot × base_em
+//                           ⇔  N_annot == N_base   (mono-ruby)
 //
-//   N != M (jukugo-ruby / N:M ruby): annot has different count from base.
-//     Same even-distribution math; the `w_start < next_x` clamp lets annot
-//     chars overflow past slot_width when N > M (consistent with
-//     LuaTeX-ja's rubyzr-style overhang into adjacent character spaces).
+// For group-ruby (single <ruby>base<rt>annot</rt></ruby> where the
+// annotation count differs from the base, e.g. 蝶《ちょう》 = 1 base, 3
+// annot), this test is FALSE, so the function returns false and the caller
+// centres the annotation as a block over the base — which is the correct
+// JLReq group-ruby placement.  Distributing those chars per-sub-slot
+// instead would spread them out and break the centred appearance.
 //
-// Gating: requires both
-//   (1) uniform annot char widths (mixed-width Latin etc. falls through
-//       to block centering — proportional weighting is future work), AND
-//   (2) the source fragment must live inside <rt>/<rtc>/<rp> — without
-//       this DOM check the function would misfire on narrow non-ruby
-//       centred content (e.g. short headings inside narrow containers).
+// A DOM check (isInsideRubyAnnotation) additionally guards against any
+// non-ruby narrow centred content that happens to match the metric
+// signature (e.g. a short heading whose chars are coincidentally half the
+// container width).
 //
-// Returns true when per-char distribution was applied; caller falls back
-// to standard block centering otherwise (= group-ruby behaviour).
+// Returns true when mono-ruby distribution was applied; caller falls back
+// to block centering otherwise (group-ruby / N:M).
 // =============================================================================
 bool applyVerticalNNRubyCenterDistribution(
     formatted_line_t * frmline, int slot_width, int extra_width,
@@ -1324,6 +1330,9 @@ bool applyVerticalNNRubyCenterDistribution(
     if ( (int)frmline->word_count < 2 || extra_width <= 0 || slot_width <= 0 )
         return false;
     int N = (int)frmline->word_count;
+    if ( slot_width % N != 0 )
+        return false;
+    int sub_slot = slot_width / N;
     int char_w = (int)frmline->words[0].width;
     if ( char_w <= 0 )
         return false;
@@ -1331,7 +1340,15 @@ bool applyVerticalNNRubyCenterDistribution(
         if ( (int)frmline->words[wi].width != char_w )
             return false;
     }
-    // DOM-based ruby context check — see function comment for rationale.
+    // Mono-ruby signature: sub_slot is exactly twice the annotation char
+    // width (2:1 ruby font ratio, N_annot == N_base).  Group-ruby (N:M)
+    // fails this and falls through to block centering — the correct
+    // JLReq placement (annotation block centred over the base block).
+    if ( sub_slot != 2 * char_w )
+        return false;
+    // Belt-and-braces: also require the fragment to actually be inside
+    // <rt>/<rtc>/<rp>, so non-ruby content matching the metric signature
+    // (e.g. a short centred heading) is never per-char distributed.
     if ( !isInsideRubyAnnotation(fmt, frmline) )
         return false;
     int next_x = 0;
