@@ -756,9 +756,34 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                               ? fmt->m_srcs[i]->letter_spacing - fmt->m_srcs[i]->o.width
                               : 0;
                 bool is_cjk_char = (fmt->m_flags[i] & LCHAR_IS_CJK) != 0;
-                int char_count_adv = (i - pos + 1) * avg_char_advance + avg_char_advance / 2 + inline_box_extra;
+                bool is_object_char = (fmt->m_flags[i] & LCHAR_IS_OBJECT) != 0;
+                // This char's own advance (delta from the previous char).  For
+                // multi-em glyphs (em-dash composite via +vrt2, 2em "二倍ダーシ";
+                // kana repeat marks 〱〲; vform leaders) this exceeds avg_char_advance.
+                int adv_delta = fmt->m_advance[i] - (i > 0 ? fmt->m_advance[i-1] : 0);
+                bool is_multiem_glyph = adv_delta > avg_char_advance + avg_char_advance/4;
+                // char_count_adv mirrors Draw's vert_min_next_x accumulation
+                // (≈ em per char) to catch the case where HarfBuzz TTB advances
+                // run slightly short of em, so the cumulative m_advance lags the
+                // actual on-screen draw position.  It counts the current char as
+                // avg_char_advance; for a multi-em glyph we add the excess so the
+                // item's true draw extent is reflected.  inline_box_extra already
+                // carries the excess for inline boxes (added when the box was seen).
+                int self_multiem_extra = (!is_object_char && is_multiem_glyph)
+                                       ? (adv_delta - avg_char_advance) : 0;
+                int char_count_adv = (i - pos + 1) * avg_char_advance + avg_char_advance / 2
+                                   + inline_box_extra + self_multiem_extra;
+                // Apply the draw-position safety check (condition 2) for CJK chars
+                // AND for inline boxes / multi-em glyphs.  Previously it was
+                // CJK-only, so a non-CJK multi-em item (em-dash composite, ruby
+                // box) following a column-full run of CJK could be placed even
+                // though its 2em extent overflows clip.bottom — drawing past the
+                // column end and getting clipped ("見きれ").  Latin word chars
+                // (adv_delta ≈ em/3, not multi-em) stay excluded so Latin words
+                // aren't broken prematurely.
+                bool apply_draw_pos_check = is_cjk_char || is_object_char || is_multiem_glyph;
                 if ( y + fmt->m_advance[i]-w0 + i_extra >= maxHeight + spaceReduceWidth
-                        || (is_cjk_char && y + char_count_adv > maxHeight + spaceReduceWidth) ) {
+                        || (apply_draw_pos_check && y + char_count_adv > maxHeight + spaceReduceWidth) ) {
                     // ぶら下がり (行末句読点ぶら下がり): if the overflowing character is a
                     // sentence-end punctuation that must not start a new column (行頭禁則),
                     // include it in the current column and stop here.  The glyph will draw
