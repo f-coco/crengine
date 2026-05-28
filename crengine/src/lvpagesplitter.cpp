@@ -53,6 +53,7 @@ LVRendPageContext::LVRendPageContext(LVRendPageList * pageList, int pageHeight, 
     , renderedFinalBlocks(0), lastPercent(-1), page_list(pageList), page_h(pageHeight)
     , vert_split_page_h(0)
     , doc_font_size(docFontSize), gather_lines(gatherLines), current_flow(0), max_flow(0), current_flow_empty(false)
+    , current_writing_mode(0), first_writing_mode(-1), has_mixed_writing_modes(false)
     , footNotes(64), curr_note(NULL)
 {
     if ( callback ) {
@@ -189,6 +190,7 @@ void LVRendPageContext::AddLine( int starty, int endy, int flags )
     if ( curr_note!=NULL )
         flags |= RN_SPLIT_FOOT_NOTE;
     LVRendLineInfo * line = new LVRendLineInfo(starty, endy, flags, current_flow);
+    line->writing_mode = (lUInt8)current_writing_mode;
     lines.add( line );
     current_flow_empty = false;
     if ( curr_note != NULL ) {
@@ -824,16 +826,30 @@ public:
     int cur_page_nb_footnotes_lines_rtl;
     int cur_page_flow;
     int prev_page_flow;
+    // FORK: per-page mixed writing mode. When mixed is true, page_height is set
+    // per page from the page's first line's writing mode (vertical pages use
+    // stride_vertical = page_width, horizontal pages use stride_horizontal =
+    // page_h). When false, page_height stays the single value passed in and the
+    // behaviour is identical to upstream.
+    bool mixed;
+    int stride_vertical;
+    int stride_horizontal;
+    int cur_page_writing_mode;
 
     LVArray<LVPageFootNoteInfo> cur_page_footnotes;
     LVArray<LVFootNote *> cur_page_seen_footnotes; // footnotes already on this page, to avoid duplicates
     LVArray<LVFootNote *> delayed_footnotes; // footnotes to be displayed on a next page
 
-    PageSplitState2(LVRendPageList * pl, LVPtrVector<LVRendLineInfo> & ls, int pageHeight, int docFontSize)
+    PageSplitState2(LVRendPageList * pl, LVPtrVector<LVRendLineInfo> & ls, int pageHeight, int docFontSize,
+                    bool mixedWritingModes=false, int strideVertical=0, int strideHorizontal=0)
         : page_list(pl) // output
         , lines(ls)     // input
         , page_height(pageHeight) // parameters
         , doc_font_size(docFontSize)
+        , mixed(mixedWritingModes)
+        , stride_vertical(strideVertical)
+        , stride_horizontal(strideHorizontal)
+        , cur_page_writing_mode(0)
     {
         footnote_margin = FOOTNOTE_MARGIN_REM * doc_font_size;
         nb_lines = lines.length();
@@ -852,7 +868,13 @@ public:
         cur_page_nb_footnotes_lines = 0;
         cur_page_nb_footnotes_lines_rtl = 0;
         cur_page_flow = -1;
+        cur_page_writing_mode = -1;
         cur_page_seen_footnotes.reset();
+    }
+
+    // FORK: page-split stride for a writing mode (mixed documents only).
+    inline int strideForMode( int wm ) {
+        return css_wm_is_vertical(wm) ? stride_vertical : stride_horizontal;
     }
 
     inline void accountLine(bool is_rtl=false) {
@@ -909,6 +931,11 @@ public:
             page->flow = cur_page_flow < 0 ? prev_page_flow : cur_page_flow;
             prev_page_flow = page->flow;
 
+            // FORK: record the page's writing mode (mixed documents) so draw and
+            // coordinate conversion can dispatch per page.
+            if ( cur_page_writing_mode >= 0 )
+                page->writing_mode = (lUInt8)cur_page_writing_mode;
+
             // Add footnotes
 	    if ( cur_page_footnotes.length() > 0 ) {
 		page->footnotes.add( cur_page_footnotes );
@@ -935,6 +962,14 @@ public:
         bool push_delayed_footnotes = false; // done only in one specific case below
         int start_if_new_page = -1;
         int orig_start = start; // to not ignore footnotes on lines discarded at start
+        // FORK: in a mixed-writing-mode document, set the page-split stride from
+        // the writing mode of the lines being added (each addLinesToPage call
+        // carries lines of a single mode, since the layout forces page breaks at
+        // mode boundaries).  Done before the fit check below so it uses the right
+        // stride.  Pure single-mode documents skip this entirely.
+        if ( mixed && start < nb_lines ) {
+            page_height = strideForMode( lines[start]->writing_mode );
+        }
         for ( int i=start; i <= end; i++ ) {
             LVRendLineInfo * line = lines[i];
             if ( start_if_new_page < 0 && !(line->flags & RN_SPLIT_DISCARD_AT_START) ) {
@@ -1017,6 +1052,8 @@ public:
                 // bug in lvrend.cpp non-linear-flow/sequence handling.)
                 cur_page_flow = line->flow;
             }
+            if ( cur_page_writing_mode < 0 ) // FORK: page mode from its first line
+                cur_page_writing_mode = line->writing_mode;
             int line_bottom = line->getEnd();
             if ( line_bottom <= getCurPageMaxBottom() ) {
                 // This line fits on the current page: just add it
@@ -1337,8 +1374,16 @@ void LVRendPageContext::split()
     #endif
 
 #ifndef USE_LEGACY_PAGESPLITTER
-    PageSplitState2 s(page_list, lines, split_page_h, doc_font_size);
+    // FORK: for mixed writing-mode documents, give the splitter both strides so
+    // it can pick per page (vertical pages = page_width, horizontal = page_h).
+    // stride_vertical falls back to split_page_h when vert_split_page_h is unset
+    // (e.g. a horizontal-primary document that contains a vertical fragment).
+    PageSplitState2 s(page_list, lines, split_page_h, doc_font_size,
+                      has_mixed_writing_modes,
+                      vert_split_page_h > 0 ? vert_split_page_h : split_page_h,
+                      page_h);
     s.splitToPages();
+    page_list->setHasMixedWritingModes( has_mixed_writing_modes );
 
 #else
     PageSplitState s(page_list, split_page_h, doc_font_size);
@@ -1420,6 +1465,7 @@ bool LVRendPageList::deserialize( SerialBuf & buf )
     buf >> len;
     clear();
     reserve(len);
+    int first_wm = -1; // FORK: detect mixed writing modes from per-page modes
     for (lUInt32 i = 0; i < len; i++) {
         LVRendPageInfo * item = new LVRendPageInfo();
         item->deserialize( buf );
@@ -1427,6 +1473,10 @@ bool LVRendPageList::deserialize( SerialBuf & buf )
         add( item );
         if (item->flow > 0)
             has_nonlinear_flows = true;
+        if ( first_wm < 0 )
+            first_wm = item->writing_mode;
+        else if ( item->writing_mode != first_wm )
+            has_mixed_writing_modes = true;
     }
     if ( !buf.checkMagic( pagelist_magic ) )
         return false;
@@ -1442,6 +1492,7 @@ bool LVRendPageInfo::serialize( SerialBuf & buf )
     buf << (lUInt16)height; /// height of page, does not include footnotes
     buf << (lUInt8) flags;  /// RN_PAGE_*
     buf << (lUInt16)flow;   /// flow the page belongs to
+    buf << (lUInt8) writing_mode; /// FORK: per-page writing mode
     lUInt16 len = footnotes.length();
     buf << len;
     for ( int i=0; i<len; i++ ) {
@@ -1459,13 +1510,15 @@ bool LVRendPageInfo::deserialize( SerialBuf & buf )
     lUInt16 n2;
     lUInt8 n3;
     lUInt16 n4;
+    lUInt8 n5;
 
-    buf >> n1 >> n2 >> n3 >> n4; /// start of page
+    buf >> n1 >> n2 >> n3 >> n4 >> n5; /// start of page
 
     start = n1;
     height = n2;
     flags = n3;
     flow = n4;
+    writing_mode = n5;
 
     lUInt16 len;
     buf >> len;

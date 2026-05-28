@@ -220,12 +220,13 @@ public:
     lInt8 flags;   /// RN_PAGE_*
     CompactArray<LVPageFootNoteInfo, 1, 4> footnotes; /// footnote fragment list for page
     lUInt16 flow;
+    lUInt8 writing_mode; /// FORK: css_writing_mode_t of this page's content (per-page mixed writing mode)
     LVRendPageInfo(int pageStart, lUInt16 pageHeight, int pageIndex)
-    : start(pageStart), index(pageIndex), height(pageHeight), flags(RN_PAGE_TYPE_NORMAL), flow(0) {}
+    : start(pageStart), index(pageIndex), height(pageHeight), flags(RN_PAGE_TYPE_NORMAL), flow(0), writing_mode(0) {}
     LVRendPageInfo(lUInt16 coverHeight)
-    : start(0), index(0), height(coverHeight), flags(RN_PAGE_TYPE_COVER), flow(0) {}
-    LVRendPageInfo() 
-    : start(0), index(0), height(0), flags(RN_PAGE_TYPE_NORMAL), flow(0) {}
+    : start(0), index(0), height(coverHeight), flags(RN_PAGE_TYPE_COVER), flow(0), writing_mode(0) {}
+    LVRendPageInfo()
+    : start(0), index(0), height(0), flags(RN_PAGE_TYPE_NORMAL), flow(0), writing_mode(0) {}
     bool serialize( SerialBuf & buf );
     bool deserialize( SerialBuf & buf );
 };
@@ -233,11 +234,14 @@ public:
 class LVRendPageList : public LVPtrVector<LVRendPageInfo>
 {
     bool has_nonlinear_flows;
+    bool has_mixed_writing_modes; // FORK: pages have differing writing modes
 public:
-    LVRendPageList() : has_nonlinear_flows(false) {}
+    LVRendPageList() : has_nonlinear_flows(false), has_mixed_writing_modes(false) {}
     int FindNearestPage( int y, int direction );
     void setHasNonLinearFlows( bool hasnonlinearflows ) { has_nonlinear_flows = hasnonlinearflows; }
     bool hasNonLinearFlows() { return has_nonlinear_flows; }
+    void setHasMixedWritingModes( bool v ) { has_mixed_writing_modes = v; }
+    bool hasMixedWritingModes() { return has_mixed_writing_modes; }
     bool serialize( SerialBuf & buf );
     bool deserialize( SerialBuf & buf );
     void replacePages( int old_y, int old_h, LVRendPageList * pages, int next_pages_shift_y );
@@ -261,6 +265,7 @@ class LVRendLineInfo {
 public:
     lUInt16 flags;          // 2 bytes
     lUInt16 flow;           // 2 bytes (should be enough)
+    lUInt8 writing_mode;    // FORK: css_writing_mode_t of the content that produced this line
     int getSplitBefore() const { return (flags>>RN_SPLIT_BEFORE)&7; }
     int getSplitAfter() const { return (flags>>RN_SPLIT_AFTER)&7; }
 /*
@@ -289,13 +294,13 @@ public:
     inline int getHeight() const { return height; }
     inline lUInt16 getFlags() const { return flags; }
 
-    LVRendLineInfo() : links(NULL), start(-1), height(0), flags(0), flow(0) { }
+    LVRendLineInfo() : links(NULL), start(-1), height(0), flags(0), flow(0), writing_mode(0) { }
     LVRendLineInfo( int line_start, int line_end, lUInt16 line_flags )
-    : links(NULL), start(line_start), height(line_end-line_start), flags(line_flags), flow(0)
+    : links(NULL), start(line_start), height(line_end-line_start), flags(line_flags), flow(0), writing_mode(0)
     {
     }
     LVRendLineInfo( int line_start, int line_end, lUInt16 line_flags, int flow )
-    : links(NULL), start(line_start), height(line_end-line_start), flags(line_flags), flow(flow)
+    : links(NULL), start(line_start), height(line_end-line_start), flags(line_flags), flow(flow), writing_mode(0)
     {
     }
     LVFootNoteList * getLinks() { return links; }
@@ -420,6 +425,15 @@ class LVRendPageContext
     int max_flow;
     // to know if current flow got some lines
     bool current_flow_empty;
+    // FORK: per-page mixed writing-mode support.
+    // current_writing_mode is stamped onto every AddLine()d line; the layout
+    // (FlowState) updates it when it switches mode for a DocFragment.  When two
+    // different modes are ever seen, has_mixed_writing_modes is set, which makes
+    // the page splitter pick the stride (page_width vs page_h) per page.  Pure
+    // single-mode documents never set the flag, so they take the unchanged path.
+    int current_writing_mode;
+    int first_writing_mode;       // baseline mode (-1 until first set)
+    bool has_mixed_writing_modes;
 
     LVHashTable<lString32, LVFootNoteRef> footNotes;
 
@@ -579,6 +593,18 @@ public:
     int  getVerticalSplitPageHeight() { return vert_split_page_h; }
     /// effective page-split stride: vertical override if set, else page_h
     int  getEffectivePageHeight() { return vert_split_page_h > 0 ? vert_split_page_h : page_h; }
+
+    /// FORK (per-page mixed writing mode): the layout sets the writing mode of
+    /// the content currently being added; AddLine() stamps it onto each line.
+    /// Switching to a second distinct mode flags the document as mixed.
+    void setCurrentWritingMode( int wm ) {
+        current_writing_mode = wm;
+        if ( first_writing_mode < 0 )
+            first_writing_mode = wm; // baseline = document primary mode
+        else if ( wm != first_writing_mode )
+            has_mixed_writing_modes = true;
+    }
+    bool hasMixedWritingModes() { return has_mixed_writing_modes; }
 
     /// returns document font size
     int getDocFontSize() { return doc_font_size; }

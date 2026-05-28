@@ -5879,6 +5879,11 @@ public:
             if ( (css_wm_is_vertical(writing_mode)) && page_width > 0 ) {
                 context.setVerticalSplitPageHeight( page_width );
             }
+            // FORK (mixed writing modes): establish the document's primary mode
+            // as the page context baseline, so lines added before any
+            // per-fragment switch are tagged correctly and a later switch to a
+            // different mode flags the document as mixed.
+            context.setCurrentWritingMode( writing_mode );
             usable_overflow_x_min = x_min - usable_left_overflow;
             usable_overflow_x_max = x_max + usable_right_overflow;
         }
@@ -5930,6 +5935,29 @@ public:
     }
     bool isVertical() {
         return css_wm_is_vertical(writing_mode);
+    }
+    int getWritingMode() { return writing_mode; }
+    // FORK (mixed writing modes): switch the flow's writing mode for a
+    // DocFragment subtree whose mode differs from the document's primary mode
+    // (e.g. a horizontal author-bio fragment inside a vertical book).  Returns
+    // the previous mode (so the caller can restore it after the subtree).
+    // Vertical advances c_x and c_y in lockstep; horizontal advances only c_y.
+    // Aligning both to their max at each switch keeps the page-flow position
+    // (flowPos() = c_x for vertical, c_y for horizontal) monotonically
+    // increasing across the axis change, so the page splitter never sees a
+    // backward jump.  Also makes sure the vertical split stride (page_width) is
+    // registered, and tells the page context the current mode so it can stamp
+    // each line and flag the document as mixed.
+    int switchWritingMode(int new_wm) {
+        int old_wm = writing_mode;
+        int sync = c_x > c_y ? c_x : c_y;
+        c_x = sync;
+        c_y = sync;
+        writing_mode = new_wm;
+        if ( css_wm_is_vertical(new_wm) && page_width > 0 )
+            context.setVerticalSplitPageHeight( page_width );
+        context.setCurrentWritingMode( new_wm );
+        return old_wm;
     }
     /// Get the flow advance: c_x for vertical (horizontal progression), c_y for horizontal (vertical progression)
     int getCurrentFlowAdvance() {
@@ -8448,6 +8476,25 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
         break_before = RN_SPLIT_ALWAYS;
     }
 
+    // === FORK (mixed writing modes) =========================================
+    // If this block carries an explicit writing-mode that differs from the
+    // flow's current mode (e.g. a horizontal-tb author-bio / colophon / ad
+    // DocFragment inside an otherwise vertical-rl book), switch the flow to
+    // this block's mode for its whole subtree and force a page break before
+    // and after it.  This keeps each PAGE single-mode (the per-page assumption:
+    // writing-mode varies per DocFragment, never within a page), so the page
+    // splitter and the draw/coordinate code can dispatch per page.  The flow is
+    // restored by the parent's child loop after this call returns.
+    // crengine stores css_wm_inherit (0) for inheriting elements, so this only
+    // fires on the few elements that explicitly set writing-mode.
+    if ( (m == erm_block || m == erm_final)
+            && style->writing_mode != css_wm_inherit
+            && css_wm_is_vertical(style->writing_mode) != flow->isVertical() ) {
+        flow->switchWritingMode( style->writing_mode );
+        break_before = RN_SPLIT_ALWAYS;
+        break_after = RN_SPLIT_ALWAYS;
+    }
+
     if ( no_margin_collapse ) {
         // Push any earlier margin so it does not get collapsed with this one
         flow->pushVerticalMargin();
@@ -8790,7 +8837,13 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
                         if ( CssPageBreak2Flags( child_style->page_break_before ) == RN_SPLIT_ALWAYS )
                             child_clear = css_c_both;
                         flow->clearFloats( child_clear );
+                        // FORK (mixed writing modes): a child DocFragment may switch the
+                        // flow's writing mode for its subtree; remember the mode before and
+                        // restore it after so following siblings continue in our mode.
+                        int fork_wm_before = flow->getWritingMode();
                         renderBlockElementEnhanced( flow, child, padding_left, width - padding_left - padding_right, flags );
+                        if ( flow->getWritingMode() != fork_wm_before )
+                            flow->switchWritingMode( fork_wm_before );
                         // Vertical margins collapsing is mostly ensured in flow->pushVerticalMargin()
                         //
                         // Various notes about it:
