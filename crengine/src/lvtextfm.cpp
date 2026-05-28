@@ -6518,12 +6518,16 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
             // todo: this should better be handled as done for top/bottom border below,
             // with a flag and looking at parent nodes (and no need to pass a bgcl
             // to AddSourceLine()).
-            // In vertical-rl mode coordinates are swapped: lastWordStart/End are screen-Y
-            // values (character slot in column), line_x/frmline->height give the column
-            // screen-X extent.  fillWordBgRect dispatches to the correct geometry.
+            // In vertical-rl mode coordinates are swapped: line_x/frmline->height give
+            // the column screen-X extent.  wstart/wend are always computed as
+            // (x + frmline->x + word->x ...) — correct for the horizontal screen-X, but
+            // in vertical mode the word's screen-Y is (y + frmline->x + word->x), matching
+            // glyph placement.  The swapped column term x is already encoded in line_x, so
+            // it must be removed from the screen-Y here (otherwise each successive column
+            // shifts the background down, producing a descending staircase).
             auto fillWordBgRect = [&](int wstart, int wend, lUInt32 color) {
                 if (is_vertical)
-                    buf->FillRect(line_x - (int)frmline->height, y + wstart, line_x, y + wend, color);
+                    buf->FillRect(line_x - (int)frmline->height, y + wstart - x, line_x, y + wend - x, color);
                 else
                     buf->FillRect(wstart, y + frmline->y, wend, y + frmline->y + frmline->height, color);
             };
