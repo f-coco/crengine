@@ -73,7 +73,7 @@ bool isUniformVerticalIdeograph(lChar32 c)
 // LFNT_HINT_VERTICAL_MARK *before* consulting JLReqVertClass.
 JLReqVertClass getJLReqVertClass(lChar32 c)
 {
-    // --- 開き括弧 (class [1] in jfm-ujisv.lua) ---
+    // --- Opening brackets (class [1] in jfm-ujisv.lua) ---
     switch (c) {
         case 0x2018: // ‘
         case 0x201C: // “
@@ -95,7 +95,7 @@ JLReqVertClass getJLReqVertClass(lChar32 c)
             break;
     }
 
-    // --- 閉じ括弧 + 読点 (class [2]) ---
+    // --- Closing brackets + ideographic comma (class [2]) ---
     switch (c) {
         case 0x2019: // ’
         case 0x201D: // ”
@@ -119,7 +119,7 @@ JLReqVertClass getJLReqVertClass(lChar32 c)
             break;
     }
 
-    // --- 中点 (class [3]) ---
+    // --- Middle dot (class [3]) ---
     switch (c) {
         case 0x30FB: // ・
         case 0xFF1A: // ：
@@ -130,11 +130,11 @@ JLReqVertClass getJLReqVertClass(lChar32 c)
             break;
     }
 
-    // --- 句点 (class [4]) ---
+    // --- Period / full stop (class [4]) ---
     if (c == 0x3002 /* 。 */ || c == 0xFF0E /* ． */)
         return JLREQ_VERT_PERIOD;
 
-    // --- 分離禁止文字 (class [5] in jfm-ujisv — em dashes and leaders) ---
+    // --- Inseparable characters (class [5] in jfm-ujisv — em dashes and leaders) ---
     switch (c) {
         case 0x2014: // —
         case 0x2015: // ―
@@ -148,7 +148,7 @@ JLReqVertClass getJLReqVertClass(lChar32 c)
             break;
     }
 
-    // --- 感嘆符・疑問符 (class [6]) ---
+    // --- Exclamation / question marks (class [6]) ---
     switch (c) {
         case 0xFF01: // ！
         case 0xFF1F: // ？
@@ -161,11 +161,11 @@ JLReqVertClass getJLReqVertClass(lChar32 c)
             break;
     }
 
-    // --- 半角カナ (class [7]) ---
+    // --- Halfwidth katakana (class [7]) ---
     if (c >= 0xFF61 && c <= 0xFF9F)
         return JLREQ_VERT_HALF_KANA;
 
-    // --- 縦書き踊り字 (class [200]) ---
+    // --- Vertical iteration marks (class [200]) ---
     // jfm-ujisv: t[200] = copy(t[0]) with width = 2.0; chars = {'〱', '〲'}.
     // These vertical kana repeat marks occupy two column slots and have
     // a 2em-tall glyph designed by the font.
@@ -229,7 +229,7 @@ JLReqVertLayout getJLReqVertLayout(JLReqVertClass cls)
             out.align        = JLREQ_ALIGN_LEFT;
             break;
         case JLREQ_VERT_HALF_KANA:
-            // 半角カタカナ — half-em slot, glyph at slot top
+            // halfwidth katakana — half-em slot, glyph at slot top
             out.width_halves = 1;
             out.align        = JLREQ_ALIGN_LEFT;
             break;
@@ -255,7 +255,7 @@ int getJLReqVertSlotWidth(lChar32 c, int em_px, int natural_advance_px)
     if (cls == JLREQ_VERT_OTHER)
         return natural_advance_px;        // not in jfm-ujisv → font's natural
     // Multi-em composite glyph: when +vrt2 substitutes a char with a
-    // composite (e.g. Hiragino's gid8857 "二倍ダーシ" for U+2014, with
+    // composite (e.g. Hiragino's gid8857 nibu-dashi / double-em dash for U+2014, with
     // vertAdvance == 2em), the font's natural_advance is what positions
     // the next char so consecutive composites chain end-to-end.  Force-
     // overriding to JFM-class em width would mangle this: subsequent
@@ -290,7 +290,7 @@ lChar32 getVertPresentationForm(lChar32 c)
     // LuaTeX-ja nullifies vform entries that the font's `vert`/`vrt2` feature
     // already handles (ltj-jfont.lua:1011-1014 `if w==i then vform[j]=k` and
     // `vform[j]=nil` paths), so for fonts whose `vrt2` substitutes — / ‥ / …
-    // with multi-em composite glyphs (Hiragino's gid8857 二倍ダーシ, etc.),
+    // with multi-em composite glyphs (Hiragino's gid8857 nibu-dashi / double-em dash, etc.),
     // LuaTeX-ja does NOT substitute via vform first.  We don't replicate the
     // dynamic per-font nullification logic; instead we simply skip these chars
     // unconditionally so the font's `vrt2` feature can produce composites.

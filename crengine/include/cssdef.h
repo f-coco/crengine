@@ -376,14 +376,14 @@ enum css_text_combine_upright_t {
     css_tcu_digits,     // combine digit runs
 };
 
-/// text-emphasis-style property values (圏点/傍点)
+/// text-emphasis-style property values (kenten/bouten emphasis marks)
 enum css_text_emphasis_style_t {
     css_tes_none = 0,      // none (default)
     css_tes_filled_dot,    // filled dot   ●
     css_tes_open_dot,      // open dot     ○
     css_tes_filled_circle, // filled circle (alias for dot in CSS spec)
     css_tes_open_circle,   // open circle
-    css_tes_filled_sesame, // filled sesame ﹅ (traditional Japanese 傍点)
+    css_tes_filled_sesame, // filled sesame ﹅ (traditional Japanese bouten)
     css_tes_open_sesame,   // open sesame   ﹆
     css_tes_filled_dc,     // filled double-circle ◉
     css_tes_open_dc,       // open double-circle ◎

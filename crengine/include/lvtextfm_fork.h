@@ -84,7 +84,7 @@ VertRubyInlineBoxMetrics computeVertRubyInlineBoxMetrics(
 // image lines use the image physical width.
 void applyVerticalFrmlineDimensions(LVFormatter * fmt, formatted_line_t * frmline);
 
-// N:N (mono-ruby / 対応ルビ) and N:M (jukugo-ruby) annotation centering
+// N:N (mono-ruby) and N:M (jukugo-ruby) annotation centering
 // for vertical ruby inner cells (defined in lvtextfm_vert.cpp).  Per-char
 // distribution applies when the source fragment lives inside <rt>/<rtc>/<rp>
 // (verified via DOM ancestor walk).  N == M produces JLReq mono-ruby
@@ -114,7 +114,7 @@ void applyVerticalLatinPostDraw(
     int _adv, int word_width, VerticalDrawState & state,
     const lvRect & clip, int y);
 
-// Draw vertical-mode emphasis marks (圏点 / 傍点 — JLReq §3.3.10).  In
+// Draw vertical-mode emphasis marks (kenten / bouten — JLReq §3.3.10).  In
 // vertical-rl the marks sit in the inter-column space to the right of each
 // char, one per character in the word.
 void drawVerticalEmphasisMarks(

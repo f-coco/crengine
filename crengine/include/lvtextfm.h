@@ -104,7 +104,7 @@ enum ltext_extra_t {
     LTEXT_EXTRA_CSS_HIDDEN = 1,         // visibility: hidden
     LTEXT_EXTRA_CSS_LINE_BREAK,         // line-break: anywhere, or loose/normal/strict (for lang=ja/zh)
     LTEXT_EXTRA_CSS_WORD_BREAK,         // word-break: break-all or keep-all
-    LTEXT_EXTRA_CSS_TEXT_EMPHASIS,      // text-emphasis-style: 圏点/傍点 (value = css_text_emphasis_style_t)
+    LTEXT_EXTRA_CSS_TEXT_EMPHASIS,      // text-emphasis-style: kenten/bouten emphasis marks (value = css_text_emphasis_style_t)
 };
 
 // Text color reserved values

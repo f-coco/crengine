@@ -3122,7 +3122,7 @@ static const char * css_wm_names[] =
     NULL
 };
 
-// text-emphasis shape keyword names (圏点/傍点)
+// text-emphasis shape keyword names (kenten/bouten emphasis marks)
 // Ordered to match css_text_emphasis_style_t enum
 static const char * css_tes_shape_names[] = {
     "dot",           // maps to css_tes_filled_dot (filled is default)

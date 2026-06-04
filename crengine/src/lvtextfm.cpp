@@ -7025,7 +7025,7 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             applyVerticalLatinPostDraw(_adv, (int)word->width, vstate, clip, y);
                         }
                     }
-                    // Fork: extracted vertical-mode emphasis marks (圏点/傍点).
+                    // Fork: extracted vertical-mode emphasis marks (kenten/bouten).
                     if ( is_vertical && !vert_skip_draw ) {
                         drawVerticalEmphasisMarks(buf, frmline, srcline, word, font,
                             y, line_x, clip, vstate);

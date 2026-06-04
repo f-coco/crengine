@@ -1871,7 +1871,7 @@ public:
             // (ltj-jfont.lua:334-339, 466-467): when the user hasn't
             // overridden the feature, LuaTeX-ja prefers +vrt2 over +vert.
             // The key benefit is composite-glyph substitution like
-            // Hiragino's gid8857 "二倍ダーシ" for U+2014 (vertAdvance =
+            // Hiragino's gid8857 nibu-dashi / double-em dash for U+2014 (vertAdvance =
             // 2em).  Phase 3 (getJLReqVertSlotWidth) preserves the
             // composite's natural advance when it exceeds 1.5em, so
             // consecutive composites are positioned at 2em intervals and
@@ -4586,7 +4586,7 @@ public:
                                 // whose in-slot position IS by design fall through to the
                                 // vmtx-based path: 、。 anchor at the bottom-right of the
                                 // virtual body (hanging close to the preceding character,
-                                // JLReq 行末半角詰め), brackets follow corner conventions.
+                                // JLReq end-of-line half-em compaction), brackets follow corner conventions.
                                 // HarfBuzz TTB writes x_offset = −vertOriginX and y_offset
                                 // = −vertOriginY into glyph_pos[] (compensation for an
                                 // LTR-style pen) — we place the pen at the vertical origin

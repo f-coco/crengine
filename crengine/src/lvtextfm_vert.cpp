@@ -82,7 +82,7 @@ void ltext_get_vert_ib_layout_gap(int *total_out, int *max_out) {
 // Vertical-rl plain-character overlap counters.
 // Fires when a CJK/plain character's y0 is less than the previous character's
 // y0 + effective_width (= its slot end), meaning two characters overlap in the
-// column (height) direction.  This is the "文字が被る" / character-overlap bug.
+// column (height) direction.  This is the character-overlap bug.
 // Reset via ltext_reset_vert_char_overlap(); read via ltext_get_vert_char_overlap().
 int ltext_vert_char_overlap_count = 0;
 int ltext_vert_char_overlap_max_px = 0;
@@ -386,10 +386,11 @@ void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * f
     #endif
 }
 
-// 行頭禁則: characters that JLReq prohibits at the start of a line / column.
+// Line-start kinsoku: characters that JLReq prohibits at the start of a line / column.
 // In addition to cjkt_closing_bracket (handled separately), LuaTeX-ja's
-// kinsoku_table prohibits: 長音記号 (ー), 漢字繰り返し記号 (々々), 仮名繰り返し記号
-// (ヽヾゝゞ), iteration mark (〻), and small kana (ぁぃぅぇぉっゃゅょゎ etc.).
+// kinsoku_table prohibits: prolonged sound mark (ー), kanji iteration mark (々々),
+// kana iteration marks (ヽヾゝゞ), vertical iteration mark (〻), and small kana
+// (ぁぃぅぇぉっゃゅょゎ etc.).
 // These are pulled back into the previous column when they would otherwise
 // start a new column.
 static inline bool isVertLineStartProhibitedExt(lChar32 ch) {
@@ -479,12 +480,12 @@ bool isWordAllVertRotationChars(const lChar32 * text, int len) {
 }
 
 // Returns true if 'ch' is a Japanese/CJK sentence-end character that must not
-// start a new column (行頭禁則) and should hang at the bottom of the current
-// column (ぶら下がり) instead.
+// start a new column (line-start kinsoku) and should hang at the bottom of the
+// current column (burasagari / hanging punctuation) instead.
 static inline bool isVerticalHangingChar(lChar32 ch) {
     switch (ch) {
-        case 0x3001: // 、IDEOGRAPHIC COMMA (読点)
-        case 0x3002: // 。IDEOGRAPHIC FULL STOP (句点)
+        case 0x3001: // 、IDEOGRAPHIC COMMA (touten)
+        case 0x3002: // 。IDEOGRAPHIC FULL STOP (kuten)
         case 0x30FB: // ・KATAKANA MIDDLE DOT
         case 0xFF01: // ！FULLWIDTH EXCLAMATION MARK
         case 0xFF0C: // ，FULLWIDTH COMMA
@@ -758,7 +759,7 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                 bool is_cjk_char = (fmt->m_flags[i] & LCHAR_IS_CJK) != 0;
                 bool is_object_char = (fmt->m_flags[i] & LCHAR_IS_OBJECT) != 0;
                 // This char's own advance (delta from the previous char).  For
-                // multi-em glyphs (em-dash composite via +vrt2, 2em "二倍ダーシ";
+                // multi-em glyphs (em-dash composite via +vrt2, 2em nibu-dashi / double-em dash;
                 // kana repeat marks 〱〲; vform leaders) this exceeds avg_char_advance.
                 int adv_delta = fmt->m_advance[i] - (i > 0 ? fmt->m_advance[i-1] : 0);
                 bool is_multiem_glyph = adv_delta > avg_char_advance + avg_char_advance/4;
@@ -778,14 +779,14 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                 // CJK-only, so a non-CJK multi-em item (em-dash composite, ruby
                 // box) following a column-full run of CJK could be placed even
                 // though its 2em extent overflows clip.bottom — drawing past the
-                // column end and getting clipped ("見きれ").  Latin word chars
+                // column end and getting clipped (mikire / visible cutoff).  Latin word chars
                 // (adv_delta ≈ em/3, not multi-em) stay excluded so Latin words
                 // aren't broken prematurely.
                 bool apply_draw_pos_check = is_cjk_char || is_object_char || is_multiem_glyph;
                 if ( y + fmt->m_advance[i]-w0 + i_extra >= maxHeight + spaceReduceWidth
                         || (apply_draw_pos_check && y + char_count_adv > maxHeight + spaceReduceWidth) ) {
-                    // ぶら下がり (行末句読点ぶら下がり): if the overflowing character is a
-                    // sentence-end punctuation that must not start a new column (行頭禁則),
+                    // burasagari / end-of-line punctuation hanging: if the overflowing character is
+                    // a sentence-end punctuation that must not start a new column (line-start kinsoku),
                     // include it in the current column and stop here.  The glyph will draw
                     // at the column bottom with its ink in the upper portion of the em-square
                     // (where +vert places 。/、), so it remains fully visible even though the
@@ -988,8 +989,8 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
             }
             int endp = wrapPos + (lastMandatoryWrap<0 ? 1 : 0);
 
-            // ぶら下げ禁則 (burasage-kinsoku): if the first char of the next column is a
-            // trailing punctuation that cannot start a column (行頭禁則: 。、etc.),
+            // burasage-kinsoku: if the first char of the next column is a
+            // trailing punctuation that cannot start a column (line-start kinsoku: 。、etc.),
             // hang it at the end of the current column rather than pushing it to the next.
             // This is standard Japanese typography: these chars may overflow the column bottom
             // by their compressed width (≤ font_size/2) rather than leaving a gap.
@@ -1015,12 +1016,12 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                     }
                 }
             }
-            // Cascading 追い出し (oidashi) wrap-back: chained 行頭/行末 kinsoku
+            // Cascading oidashi (push-out) wrap-back: chained line-start / line-end kinsoku
             // resolution.  A single wrap-back can leave another prohibited char
             // exposed at the new boundary (e.g. 」」 at column head needs two
             // wrap-backs; 漢「 at column end leaves 「 at next column head, which
             // is then a closing-bracket-like situation if cascaded with another
-            // 行頭禁則 char).  Iterate until both ends are clean or the safety
+            // line-start kinsoku char).  Iterate until both ends are clean or the safety
             // limit is hit — LuaTeX-ja's TeX-based optimizer handles this via
             // paragraph-level badness search; we approximate with a bounded
             // greedy cascade.
@@ -1031,8 +1032,8 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
             int kinsoku_cascade = 5;
             while ( kinsoku_cascade > 0 ) {
                 bool moved = false;
-                // 行頭禁則 wrap-back: chars JLReq prohibits at column start
-                // (closing brackets, 長音 ー, 々, ヽヾゝゞ〻, small kana, etc.).
+                // line-start kinsoku wrap-back: chars JLReq prohibits at column start
+                // (closing brackets, prolonged sound mark ー, 々, ヽヾゝゞ〻, small kana, etc.).
                 if ( lastMandatoryWrap < 0 && endp > pos + 1 && endp < fmt->m_length ) {
                     lChar32 endp_ch = fmt->m_text[endp];
                     if ( getCJKCharType(endp_ch) == cjkt_closing_bracket
@@ -1042,7 +1043,7 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                         moved = true;
                     }
                 }
-                // 行末禁則 wrap-back: 開き括弧 (「（【〔 etc.) must not end a column.
+                // line-end kinsoku wrap-back: opening brackets (「（【〔 etc.) must not end a column.
                 if ( lastMandatoryWrap < 0 && wrapPos > pos ) {
                     if ( getCJKCharType(fmt->m_text[wrapPos]) == cjkt_opening_bracket ) {
                         wrapPos--;
@@ -1321,7 +1322,7 @@ static bool isInsideRubyAnnotation(LVFormatter * fmt, formatted_line_t * frmline
 // =============================================================================
 // applyVerticalNNRubyCenterDistribution
 //
-// Per-char distribution for MONO-RUBY (対応ルビ) annotation cells in
+// Per-char distribution for MONO-RUBY annotation cells in
 // vertical-rl: when the annotation char count equals the base char count
 // (N:N) and the font ratio is 2:1, distribute the annotation chars so each
 // sits centred over its corresponding base char.
@@ -1501,7 +1502,7 @@ void applyVerticalLatinPostDraw(
 // =============================================================================
 // drawVerticalEmphasisMarks
 //
-// Draws 圏点 / 傍点 (text-emphasis marks, JLReq §3.3.10) in vertical-rl
+// Draws kenten / bouten (text-emphasis marks, JLReq §3.3.10) in vertical-rl
 // mode.  Each char in the word gets one mark in the inter-column space
 // to the right of the column (= x_mark = line_x).  CSS text-emphasis-style
 // values are mapped to Unicode characters per the CSS3 Text Decoration spec.
@@ -1638,7 +1639,7 @@ void applyVerticalInlineBoxDraw(
     x0_out = y + node_x + clamp_delta;  // draw_x_rb = y + frmline->x + clamped_ib_x
     // Use actual vertical depth (render_w from letter_spacing) so the next
     // character starts after the ruby group's visual end, preventing
-    // "文字が被る" overlap.  Fall back to o.width if letter_spacing was
+    // character-overlap.  Fall back to o.width if letter_spacing was
     // not set (non-ruby inline boxes, horizontal mode).
     int ib_actual_depth = (srcline->letter_spacing > 0)
         ? (int)srcline->letter_spacing
@@ -1774,7 +1775,7 @@ void applyVerticalWordDraw(
     // shift the glyph leftward inside the column.  Plain-text words ignore
     // it; only inline-box words use word->y to select sub-column position.
     x0_out = line_x - frmline->height;
-    // Centre plain-text chars on the column axis (JLReq 組版).  Skip when
+    // Centre plain-text chars on the column axis (JLReq typesetting).  Skip when
     // the column is inflated by a ruby inline box (frmline->height > strut)
     // — adding (strut-em)/2 would push the glyph into the annotation zone.
     {
@@ -1826,7 +1827,7 @@ void applyVerticalWordDraw(
     // (。、 with TTB < font_size) cannot push the next char past clip.bottom.
     if ( state.vert_min_next_x > clip.bottom - y )
         state.vert_min_next_x = clip.bottom - y;
-    // Character overlap detection in column direction (P14 / "文字が被る").
+    // Character overlap detection in column direction (P14).
     if ( state.vert_prev_plain_y0 >= 0 && y0_out < clip.bottom ) {
         int slot_end_prev = state.vert_prev_plain_y0 + state.vert_prev_effective_width;
         int overlap_px = slot_end_prev - y0_out;

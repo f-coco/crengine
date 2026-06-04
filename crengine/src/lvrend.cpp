@@ -3703,7 +3703,7 @@ void renderFinalBlock( ldomNode * enode, LFormattedText * txform, RenderRectAcce
         if ( style->text_combine_upright != css_tcu_none ) { // tate-chu-yoko
             flags |= LTEXT_IS_TCY;
         }
-        if ( style->text_emphasis_style != css_tes_none ) { // 圏点/傍点
+        if ( style->text_emphasis_style != css_tes_none ) { // kenten/bouten
             flags |= LTEXT_HAS_EXTRA;
         }
 
