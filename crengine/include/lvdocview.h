@@ -629,6 +629,15 @@ public:
     /// drawPageTo, docToWindowPoint, and windowToDocPoint all call this so the
     /// formula lives in exactly one place.
     int vertPageRight( const lvRect & pageRect, int page_content_height ) const;
+    /// Vertical-rl coordinate conversion for SCROLL view mode.
+    /// In SCROLL mode for vertical-rl, _pos is the doc-y anchor at the viewport's
+    /// right edge (the entry point for forward reading); doc-y advances correspond
+    /// to leftward screen-x motion.  Without these the upstream SCROLL branches
+    /// treat doc_y as a vertical scroll offset, producing 90°-rotated highlight
+    /// rects during multi-page selection corner-scroll.
+    /// Both helpers return true on success and rewrite pt in place.
+    bool docToWindowPointScrollVert( lvPoint & pt ) const;
+    bool windowToDocPointScrollVert( lvPoint & pt, bool pullInPageArea ) const;
 #if CR_INTERNAL_PAGE_ORIENTATION==1
     /// sets rotate angle
     void SetRotateAngle( cr_rotate_angle_t angle );

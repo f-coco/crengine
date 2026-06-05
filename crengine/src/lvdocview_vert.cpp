@@ -73,3 +73,39 @@ bool LVDocView::isVerticalText() const {
     }
     return false;
 }
+
+/// Vertical-rl doc → window for SCROLL view mode.
+///   doc.y (column position) → screen.x = page_right − (doc.y − _pos)
+///   doc.x (in-column pos)   → screen.y = doc.x
+/// _pos is the doc-y at the viewport's right edge (entry point for forward
+/// reading), kept in lockstep with corner-scroll's `_gotoPos(currentPos +
+/// screen_w/3)` advances.  Mirrors PAGE-mode docToWindowPoint's vertical-rl
+/// branch but with _pos in place of m_pages[page]->start and a single global
+/// page_right anchor instead of per-page m_pageRects.
+bool LVDocView::docToWindowPointScrollVert( lvPoint & pt ) const {
+    int page_right = m_dx - m_pageMargins.right;
+    int screen_x = page_right - (pt.y - _pos);
+    int screen_y = pt.x;
+    pt.x = screen_x;
+    pt.y = screen_y;
+    return true;
+}
+
+/// Reverse of docToWindowPointScrollVert.  pullInPageArea clamps screen.x to
+/// the visible horizontal band (margin.left … page_right − 1) so taps in the
+/// outer margins still resolve to the nearest in-page column, matching the
+/// upstream SCROLL-mode pullInPageArea behaviour for horizontal text.
+bool LVDocView::windowToDocPointScrollVert( lvPoint & pt, bool pullInPageArea ) const {
+    int page_right = m_dx - m_pageMargins.right;
+    if ( pullInPageArea ) {
+        if ( pt.x < m_pageMargins.left )
+            pt.x = m_pageMargins.left;
+        if ( pt.x >= page_right )
+            pt.x = page_right - 1;
+    }
+    int doc_y = page_right - pt.x + _pos;
+    int doc_x = pt.y;
+    pt.x = doc_x;
+    pt.y = doc_y;
+    return true;
+}

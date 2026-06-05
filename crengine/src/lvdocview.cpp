@@ -2665,6 +2665,9 @@ bool LVDocView::windowToDocPoint(lvPoint & pt, bool pullInPageArea) {
 	pt = rotatePoint( pt, true );
 #endif
 	if (getViewMode() == DVM_SCROLL) {
+		// FORK: vertical-rl uses Y=X-swapped axes in SCROLL mode too.
+		if ( isVerticalText() )
+			return windowToDocPointScrollVert( pt, pullInPageArea );
 		// SCROLL mode
 		if ( pullInPageArea ) {
 			if ( pt.x < m_pageMargins.left )
@@ -2764,6 +2767,9 @@ bool LVDocView::docToWindowPoint(lvPoint & pt, bool isRectBottom, bool fitToPage
     CHECK_RENDER("docToWindowPoint()")
 	// TODO: implement coordinate conversion here
 	if (getViewMode() == DVM_SCROLL) {
+		// FORK: vertical-rl uses Y=X-swapped axes in SCROLL mode too.
+		if ( isVerticalText() )
+			return docToWindowPointScrollVert( pt );
 		// SCROLL mode
 		pt.y -= _pos;
 		pt.x += m_pageMargins.left;
