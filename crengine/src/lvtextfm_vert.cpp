@@ -186,6 +186,24 @@ void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * f
         formatted_word_t * wi = &frmline->words[i];
         if ( is_vert_frmline && !(wi->flags & LTEXT_WORD_IS_INLINE_BOX) ) {
             // Plain / space word: advance vert_layout_min_x past it.
+            // Mirror DRAW's word classification: applyVerticalWordDraw routes
+            // "vertical mark" words (em dash / leaders / ー / 〜 etc. that
+            // are typeset upright in vertical mode) through the plain-CJK
+            // path even when LTEXT_WORD_IS_CJK is not set on the word.  For
+            // LAYOUT-vs-DRAW xkanjiskip / JFM-glue / prev_cjk_class tracking
+            // to stay in sync, treat such words as CJK here too — otherwise
+            // a "PERIOD → em-dash → BODY" sequence inserts 0.25em xkanjiskip
+            // in LAYOUT but 0.5em PERIOD→DASH JFM glue in DRAW, leaving the
+            // following char's word->x ~6 px behind its rendered position
+            // (highlight rect appears above the glyph).
+            bool word_acts_as_cjk = false;
+            if ( (int)wi->src_text_index < fmt->m_pbuffer->srctextlen ) {
+                src_text_fragment_t * sx = &fmt->m_pbuffer->srctext[wi->src_text_index];
+                if ( !(sx->flags & LTEXT_SRC_IS_OBJECT) && sx->t.text && wi->t.len > 0
+                     && isWordAllVertRotationChars(sx->t.text + wi->t.start, (int)wi->t.len) ) {
+                    word_acts_as_cjk = true;
+                }
+            }
             int eff_w = (int)wi->width;
             // Guard: only access t.font when the source fragment is a text
             // fragment (not an image, inline-box pad, or other object type).
@@ -206,7 +224,8 @@ void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * f
                     //
                     // Non-CJK words (Latin, space) use the actual advance so that
                     // vert_layout_min_x matches the draw's vert_min_next_x tracking.
-                    bool is_cjk = (wi->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_FLEXIBLE_WIDTH_CJK)) != 0;
+                    bool is_cjk = ((wi->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_FLEXIBLE_WIDTH_CJK)) != 0)
+                                  || word_acts_as_cjk;  // mirror DRAW's vert-mark routing
                     bool is_half_em_jfm = false;
                     if ( is_cjk && si->t.text && wi->t.len > 0 ) {
                         JLReqVertLayout layout = getJLReqVertLayout(
@@ -222,7 +241,8 @@ void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * f
             // Without this, getRect() for the post-boundary word would return
             // the layout position from m_advance (no xkanjiskip), while Draw
             // renders at +0.25em — causing highlights to be offset.
-            bool wi_is_cjk = (wi->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_FLEXIBLE_WIDTH_CJK)) != 0;
+            bool wi_is_cjk = ((wi->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_FLEXIBLE_WIDTH_CJK)) != 0)
+                             || word_acts_as_cjk;  // mirror DRAW's vert-mark routing
             bool boundary_cjk_non_cjk =
                    (vert_layout_prev_class == +1 && wi_is_cjk)    // non-CJK → CJK
                 || (vert_layout_prev_class == -1 && !wi_is_cjk);  // CJK → non-CJK
@@ -311,10 +331,38 @@ void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * f
                 : (int)word->width;
             if ( RENDER_RECT_HAS_FLAG(node_fmt, BOX_IS_POSITIONNED) ) {
                 if ( is_vert_frmline ) {
-                    // Still advance vert_layout_min_x even if already positioned.
+                    // The box was positioned in a previous pass against an
+                    // earlier vert_layout_min_x.  Re-clamp to the current
+                    // vert_layout_min_x so this branch mirrors what
+                    // applyVerticalInlineBoxDraw does at render time
+                    // (`clamped_ib_x = max(node_x − frmline->x, state)`).
+                    // Without this clamp the next word's wi->x update bases
+                    // on the stale, smaller value and ends up 0.5em (or
+                    // whatever the inter-class glue / xkanjiskip added since
+                    // the original positioning) behind where DRAW will place
+                    // the glyph, producing a highlight rect above the glyph
+                    // — visible on `<CJK><ruby><CJK>` sequences with a JFM
+                    // glue boundary entering the ruby.
                     int clamped_x = node_fmt.getX() - frmline->x;
+                    if ( clamped_x < vert_layout_min_x ) {
+                        clamped_x = vert_layout_min_x;
+                        // Also push the recorded position so getRect() for
+                        // characters inside the box reports the actually-
+                        // drawn column position.
+                        node_fmt.setX( frmline->x + clamped_x );
+                        node_fmt.push();
+                    }
                     int nx = clamped_x + ib_layout_depth;
                     if ( nx > vert_layout_min_x ) vert_layout_min_x = nx;
+                    // Mirror DRAW's applyVerticalInlineBoxDraw: treat the
+                    // inline box as a CJK-ish predecessor for the next word's
+                    // xkanjiskip / glue lookup.  Without this, a SPACE coming
+                    // right after a ruby box does not get the CJK→non-CJK
+                    // 0.25em xkanjiskip in LAYOUT while DRAW does insert it,
+                    // and the following CJK character's word->x drifts 0.25em
+                    // before its rendered column position.
+                    vert_layout_prev_class     = -1;
+                    vert_layout_prev_cjk_class = -1;
                 }
                 continue;
             }
@@ -327,9 +375,16 @@ void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * f
                                    ? vert_layout_min_x : ib_word_x;
                 node_fmt.setX( frmline->x + clamped_ib_x );
                 vert_layout_min_x = clamped_ib_x + ib_layout_depth;
-                // Inline box ends the JFM class chain.
+                // Mirror DRAW's applyVerticalInlineBoxDraw:
+                //   state.vert_prev_cjk_class = -1            (no JFM glue lookup vs box)
+                //   state.vert_prev_was_non_cjk_word = false  (= "prev was CJK-ish")
+                // Treating the box as CJK-ish makes the next non-CJK word
+                // (e.g. a SPACE separating the ruby from the following CJK)
+                // trigger the CJK→non-CJK xkanjiskip the DRAW side inserts,
+                // keeping word->x (the highlight rect base) aligned with the
+                // rendered glyph position.
                 vert_layout_prev_cjk_class = -1;
-                vert_layout_prev_class = 0;
+                vert_layout_prev_class     = -1;
             } else {
                 node_fmt.setX( frmline->x + word->x );
             }

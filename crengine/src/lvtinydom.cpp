@@ -107,7 +107,14 @@ extern const int gDOMVersionCurrent = DOM_VERSION_CURRENT;
 //         has strut = outer col_w; centering (col_w-em)/2 now applied inside
 //         the ruby block, and vert_y_adjust = -annotation_h is line-spacing-
 //         independent, keeping the base char centred at all line spacings.
-#define FORMATTING_VERSION_ID 0x004C
+// 0x004D: alignLineHorizontalVerticalPostPass re-clamps inline boxes whose
+//         node_fmt was set in a previous pass against the current
+//         vert_layout_min_x (mirrors applyVerticalInlineBoxDraw), and treats
+//         vertical-mark words (em-dash / leaders / ー / 〜 etc.) as CJK for
+//         xkanjiskip / JFM-glue tracking (mirrors applyVerticalWordDraw's
+//         vert-mark routing).  Cached word->x for chars after an English-
+//         base ruby box or after an em-dash needs re-computation.
+#define FORMATTING_VERSION_ID 0x004E
 
 #ifndef DOC_DATA_COMPRESSION_LEVEL
 /// data compression level (0=no compression, 1=fast compressions, 3=normal compression)
