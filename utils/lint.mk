@@ -72,7 +72,7 @@ crengine/src/lvdocview.cpp
 crengine/src/lvdrawbuf.cpp
 crengine/src/lvfnt.cpp
 crengine/src/lvfntman.cpp
-crengine/src/lvfntman_vert_slot.cpp
+crengine/src/lvfntman_vert.cpp
 crengine/src/lvimg.cpp
 crengine/src/lvmemman.cpp
 crengine/src/lvopc.cpp
