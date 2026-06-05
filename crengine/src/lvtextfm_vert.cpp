@@ -1778,8 +1778,34 @@ void applyVerticalWordDraw(
         if ( !state.vert_prev_was_non_cjk_word && state.vert_prev_plain_y0 >= 0 ) {
             state.vert_min_next_x += font->getSize() / 4;  // 0.25em
         }
+        // Honour LAYOUT post-pass position (word->x) the same way plain CJK
+        // does: the highlight rect for this Latin word is positioned by
+        // word->x via getRect(), so DRAW must place the glyph at the same
+        // column position to keep them in sync.  state.vert_min_next_x is
+        // kept as a lower bound for ordering.  See the comment in the plain
+        // CJK branch below for the full rationale.
+        int clamped_x = (int)word->x > state.vert_min_next_x
+                        ? (int)word->x : state.vert_min_next_x;
+        {
+            int drift = (int)word->x - clamped_x;
+            if ( drift != 0 ) {
+                ltext_vert_word_x_drift_count++;
+                ltext_vert_word_x_drift_signed_sum += drift;
+                int abs_drift = drift > 0 ? drift : -drift;
+                if ( abs_drift > ltext_vert_word_x_drift_max_abs )
+                    ltext_vert_word_x_drift_max_abs = abs_drift;
+            }
+        }
+        // Synchronise state.vert_min_next_x with where the glyph actually
+        // starts so applyVerticalLatinPostDraw, which adds word->width onto
+        // state.vert_min_next_x after DrawTextString, accumulates from the
+        // correct base.  Without this, a Latin word whose word->x was pushed
+        // forward by LAYOUT (clamped_x > state.vert_min_next_x) leaves the
+        // next word's clamping lower bound short of the Latin block's
+        // visual end.
+        state.vert_min_next_x = clamped_x;
         x0_out = line_x - frmline->height + (frmline->height - font_h) / 2;
-        y0_out = y + frmline->x + state.vert_min_next_x;
+        y0_out = y + frmline->x + clamped_x;
         state.vert_prev_plain_y0 = y0_out;
         if ( y0_out >= clip.bottom )
             vert_skip_draw_out = true;
