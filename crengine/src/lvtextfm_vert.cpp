@@ -92,6 +92,28 @@ void ltext_reset_vert_char_overlap() {
     ltext_vert_char_overlap_max_px = 0;
 }
 
+// Diagnostic: word->x (LAYOUT post-pass, used by getRect for highlight rect)
+// vs state.vert_min_next_x (DRAW tracker) for plain CJK words.  If they
+// disagree the rendered glyph sits at vert_min_next_x while the highlight
+// sbox sits at word->x, so the highlight visibly drifts from the glyph.
+// Signed delta = (int)word->x - vert_min_next_x.  Positive ⇒ highlight is
+// further down the column than the glyph (highlight appears below glyph).
+// Negative ⇒ highlight is above the glyph (rare; would mean LAYOUT didn't
+// keep up with DRAW).
+int ltext_vert_word_x_drift_count   = 0;
+int ltext_vert_word_x_drift_max_abs = 0;
+int ltext_vert_word_x_drift_signed_sum = 0;
+void ltext_reset_vert_word_x_drift() {
+    ltext_vert_word_x_drift_count = 0;
+    ltext_vert_word_x_drift_max_abs = 0;
+    ltext_vert_word_x_drift_signed_sum = 0;
+}
+void ltext_get_vert_word_x_drift(int *count_out, int *max_abs_out, int *signed_sum_out) {
+    *count_out = ltext_vert_word_x_drift_count;
+    *max_abs_out = ltext_vert_word_x_drift_max_abs;
+    *signed_sum_out = ltext_vert_word_x_drift_signed_sum;
+}
+
 void ltext_get_vert_char_overlap(int *count_out, int *max_px_out) {
     *count_out  = ltext_vert_char_overlap_count;
     *max_px_out = ltext_vert_char_overlap_max_px;
@@ -1804,7 +1826,33 @@ void applyVerticalWordDraw(
             state.vert_min_next_x += ((int)font->getSize() * eighths) / 8;
         }
     }
-    int clamped_x = state.vert_min_next_x;
+    // word->x carries the LAYOUT post-pass position (vert_layout_min_x at
+    // word-time, with Phase 5 xkanjiskip + JFM glue + ruby-box clamping
+    // already applied).  getRect() uses word->x to position the highlight
+    // rect, so DRAW must place the glyph at the same column position;
+    // otherwise the highlight visibly drifts from the glyph.
+    //
+    // state.vert_min_next_x is a lower bound — it must clamp the position
+    // for words that follow a wider preceding item (image / multi-em
+    // composite glyph) whose effective advance the LAYOUT side may have
+    // under-counted.  Take the max so both constraints hold simultaneously:
+    // never draw before vert_min_next_x, but always honour LAYOUT's
+    // post-pass position when it's further along.
+    int clamped_x = (int)word->x > state.vert_min_next_x
+                    ? (int)word->x : state.vert_min_next_x;
+    // Diagnostic: capture residual drift after the max() clamp.  Should be
+    // 0 once LAYOUT and DRAW agree.  drift = word->x - clamped_x; positive
+    // would mean clamped_x dropped below word->x (shouldn't happen now).
+    {
+        int drift = (int)word->x - clamped_x;
+        if ( drift != 0 ) {
+            ltext_vert_word_x_drift_count++;
+            ltext_vert_word_x_drift_signed_sum += drift;
+            int abs_drift = drift > 0 ? drift : -drift;
+            if ( abs_drift > ltext_vert_word_x_drift_max_abs )
+                ltext_vert_word_x_drift_max_abs = abs_drift;
+        }
+    }
     y0_out = y + frmline->x + clamped_x;
     // Advance vert_min_next_x.  Skip the font_size clamp for half-em JFM
     // chars: Phase 3 intentionally sets word->width = em/2 for class
