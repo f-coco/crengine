@@ -227,6 +227,15 @@ inline bool lStr_isCJK( lChar32 c, bool ignore_punctuation=false, bool ignore_fu
     //       { 0xE0100,  0xE01EF,  91}, // Variation Selectors Supplement
     //       { 0xF0000,  0xFFFFD,  90}, // Private Use (plane 15)
     //       {0x100000, 0x10FFFD,  90}, // Private Use (plane 16)
+    // Fork-only: Enclosed Alphanumerics (U+2460-24FF) used as full-width
+    // upright glyphs in Japanese vertical text (①②③ etc.).  Without this
+    // they fall into word_is_latin_in_vertical (render+rotate) and the
+    // rotated buffer (width = font_h) overflows the column right edge by
+    // (font_h - em) / 2 px, clipping the glyph on the rightmost column.
+    // See m-tky/koreader-tategumi vertical-rl notes.
+    if ( c >= 0x2460 && c <= 0x24FF ) {
+        return true;
+    }
     if ( c >= 0x2E80 ) {
         if ( c < 0xA000 ) {
             if ( ignore_punctuation ) {
