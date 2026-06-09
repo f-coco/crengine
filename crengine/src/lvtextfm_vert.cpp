@@ -724,7 +724,15 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
             int spaceReduceWidth = 0;
             int cjkReduceWidth = 0;
             int firstInlineBoxPos = -1;
-            int inline_box_extra = 0; // extra column depth from inline boxes beyond avg_char_advance
+            // Faithful column-fill estimate, a running mirror of Draw's
+            // vstate.vert_min_next_x: the rendered column depth of the chars
+            // placed so far on this line.  Replaces the old "every char = one em"
+            // approximation, which over-counted narrow Latin / numeral chars and
+            // half-em JFM punctuation (、。「」・ etc.) and therefore broke mixed
+            // CJK/Latin columns well before the column bottom (issue #17).
+            int col_used_est = 0;        // rendered column depth (px) from pos..i
+            int est_prev_class = 0;      // xkanjiskip tracker: 0 none, +1 non-CJK, -1 CJK
+            int est_prev_cjk_class = -1; // JFM-glue tracker: JFM class of last CJK char, -1 none
 
             // Float handling skipped in vertical mode (Step 1).
             // TODO (Step 2+): implement vertical float positioning if needed.
@@ -767,16 +775,8 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                     if ( fmt->m_charindex[i] == INLINEBOX_CHAR_INDEX ) {
                         if ( firstInlineBoxPos < 0 )
                             firstInlineBoxPos = i;
-                        // A ruby inline box occupies advance = N × avg_char_advance column depth,
-                        // not 1 ×.  Track the excess so char_count_adv does not undercount column
-                        // usage and push body chars past clip.bottom (same class of bug as P11).
-                        // Use letter_spacing as actual vertical depth if set (ruby groups in
-                        // vertical mode store render_w there); otherwise fall back to o.width.
-                        int ibox_adv = (fmt->m_srcs[i]->letter_spacing > 0)
-                                       ? (int)fmt->m_srcs[i]->letter_spacing
-                                       : fmt->m_srcs[i]->o.width;
-                        if ( ibox_adv > avg_char_advance )
-                            inline_box_extra += ibox_adv - avg_char_advance;
+                        // The box's rendered column depth is added to col_used_est
+                        // at the accumulation point below (eff_adv branch).
                     }
                 }
                 if (!seen_non_collapsed_space) {
@@ -789,26 +789,10 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                     // For vertical: images/inline-boxes that are too tall for page_height
                     // are handled by addLineVertical (Step 2).
                 }
-                if ( fmt->m_has_cjk && i > pos && fmt->m_kerning_mode != KERNING_MODE_DISABLED ) {
-                    // CJK/non-CJK boundary spacing (same as horizontal, per jlreq)
-                    if ( (fmt->m_flags[i] & LCHAR_IS_CJK) && !(fmt->m_flags[i] & LCHAR_IS_FLEXIBLE_WIDTH_CJK) &&
-                                 !(fmt->m_flags[i-1] & (LCHAR_IS_CJK|LCHAR_IS_OBJECT|LCHAR_IS_SPACE)) ) {
-                        lUInt16 props = lGetCharProps(fmt->m_text[i-1]);
-                        if ( !CH_PROP_IS_PUNCT(props) && !(props & CH_PROP_SPACE) ) {
-                            LVFont * fnt = (LVFont *)fmt->m_srcs[i]->t.font;
-                            spaceReduceWidth -= fnt->getSize() / 4;
-                        }
-
-                    }
-                    else if ( (fmt->m_flags[i-1] & LCHAR_IS_CJK) && !(fmt->m_flags[i-1] & LCHAR_IS_FLEXIBLE_WIDTH_CJK) &&
-                                 !(fmt->m_flags[i] & (LCHAR_IS_CJK|LCHAR_IS_OBJECT|LCHAR_IS_SPACE)) ) {
-                        lUInt16 props = lGetCharProps(fmt->m_text[i]);
-                        if ( !CH_PROP_IS_PUNCT(props) && !(props & CH_PROP_SPACE) ) {
-                            LVFont * fnt = (LVFont *)fmt->m_srcs[i-1]->t.font;
-                            spaceReduceWidth -= fnt->getSize() / 4;
-                        }
-                    }
-                }
+                // CJK<->non-CJK boundary spacing (xkanjiskip) is no longer reserved
+                // here via spaceReduceWidth: col_used_est below adds the same 0.25em
+                // that Draw inserts, at every such boundary, so this is now folded
+                // into the single faithful column-depth estimate (issue #17).
 
                 bool grabbedExceedingSpace = false;
                 // Two-part break check:
@@ -825,43 +809,71 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                 //    Using avg_char_advance (≈ em_size from CJK chars) for Latin chars
                 //    (x_advance ≈ em/3) inflates char_count_adv by ~3×, causing premature
                 //    column breaks inside Latin words (e.g. "answ|er" in "answer").
-                // For inline boxes (ruby groups), o.width > avg_char_advance: inline_box_extra
-                // carries the excess so char_count_adv correctly reflects total column depth.
-                // For ruby inline boxes, m_advance uses o.width (block-direction), but actual
-                // column depth is letter_spacing (render_w).  Add i_extra to condition 1.
-                int i_extra = (fmt->m_charindex[i] == INLINEBOX_CHAR_INDEX
-                               && fmt->m_srcs[i]->letter_spacing > 0)
-                              ? fmt->m_srcs[i]->letter_spacing - fmt->m_srcs[i]->o.width
-                              : 0;
                 bool is_cjk_char = (fmt->m_flags[i] & LCHAR_IS_CJK) != 0;
                 bool is_object_char = (fmt->m_flags[i] & LCHAR_IS_OBJECT) != 0;
-                // This char's own advance (delta from the previous char).  For
-                // multi-em glyphs (em-dash composite via +vrt2, 2em nibu-dashi / double-em dash;
-                // kana repeat marks 〱〲; vform leaders) this exceeds avg_char_advance.
+                bool is_inline_box = is_object_char
+                                     && fmt->m_charindex[i] == INLINEBOX_CHAR_INDEX;
+                // This char's real column advance (delta of the cumulative measured
+                // advance).  m_advance already carries Phase-3 half-em compaction, so
+                // adv_delta is the true block-direction extent for plain chars, half-em
+                // JFM punctuation, Latin and multi-em composites (—— leaders, kana-repeat
+                // marks 〱〲) alike.
                 int adv_delta = fmt->m_advance[i] - (i > 0 ? fmt->m_advance[i-1] : 0);
-                bool is_multiem_glyph = adv_delta > avg_char_advance + avg_char_advance/4;
-                // char_count_adv mirrors Draw's vert_min_next_x accumulation
-                // (≈ em per char) to catch the case where HarfBuzz TTB advances
-                // run slightly short of em, so the cumulative m_advance lags the
-                // actual on-screen draw position.  It counts the current char as
-                // avg_char_advance; for a multi-em glyph we add the excess so the
-                // item's true draw extent is reflected.  inline_box_extra already
-                // carries the excess for inline boxes (added when the box was seen).
-                int self_multiem_extra = (!is_object_char && is_multiem_glyph)
-                                       ? (adv_delta - avg_char_advance) : 0;
-                int char_count_adv = (i - pos + 1) * avg_char_advance + avg_char_advance / 2
-                                   + inline_box_extra + self_multiem_extra;
-                // Apply the draw-position safety check (condition 2) for CJK chars
-                // AND for inline boxes / multi-em glyphs.  Previously it was
-                // CJK-only, so a non-CJK multi-em item (em-dash composite, ruby
-                // box) following a column-full run of CJK could be placed even
-                // though its 2em extent overflows clip.bottom — drawing past the
-                // column end and getting clipped (mikire / visible cutoff).  Latin word chars
-                // (adv_delta ≈ em/3, not multi-em) stay excluded so Latin words
-                // aren't broken prematurely.
-                bool apply_draw_pos_check = is_cjk_char || is_object_char || is_multiem_glyph;
-                if ( y + fmt->m_advance[i]-w0 + i_extra >= maxHeight + spaceReduceWidth
-                        || (apply_draw_pos_check && y + char_count_adv > maxHeight + spaceReduceWidth) ) {
+                // JFM class drives two corrections below: the full-em floor (which must
+                // NOT apply to half-em classes) and the inter-class glue.
+                JLReqVertClass cur_jfm_class = JLREQ_VERT_OTHER;
+                bool is_half_em_jfm = false;
+                if ( is_cjk_char && !is_object_char ) {
+                    cur_jfm_class = getJLReqVertClass(fmt->m_text[i]);
+                    is_half_em_jfm = (getJLReqVertLayout(cur_jfm_class).width_halves == 1);
+                }
+                // Effective rendered depth of this item, mirroring how Draw advances
+                // vstate.vert_min_next_x:
+                //  - inline box (ruby group): letter_spacing (render_w in vertical mode),
+                //    falling back to o.width;
+                //  - full-em CJK: max(real advance, em) — Draw uses max(width, font_size),
+                //    so a glyph whose TTB advance runs slightly short of em still claims em;
+                //  - half-em JFM punctuation, Latin, numerals, spaces, multi-em composites:
+                //    their real advance (no em floor — flooring these is exactly the #17 bug).
+                int eff_adv;
+                if ( is_inline_box ) {
+                    eff_adv = (fmt->m_srcs[i]->letter_spacing > 0)
+                              ? (int)fmt->m_srcs[i]->letter_spacing
+                              : fmt->m_srcs[i]->o.width;
+                }
+                else {
+                    eff_adv = adv_delta;
+                    if ( is_cjk_char && !is_half_em_jfm && eff_adv < avg_char_advance )
+                        eff_adv = avg_char_advance;
+                }
+                // Phase 5 inter-item spacing that Draw inserts but m_advance does not:
+                // xkanjiskip (0.25em) at CJK<->non-CJK boundaries and JFM inter-class glue
+                // between two consecutive CJK chars.  Skipped around inline boxes (their
+                // surrounding spacing is already folded into letter_spacing).
+                if ( !is_object_char &&
+                       ( (est_prev_class == +1 && is_cjk_char) || (est_prev_class == -1 && !is_cjk_char) ) )
+                    eff_adv += avg_char_advance / 4;
+                if ( is_cjk_char && est_prev_cjk_class >= 0 ) {
+                    int eighths = getJLReqGlueKernEighths(
+                            (JLReqVertClass)est_prev_cjk_class, cur_jfm_class);
+                    if ( eighths > 0 )
+                        eff_adv += avg_char_advance * eighths / 8;
+                }
+                col_used_est += eff_adv;
+                if ( is_object_char ) {
+                    est_prev_class = 0;          // box: neutral, no xkanjiskip with neighbours
+                    est_prev_cjk_class = -1;
+                }
+                else {
+                    est_prev_class = is_cjk_char ? -1 : +1;
+                    est_prev_cjk_class = is_cjk_char ? (int)cur_jfm_class : -1;
+                }
+                // Single break test: the running rendered depth (em floor, xkanjiskip and
+                // JFM glue all included) has reached the column bottom.  This replaces the
+                // old two-part test (m_advance for the real advance + an "every char = one
+                // em" safety estimate); that estimate over-counted narrow Latin and half-em
+                // punctuation, breaking mixed CJK/Latin columns early (issue #17).
+                if ( y + col_used_est > maxHeight + spaceReduceWidth ) {
                     // burasagari / end-of-line punctuation hanging: if the overflowing character is
                     // a sentence-end punctuation that must not start a new column (line-start kinsoku),
                     // include it in the current column and stop here.  The glyph will draw
@@ -869,7 +881,7 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                     // (where +vert places 。/、), so it remains fully visible even though the
                     // trailing blank of the em-square may be clipped at clip.bottom.
                     if ( fmt->m_hanging_punctuation && isVerticalHangingChar(fmt->m_text[i]) ) {
-                        int prev_adv = char_count_adv - avg_char_advance;
+                        int prev_adv = col_used_est - eff_adv;
                         if ( y + prev_adv <= maxHeight + spaceReduceWidth ) {
                             lastNormalWrap = i;  // include this char in current column
                             i++;
