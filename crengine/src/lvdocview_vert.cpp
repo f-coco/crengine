@@ -27,11 +27,30 @@ int LVDocView::vertPageRight( const lvRect & pageRect, int page_content_height )
     return pageRect.right - m_pageMargins.right;
 }
 
-/// Returns true if the document root body uses vertical-rl or vertical-lr.
-/// Phase 1: checks the body element only.  Mixed-mode documents (Phase 2)
-/// not yet supported.  Falls back to a page-height heuristic when the
-/// style lookup fails (e.g. before first render).
+/// Returns true if the document is laid out vertically (vertical-rl/-lr).
+///
+/// Primary signal: the per-page writing mode recorded during rendering.  Each
+/// page carries the css writing-mode of its content (stamped from its first
+/// line in the page splitter), so a document with a horizontal cover followed
+/// by vertical body text is correctly detected, while a purely horizontal
+/// document is not — even if it contains a few short pages (title page, part
+/// divider, cover).
+///
+/// The previous implementation only inspected the FIRST <body> (usually the
+/// horizontal cover, whose writing-mode is unset) and then fell back to a
+/// page-HEIGHT heuristic that returned true if ANY page was short.  That
+/// false-positived on horizontal rtl-spine EPUBs with no writing-mode CSS
+/// (e.g. calibre conversions): a short title page made isVerticalText() true,
+/// and ReaderRolling forced RTL page-turn on horizontal text ("横書き RTL").
 bool LVDocView::isVerticalText() const {
+    if (m_pages.length() > 0) {
+        for (int i = 0; i < m_pages.length(); i++) {
+            if (css_wm_is_vertical(m_pages[i]->writing_mode))
+                return true;
+        }
+        return false; // pages rendered, none vertical → horizontal document
+    }
+    // Pre-render fallback (no pages yet): inspect the body element's style.
     if (m_doc) {
         ldomNode * root = m_doc->getRootNode();
         if (root) {
@@ -40,15 +59,8 @@ bool LVDocView::isVerticalText() const {
                 if (!root) break;
                 if (root->isElement() && root->getNodeId() == el_body) {
                     css_style_ref_t style = root->getStyle();
-                    if (!style.isNull()) {
-                        int wm = style->writing_mode;
-                        if (css_wm_is_vertical(wm)) {
-                            return true;
-                        }
-                        if (wm == css_wm_horizontal_tb) {
-                            return false;
-                        }
-                    }
+                    if (!style.isNull() && css_wm_is_vertical(style->writing_mode))
+                        return true;
                     break;
                 }
                 // Descend to first element child.
@@ -60,15 +72,6 @@ bool LVDocView::isVerticalText() const {
                 }
                 root = next;
             }
-        }
-    }
-    // Fallback: scan pages for any with height ≤ m_dx + 32 (cover pages and
-    // tall image pages don't qualify; vertical content pages do).
-    if (m_pages.length() == 0) return false;
-    for (int i = 0; i < m_pages.length(); i++) {
-        int page_h = m_pages[i]->height;
-        if (page_h > 0 && page_h <= m_dx + 32) {
-            return true;
         }
     }
     return false;
