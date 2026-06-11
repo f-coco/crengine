@@ -2741,9 +2741,25 @@ bool LVDocView::windowToDocPoint(lvPoint & pt, bool pullInPageArea) {
 				int page_right = vertPageRight( m_pageRects[page_rect_idx],
 				                                m_pages[page]->height );
 				int draw_x0 = m_pageRects[page_rect_idx].top + m_pageMargins.top + headerHeight;
-				pt.y = page_y + (page_right - screen_x);
-				pt.x = screen_y - draw_x0;
-				return true;
+				// adv = offset into this page's column progression (the vertical
+				// analogue of pt.y in the horizontal branch).  On a partial page
+				// (short chapter end) a tap in the blank left region gives
+				// adv >= page->height, i.e. a position on the NEXT page; clamp it
+				// under pullInPageArea and reject it otherwise, mirroring the
+				// horizontal branch below instead of returning true unconditionally.
+				int adv = page_right - screen_x;
+				if ( pullInPageArea ) {
+					if ( adv < 0 )
+						adv = 0;
+					if ( adv >= m_pages[page]->height )
+						adv = m_pages[page]->height - 1;
+				}
+				if ( adv >= 0 && adv < m_pages[page]->height ) {
+					pt.y = page_y + adv;
+					pt.x = screen_y - draw_x0;
+					return true;
+				}
+				return false;
 			}
 			pt.x -= rc->left;
 			pt.y -= rc->top;

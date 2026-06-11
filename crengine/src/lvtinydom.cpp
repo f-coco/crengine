@@ -114,7 +114,14 @@ extern const int gDOMVersionCurrent = DOM_VERSION_CURRENT;
 //         xkanjiskip / JFM-glue tracking (mirrors applyVerticalWordDraw's
 //         vert-mark routing).  Cached word->x for chars after an English-
 //         base ruby box or after an em-dash needs re-computation.
-#define FORMATTING_VERSION_ID 0x004E
+// 0x004F: vertical-rl §2/§3 review fixes change LAYOUT word->x positions:
+//         col_used_est now uses the per-fragment font size (not the paragraph's
+//         first fragment), burasagari fit uses the JFM-aware depth, the kinsoku
+//         cascade also re-hangs/wraps 。/、, and the TCY branch advances by
+//         word->width.  An old cache's word->x disagrees with the recomputed
+//         Draw-side vert_min_next_x, shifting ruby groups and the chars after
+//         them; force a re-render.
+#define FORMATTING_VERSION_ID 0x004F
 
 #ifndef DOC_DATA_COMPRESSION_LEVEL
 /// data compression level (0=no compression, 1=fast compressions, 3=normal compression)
