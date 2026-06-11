@@ -1369,8 +1369,30 @@ void applyVerticalFrmlineDimensions(LVFormatter * fmt, formatted_line_t * frmlin
     if ( !css_wm_is_vertical(fmt->m_writing_mode) )
         return;
     int col_width = fmt->m_pbuffer->strut_height;
-    if ( frmline->word_count == 1 && (frmline->words[0].flags & LTEXT_WORD_IS_IMAGE) ) {
-        col_width = (int)frmline->words[0].width;
+    if ( frmline->word_count == 1 ) {
+        formatted_word_t * w0 = &frmline->words[0];
+        if ( w0->flags & LTEXT_WORD_IS_IMAGE ) {
+            col_width = (int)w0->width;
+        }
+        else if ( w0->flags & LTEXT_WORD_IS_INLINE_BOX ) {
+            // A display:inline-block element that wraps a wide image (e.g. EPUBs
+            // that box a full-width illustration in an inline-block, as Momo does
+            // with img.pagebox/leftbox) reaches Draw as an inline box, not a bare
+            // image, so the LTEXT_WORD_IS_IMAGE branch above misses it.  Without
+            // inflating the column to the box's block-direction width, the column
+            // only reserves one strut and the illustration is drawn on top of the
+            // following text columns.  Mirror the image branch.
+            // Ruby annotation boxes are EXCLUDED: per JLReq they overhang into the
+            // inter-column gap and must not widen the column (their word->width
+            // carries the screen-Y depth, not a block-direction width).
+            bool is_ruby = false;
+            if ( (int)w0->src_text_index < fmt->m_pbuffer->srctextlen ) {
+                src_text_fragment_t * sx = &fmt->m_pbuffer->srctext[w0->src_text_index];
+                is_ruby = sx->object && isRubyInlineBox((ldomNode*)sx->object);
+            }
+            if ( !is_ruby && (int)w0->width > col_width )
+                col_width = (int)w0->width;
+        }
     }
     frmline->height = col_width;
     frmline->width = col_width;

@@ -7668,6 +7668,16 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
     // is this a floating float container (floatBox)?
     bool is_floating = BLOCK_RENDERING(flags, FLOAT_FLOATBOXES) && enode->isEffectiveFloatingBox();
     bool is_floatbox_child = BLOCK_RENDERING(flags, FLOAT_FLOATBOXES) && parent && parent->isEffectiveFloatingBox();
+    // FORK (vertical-rl): floats are rendered as in-flow blocks in vertical
+    // writing modes (their positioning math is horizontal-axis only and would
+    // draw the float on top of the column text). The sibling-loop above lets a
+    // floatBox fall through to the normal block branch; here we make the
+    // floatBox itself (and its child) render as a plain block rather than a
+    // float, so it occupies its own column band.
+    if ( flow->isVertical() ) {
+        is_floating = false;
+        is_floatbox_child = false;
+    }
     // is this a inline block container (inlineBox)?
     bool is_inline_box = enode->isEffectiveBoxingInlineBox();
     bool is_inline_box_child = parent && parent->isEffectiveBoxingInlineBox();
@@ -8802,10 +8812,18 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
                     //   float on that side BUT the following non-floating blocks should
                     //   not move and continue being rendered at the current y
 
-                    if ( child->isFloatingBox() ) {
+                    if ( child->isFloatingBox() && !flow->isVertical() ) {
                         // Block floats are positioned respecting the current collapsed
                         // margin, without actually globally pushing it, and without
                         // collapsing with it.
+                        // FORK (vertical-rl): float positioning (addFloat /
+                        // getYWithAvailableWidth) is all horizontal-axis math and lands
+                        // the float at a swapped/wrong screen position, drawing the
+                        // illustration on top of the column text (Momo's div.leftfig).
+                        // In vertical mode we skip the float path and let the floatBox
+                        // fall through to the normal in-flow block branch below, so the
+                        // illustration gets its own column band (see also the is_floating
+                        // gate in renderBlockElementEnhanced).
                         int flt_vertical_margin = flow->getCurrentVerticalMargin();
                         bool is_right = ( child_style->float_ == css_f_right ) ||
                               ( is_rtl && child_style->float_ == css_f_inline_start ) ||
