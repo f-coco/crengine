@@ -1624,7 +1624,13 @@ public:
                             // a space following a \n be allowed to collapse.
                     }
 
-                    if ( lStr_isCJK(c) ) {
+                    // Fork (vertical-rl): Enclosed Alphanumerics (U+2460-24FF,
+                    // ①②③ etc.) are treated as CJK only in vertical mode so they
+                    // render upright in their em column instead of the render+rotate
+                    // Latin path (whose rotated buffer overflows the column edge).
+                    // In horizontal mode they keep upstream (non-CJK) behavior.
+                    if ( lStr_isCJK(c)
+                            || (css_wm_is_vertical(m_writing_mode) && c >= 0x2460 && c <= 0x24FF) ) {
                         // We have some specific code for handling CJK typography, that we don't
                         // need to trigger if we didn't meet any CJK char.
                         if ( !m_has_cjk ) {
@@ -6497,7 +6503,15 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
             // Fork: reset per-column vertical state.  See VerticalDrawState
             // in include/lvtextfm_fork.h for member documentation.
             vstate.resetForNewFrmline();
-            if ( line_y >= clip.top && line_y + frmline->height <= clip.bottom ) {
+            // The extended (overflow) clip may only be granted to a line box
+            // that is FULLY inside the regular clip — otherwise a line partly
+            // outside the clip could be drawn on both adjacent pages.  In
+            // vertical-rl the column extent is along screen-X (line_x and
+            // frmline->height = column width), so the test must be axis-swapped.
+            bool fully_in_clip = is_vertical
+                ? ( line_x <= clip.right && line_x - (int)frmline->height >= clip.left )
+                : ( line_y >= clip.top && line_y + frmline->height <= clip.bottom );
+            if ( fully_in_clip ) {
                 if ( draw_extra_info ) {
                     restore_orig_clip = true;
                     buf->GetClipRect( &origClip );

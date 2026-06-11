@@ -5973,10 +5973,9 @@ public:
     }
     /// Current flow position: c_x for vertical, c_y for horizontal
     int flowPos() const { return css_wm_is_vertical(writing_mode) ? c_x : c_y; }
-    /// Advance the flow position by height (always calls moveDown; additionally tracks c_x for vertical)
+    /// Advance the flow position by height (moveDown keeps c_x in lockstep for vertical)
     void advanceFlowPos(int height) {
         moveDown( height );
-        if ( isVertical() ) c_x += height;
     }
     LVRendPageContext * getPageContext() {
         return &context;
@@ -6640,7 +6639,7 @@ public:
                 }
                 flags |= line_dir_flag;
                 context.AddLine( flowPos(), flowPos() + margin, flags );
-                if ( isVertical() ) c_x += margin;
+                // (c_x is advanced together with c_y in the moveDown(margin) below)
                 // Note: we don't use AddSpace, a margin does not have to be arbitrarily
                 // splitted, RN_SPLIT_DISCARD_AT_START ensures it does not continue
                 // on next page.
@@ -6884,6 +6883,12 @@ public:
         int prev_c_y = c_y;
         if (dy > 0) { // moving forward
             c_y += dy;
+            // FORK (vertical-rl): keep c_x (column progression) in lockstep with
+            // c_y so every flow advance — sub-flow/table-cell margins, post-table
+            // moveDown, FlowState entry with y0>0 — moves the column too. This is
+            // the single point that keeps the c_x==c_y invariant; per-site c_x
+            // patches (advanceFlowPos / pushVerticalMargin) are therefore gone.
+            if ( isVertical() ) c_x += dy;
             if ( c_y > in_y_max ) {
                 // update current level max seen y (not really needed as it is
                 // checked on leaveBlockLeve, but for symetry)
@@ -6896,6 +6901,7 @@ public:
             // and text/links selection)
             if ( !is_main_flow || BLOCK_RENDERING(rend_flags, ALLOW_NEGATIVE_COLLAPSED_MARGINS) ) {
                 c_y += dy;
+                if ( isVertical() ) c_x += dy; // keep lockstep (see positive branch)
                 if ( c_y < in_y_min ) {
                     // update current level min seen y (in case negative margins
                     // moved past level origin y)
@@ -9450,7 +9456,7 @@ int renderBlockElement(LVRendPageContext & context, ldomNode * enode, int x, int
         // (e.g. via the user's `body { writing-mode: vertical-rl }` style tweak).
         // CSS writing-mode is INHERITED, but ldomNode::getStyle() on the root
         // returns the root's own (default-horizontal) style, not body's.
-        // So we walk a few levels down looking for the first body element with
+        // So we walk a few levels down looking for the first element with
         // a vertical writing-mode, and use it for the page-splitter setup.
         int writing_mode = enode->getStyle()->writing_mode;
         // crengine stores the CSS specified value, not the cascaded value:

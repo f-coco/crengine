@@ -1535,6 +1535,10 @@ protected:
     hb_font_t* _hb_font;
     hb_buffer_t* _hb_buffer;
     LVArray<hb_feature_t> _hb_features;
+    // Fork (vertical-rl): tracks the is_vertical state _hb_features was built
+    // for, so the hot paths (measureText/DrawTextString) only rebuild the
+    // feature list when the vertical state actually changes. -1 = never built.
+    int _hb_features_is_vertical = -1;
     // For use with KERNING_MODE_HARFBUZZ:
     LVFontLocalGlyphCache _glyph_cache2;
     // For use with KERNING_MODE_HARFBUZZ_LIGHT:
@@ -1855,6 +1859,7 @@ public:
         return false;
     }
     void setupHBFeatures(bool is_vertical = false) {
+        _hb_features_is_vertical = is_vertical ? 1 : 0;
         _hb_features.clear();
         if ( _kerningMode == KERNING_MODE_HARFBUZZ ) {
             // We reserve 2 for those we're adding now, +3 for vertical features
@@ -1971,6 +1976,9 @@ public:
     virtual void setFeatures( int features ) {
         _features = features;
         _hash = 0; // Force lvstyles.cpp calcHash(font_ref_t) to recompute the hash
+        #if USE_HARFBUZZ==1
+        _hb_features_is_vertical = -1; // _features changed: force _hb_features rebuild on next use
+        #endif
     }
     virtual int getFeatures() const {
         return _features;
@@ -2941,9 +2949,12 @@ public:
             // todo: it should be applied half-before/half-after each grapheme
             // cf in *some* minikin repositories: libs/minikin/Layout.cpp
 
-            // Setup HarfBuzz features with vertical text support if needed
+            // Setup HarfBuzz features with vertical text support if needed.
+            // Only rebuild the feature list when the vertical state changes —
+            // otherwise this hot path re-parses every feature on each call.
             bool is_vertical_hb = (hints & LFNT_HINT_IS_VERTICAL) != 0;
-            setupHBFeatures(is_vertical_hb);
+            if ( _hb_features_is_vertical != (is_vertical_hb ? 1 : 0) )
+                setupHBFeatures(is_vertical_hb);
 
             // Shape
             hb_shape(_hb_font, _hb_buffer, _hb_features.ptr(), (unsigned int)_hb_features.length());
@@ -4251,8 +4262,9 @@ public:
 
             // For vertical text, ensure +vert/+vrt2 OpenType features are active so
             // that glyph substitutions (ー→vertical bar, etc.) are applied during drawing.
-            // We call setupHBFeatures() here rather than at construction time because
-            // measureText() may have changed _hb_features since the last DrawTextString call.
+            // We (re)build _hb_features here rather than at construction time because
+            // measureText() may have changed it since the last DrawTextString call —
+            // but only when the vertical state actually differs (this is a hot path).
             bool is_vertical_draw = (flags & LFNT_HINT_IS_VERTICAL) != 0;
             bool is_vert_mark     = (flags & LFNT_HINT_VERTICAL_MARK) != 0;
             // render+rotate mode: draw horizontally into temp buffer, then rotate 90° CW
@@ -4263,7 +4275,8 @@ public:
             if (is_render_rotate && rr_word_w > 0 && rr_font_h > 0) {
                 rr_buf = new lUInt8[rr_word_w * rr_font_h]();
             }
-            setupHBFeatures(is_vertical_draw);
+            if ( _hb_features_is_vertical != (is_vertical_draw ? 1 : 0) )
+                setupHBFeatures(is_vertical_draw);
 
             // Fork-only: switch HarfBuzz to TTB direction for vertical text so the
             // shaper uses vmtx-based positioning (matching measureText), and we can

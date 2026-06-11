@@ -4838,15 +4838,20 @@ bool LVCssDeclaration::parse( const char * &decl, bool higher_importance, lxmlDo
             case cssd_text_combine_upright3: // -webkit-text-combine
                 prop_code = cssd_text_combine_upright;
                 IF_g_SET_n_AND_break(false, css_tcu_none, css_tcu_none);
-                // -epub-text-combine / -webkit-text-combine: "horizontal" maps to "all"
-                if ( strncmp(decl, "horizontal", 10) == 0 ) {
-                    next_token(decl);
+                // -epub-text-combine / -webkit-text-combine: "horizontal" maps to "all".
+                // Advance past the value with substr_icompare / parse_integer (NOT
+                // next_token): next_token consumes the ';' terminator, which would make
+                // the loop's next_property() skip — and drop — the next declaration.
+                if ( substr_icompare("horizontal", decl) ) {
                     n = css_tcu_all;
                 } else {
                     n = parse_name( decl, css_tcu_names, -1 );
                     // "digits N" — skip optional count (2-4), treat same as "digits"
-                    if ( n == css_tcu_digits )
-                        next_token(decl);
+                    if ( n == css_tcu_digits ) {
+                        skip_spaces( decl );
+                        unsigned digits_count;
+                        parse_integer( decl, digits_count );
+                    }
                 }
                 break;
             case cssd_text_emphasis:
@@ -4857,22 +4862,24 @@ bool LVCssDeclaration::parse( const char * &decl, bool higher_importance, lxmlDo
                 prop_code = cssd_text_emphasis;
                 IF_g_SET_n_AND_break(true, css_tes_inherit, css_tes_none);
                 {
-                    // Parse optional "filled" / "open" modifier then shape
+                    // Parse optional "filled" / "open" modifier then shape.
+                    // substr_icompare advances past the keyword only — using
+                    // next_token here would consume the ';' and make next_property()
+                    // drop the following declaration.
                     bool is_open = false;
-                    if ( strncmp(decl, "filled", 6) == 0 && (decl[6] < 'a' || decl[6] > 'z') ) {
-                        next_token(decl); skip_spaces(decl);
-                    } else if ( strncmp(decl, "open", 4) == 0 && (decl[4] < 'a' || decl[4] > 'z') ) {
+                    if ( substr_icompare("filled", decl) ) {
+                        skip_spaces(decl);
+                    } else if ( substr_icompare("open", decl) ) {
                         is_open = true;
-                        next_token(decl); skip_spaces(decl);
+                        skip_spaces(decl);
                     }
                     int shape = parse_name( decl, css_tes_shape_names, -1 );
                     if ( shape >= 0 ) {
                         // shape: 0=dot 1=circle 2=sesame 3=double-circle 4=triangle
                         // filled: css_tes_filled_dot=1, open: css_tes_open_dot=2
                         n = 1 + shape * 2 + (is_open ? 1 : 0);
-                    } else if ( strncmp(decl, "none", 4) == 0 && (decl[4] < 'a' || decl[4] > 'z') ) {
+                    } else if ( substr_icompare("none", decl) ) {
                         n = css_tes_none;
-                        next_token(decl);
                     } else {
                         // "filled" or "open" alone → default shape = sesame for CJK
                         n = is_open ? css_tes_open_sesame : css_tes_filled_sesame;
