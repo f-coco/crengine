@@ -301,6 +301,7 @@ void lvtextAddSourceLine( formatted_text_fragment_t * pbuffer,
     pline->color = color;
     pline->bgcolor = bgcolor;
     pline->letter_spacing = letter_spacing;
+    pline->vert_inline_box_depth = 0; // fork: only meaningful for ruby inline-box objects
 }
 
 void lvtextAddSourceObject(
@@ -335,6 +336,7 @@ void lvtextAddSourceObject(
     pline->interval = interval;
     pline->valign_dy = valign_dy;
     pline->letter_spacing = letter_spacing;
+    pline->vert_inline_box_depth = 0; // fork: set later by measureText for ruby inline boxes
     if ( !lang_cfg )
         lang_cfg = TextLangMan::getTextLangCfg(); // use main_lang
     pline->lang_cfg = lang_cfg;
@@ -519,6 +521,7 @@ public:
         m_cjk_prev_line_added_space_div = 0;
         m_cjk_prev_line_added_space_mod = 0;
         m_specified_para_dir = REND_DIRECTION_UNSET;
+        m_writing_mode = css_wm_horizontal_tb; // set per-paragraph in Format(); init horizontal
         #if (USE_FRIBIDI==1)
             m_bidi_ctypes = NULL;
             m_bidi_btypes = NULL;
@@ -633,21 +636,25 @@ public:
     // and between y and y+h
     // Also set offset_x to the x where this width is available
     int getAvailableWidthAtY(int start_y, int h, int & offset_x) {
+        // For vertical text, the "line width" is the column height (page_height).
+        // Using m_pbuffer->width (horizontal block width) would make alignLine
+        // think the column massively overflows, causing heavy space compression.
+        // Return page_height directly: processParagraphVertical already limits
+        // column content via char_count_adv so frmline->width ≤ page_height,
+        // giving extra_width ≥ 0 and no spurious space reduction.  The previous
+        // (page_height - strut_height) value caused extra_width = -strut which
+        // triggered space reduction, shifting ruby inline-box word->x values
+        // upward without the vstate.vert_min_next_x clamping that protects plain chars.
+        // This check is hoisted ABOVE the floatcount==0 short path: outer-float
+        // footprints are registered as fake floats in Format(), so a vertical final
+        // block with an ancestor footprint has floatcount>0 and would otherwise fall
+        // through to the horizontal float/width logic below.
+        if ( m_pbuffer->writing_mode == css_wm_vertical_rl ||
+             m_pbuffer->writing_mode == css_wm_vertical_lr ) {
+            offset_x = 0;
+            return m_pbuffer->page_height;
+        }
         if (m_pbuffer->floatcount == 0) { // common short path when no float
-            // For vertical text, the "line width" is the column height (page_height).
-            // Using m_pbuffer->width (horizontal block width) would make alignLine
-            // think the column massively overflows, causing heavy space compression.
-            // Return page_height directly: processParagraphVertical already limits
-            // column content via char_count_adv so frmline->width ≤ page_height,
-            // giving extra_width ≥ 0 and no spurious space reduction.  The previous
-            // (page_height - strut_height) value caused extra_width = -strut which
-            // triggered space reduction, shifting ruby inline-box word->x values
-            // upward without the vstate.vert_min_next_x clamping that protects plain chars.
-            if ( m_pbuffer->writing_mode == css_wm_vertical_rl ||
-                 m_pbuffer->writing_mode == css_wm_vertical_lr ) {
-                offset_x = 0;
-                return m_pbuffer->page_height;
-            }
             int fl_left_max_x = 0;
             int fl_right_min_x = m_pbuffer->width;
             if ( m_initial_letter_exclusion.active ) {
@@ -2193,7 +2200,12 @@ public:
                         // too long line
                         int newlen = chars_measured;
                         if (newlen == 0) {
-                            // measureText returned 0 — advance at least 1 to avoid infinite loop
+                            // measureText returned 0 — advance at least 1 to avoid infinite loop.
+                            // Fork note: this is the one fork edit in this file that is NOT
+                            // vertical-gated.  It is reachable only on a measure result upstream
+                            // would spin on forever (0 chars consumed while chars remain), so it
+                            // is a strict, deliberate bugfix kept active for horizontal mode too
+                            // rather than re-introducing the hang behind a vertical gate.
                             newlen = 1;
                             chars_measured = 1;
                             widths[0] = 0;
@@ -2523,10 +2535,12 @@ public:
                         m_srcs[start]->o.width = advance; // word->width uses o.width for frmline advance
                         m_srcs[start]->o.height = height;
                         m_srcs[start]->o.baseline = baseline;
-                        // Store the visual column depth in letter_spacing so vstate.vert_min_next_x
-                        // in Draw() is set to the actual visual end of the inline box.
+                        // Store the visual column depth in the fork-only vert_inline_box_depth
+                        // field so vstate.vert_min_next_x in Draw() is set to the actual visual
+                        // end of the inline box.  (Was repurposing letter_spacing, which upstream
+                        // keeps 0 for objects — see the field doc in lvtextfm.h.)
                         if (is_ruby_inline_pre && vert_inline_box) {
-                            m_srcs[start]->letter_spacing = (lInt16)advance;
+                            m_srcs[start]->vert_inline_box_depth = (lInt16)advance;
                             // Diagnostic: record the space reclaimed from TTB over-estimation.
                             if (render_w > advance) {
                                 int diff = render_w - advance;
@@ -5262,9 +5276,16 @@ static void tryHyphenBreak(
     int maxExtent, int spaceReduceWidth,
     int unusedPercent, int& lastHyphWrap)
 {
+    // If, with normal wrapping, more than 5% of the line would not be used,
+    // try to find a word (from where we stopped back to lastNormalWrap) to
+    // hyphenate, if hyphenation is not forbidden by CSS.
+    // todo: decide if we should hyphenate if bidi is happening up to now
     if ( lastMandatoryWrap >= 0 || lastNormalWrap >= fmt->m_length-1
             || unusedPercent <= fmt->m_pbuffer->unused_space_threshold_percent )
         return;
+    // There may be more than one word between wordpos and lastNormalWrap (or
+    // pos, the start of this line): if hyphenation is not possible with
+    // the right most one, we have to try the previous words.
     // #define DEBUG_HYPH_EXTRA_LOOPS // Uncomment for debugging loops
     #ifdef DEBUG_HYPH_EXTRA_LOOPS
         int debug_loop_num = 0;
@@ -5272,7 +5293,7 @@ static void tryHyphenBreak(
     int wordpos_min = lastNormalWrap > pos ? lastNormalWrap : pos;
     while ( wordpos > wordpos_min ) {
         if ( fmt->m_srcs[wordpos]->flags & LTEXT_SRC_IS_OBJECT ) {
-            wordpos--;
+            wordpos--; // skip images & floats
             continue;
         }
         #ifdef DEBUG_HYPH_EXTRA_LOOPS
@@ -5281,32 +5302,55 @@ static void tryHyphenBreak(
                 printf("  hyphen extra loop %d\n", debug_loop_num);
         #endif
         if ( !(fmt->m_srcs[wordpos]->flags & LTEXT_HYPHENATE) || (fmt->m_srcs[wordpos]->flags & LTEXT_FLAG_NOWRAP) ) {
+            // The word at worpos can't be hyphenated, but it might be
+            // allowed on some earlier word in another text node.
+            // As this is a rare situation (they are mostly all hyphenat'able,
+            // or none of them are), and to skip some loops, as the min size
+            // of a word to go look for hyphenation is 4, skip by 4 chars.
             wordpos = wordpos - MIN_WORD_LEN_TO_HYPHENATE;
             continue;
         }
+        // lStr_findWordBounds() will find the word contained at wordpos
+        // (or the previous word if wordpos happens to be a space or some
+        // punctuation) by looking only for alpha chars in m_text.
         int wstart, wend;
         bool has_rtl;
         lStr_findWordBounds( fmt->m_text, fmt->m_length, wordpos, wstart, wend, has_rtl );
         if ( wend <= lastNormalWrap ) {
+            // We passed back lastNormalWrap: no need to look for more
             break;
         }
         int len = wend - wstart;
         if ( len < MIN_WORD_LEN_TO_HYPHENATE || has_rtl ) {
+            // Too short word found, skip it
+            // Also skip words containing RTL chars (so, probably full RTL words),
+            // as we only handle drawing hyphens on the right
             wordpos = wstart - 1;
             continue;
         }
         if ( wstart >= wordpos ) {
+            // Shouldn't happen, but let's be sure we don't get stuck
             wordpos = wordpos - MIN_WORD_LEN_TO_HYPHENATE;
             continue;
         }
-        if ( len > MAX_WORD_SIZE )
+        // We have a valid word to look for hyphenation
+        if ( len > MAX_WORD_SIZE ) // hyphenate() stops/truncates at 64 chars
             len = MAX_WORD_SIZE;
+        // ->hyphenate(), which is used by some other parts of the code,
+        // expects a lUInt8 array. We added flagSize=1|2 so it can set the correct
+        // flags on our upgraded (from lUInt8 to lUInt16) m_flags.
         lUInt8 * flags = (lUInt8*) (fmt->m_flags + wstart);
+        // Fill static array with cumulative widths relative to word start
         static lUInt16 widths[MAX_WORD_SIZE];
         int wordStart_w = wstart > 0 ? fmt->m_advance[wstart-1] : 0;
         for ( int i = 0; i < len; i++ )
             widths[i] = fmt->m_advance[wstart+i] - wordStart_w;
         int max_extent = maxExtent + spaceReduceWidth - (lineStart + (wordStart_w - w0));
+        // In some rare cases, a word here can be made with parts from multiple text nodes.
+        // Use the font of the first text node to compute the hyphen width, which
+        // might then be wrong - but that will be smoothed by alignLine().
+        // (lStr_findWordBounds() might grab objects or inlineboxes as part of
+        // the word, so skip them when looking for a font)
         int _hyphen_width = 0;
         for ( int i = wstart; i < wend; i++ ) {
             if ( !(fmt->m_srcs[i]->flags & LTEXT_SRC_IS_OBJECT) ) {
@@ -5314,26 +5358,35 @@ static void tryHyphenBreak(
                 break;
             }
         }
+        // Use the hyph method of the source node that contains wordpos
         if ( fmt->m_srcs[wordpos]->lang_cfg->getHyphMethod()->hyphenate(
                 fmt->m_text+wstart, len, widths, flags, _hyphen_width, max_extent, 2) ) {
+            // We need to reset the flag for the multiple hyphenation
+            // opportunities we will not be using (or they could cause
+            // spurious spaces, as a word here may be multiple words
+            // in AddLine() if parts from different text nodes).
             for ( int i = 0; i < len; i++ ) {
                 if ( fmt->m_flags[wstart+i] & LCHAR_ALLOW_HYPH_WRAP_AFTER ) {
                     if ( widths[i] + _hyphen_width > max_extent ) {
                         TR("hyphen found, but max_extent reached at char %d", i);
-                        fmt->m_flags[wstart+i] &= ~LCHAR_ALLOW_HYPH_WRAP_AFTER;
+                        fmt->m_flags[wstart+i] &= ~LCHAR_ALLOW_HYPH_WRAP_AFTER; // reset flag
                     }
                     else if ( wstart + i > pos+1 ) {
-                        if ( lastHyphWrap >= 0 )
+                        if ( lastHyphWrap >= 0 ) // reset flag on previous candidate
                             fmt->m_flags[lastHyphWrap] &= ~LCHAR_ALLOW_HYPH_WRAP_AFTER;
                         lastHyphWrap = wstart + i;
+                        // Keep looking for some other candidates in that word
                     }
                     else if ( wstart + i >= pos ) {
-                        fmt->m_flags[wstart+i] &= ~LCHAR_ALLOW_HYPH_WRAP_AFTER;
+                        fmt->m_flags[wstart+i] &= ~LCHAR_ALLOW_HYPH_WRAP_AFTER; // reset flag
                     }
+                    // Don't reset those < pos as they are part of previous line
                 }
             }
-            if ( lastHyphWrap >= 0 )
+            if ( lastHyphWrap >= 0 ) {
+                // Found in this word, no need to look at previous words
                 break;
+            }
         }
         TR("no hyphen found - max_extent=%d", max_extent);
         wordpos = wstart - 1;
@@ -6545,6 +6598,21 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                 else
                     buf->FillRect(wstart, y + frmline->y, wend, y + frmline->y + frmline->height, color);
             };
+            // Vertical-rl: map a formatter-space mark rect to its screen rect over the
+            // base-text zone.  formatter-x→screen-Y (+y), formatter-y→screen-X (line_x−).
+            // For ruby-inflated columns (height > strut), the annotation zone occupies
+            // the rightmost (height - strut) pixels; the rect covers only the base zone.
+            // Shared by all four selection/bookmark mark draw sites below.
+            auto vertMarkRect = [&](const lvRect & mark) -> lvRect {
+                int ann_w = (int)frmline->height > m_pbuffer->strut_height
+                            ? (int)frmline->height - m_pbuffer->strut_height : 0;
+                lvRect r;
+                r.left   = line_x - (int)m_pbuffer->strut_height - ann_w;
+                r.top    = mark.left + y;
+                r.right  = line_x - ann_w;
+                r.bottom = mark.right + y;
+                return r;
+            };
             lUInt32 lastWordColor = LTEXT_COLOR_CURRENT; // meaning unset, no bgcolor yet
             int lastWordStart = -1;
             int lastWordEnd = -1;
@@ -6753,18 +6821,13 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                     ldomMarkedRange * range = marks->get(i);
                     // printf("marks #%d %d %d > %d %d\n", i, range->start.x, range->start.y, range->end.x, range->end.y);
                     if ( range->intersects( lineRect, mark ) ) {
-                        // Vertical-rl: formatter-x→screen-Y (+y), formatter-y→screen-X (line_x−).
-                        // For ruby-inflated columns (height > strut), the annotation zone occupies
-                        // the rightmost (height - strut) pixels; draw only over the base text zone.
+                        // With vmtx-based gy = slot_top + vertBearingY (≈ 1-5 px),
+                        // glyphs sit within em/10 of slot_top; the highlight fill
+                        // aligned to slot_top covers the character cleanly without
+                        // needing a per-glyph offset lookup.
                         if (is_vertical) {
-                            int ann_w = (int)frmline->height > m_pbuffer->strut_height
-                                        ? (int)frmline->height - m_pbuffer->strut_height : 0;
-                            // With vmtx-based gy = slot_top + vertBearingY (≈ 1-5 px),
-                            // glyphs sit within em/10 of slot_top; the highlight fill
-                            // aligned to slot_top covers the character cleanly without
-                            // needing a per-glyph offset lookup.
-                            buf->FillRect(line_x - (int)m_pbuffer->strut_height - ann_w, mark.left + y,
-                                          line_x - ann_w, mark.right + y, m_pbuffer->highlight_options.selectionColor);
+                            lvRect r = vertMarkRect(mark);
+                            buf->FillRect(r.left, r.top, r.right, r.bottom, m_pbuffer->highlight_options.selectionColor);
                         } else {
                             buf->FillRect(mark.left + x, mark.top + y, mark.right + x, mark.bottom + y, m_pbuffer->highlight_options.selectionColor);
                         }
@@ -6779,10 +6842,9 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                     if ( range->intersects( lineRect, mark ) ) {
                         // Vertical-rl: same axis-swap and ruby-inflation adjustment as marks above.
                         if (is_vertical) {
-                            int ann_w = (int)frmline->height > m_pbuffer->strut_height
-                                        ? (int)frmline->height - m_pbuffer->strut_height : 0;
-                            DrawBookmarkTextUnderline(*buf, line_x - (int)m_pbuffer->strut_height - ann_w, mark.left + y,
-                                                      line_x - ann_w, mark.right + y, mark.right + y - 2, range->flags,
+                            lvRect r = vertMarkRect(mark);
+                            DrawBookmarkTextUnderline(*buf, r.left, r.top,
+                                                      r.right, r.bottom, r.bottom - 2, range->flags,
                                                       &m_pbuffer->highlight_options);
                         } else {
                             DrawBookmarkTextUnderline(*buf, mark.left + x, mark.top + y, mark.right + x, mark.bottom + y, mark.bottom + y - 2, range->flags,
@@ -6802,9 +6864,8 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                     if ( range->intersects( lineRect, bookmark_rc ) ) {
                         // Vertical-rl: same axis-swap and ruby-inflation adjustment as marks above.
                         if (is_vertical) {
-                            int ann_w = (int)frmline->height > m_pbuffer->strut_height
-                                        ? (int)frmline->height - m_pbuffer->strut_height : 0;
-                            buf->FillRect( line_x - (int)m_pbuffer->strut_height - ann_w, bookmark_rc.left + y, line_x - ann_w, bookmark_rc.right + y, 0xAAAAAA );
+                            lvRect r = vertMarkRect(bookmark_rc);
+                            buf->FillRect( r.left, r.top, r.right, r.bottom, 0xAAAAAA );
                         } else {
                             buf->FillRect( bookmark_rc.left + x, bookmark_rc.top + y, bookmark_rc.right + x, bookmark_rc.bottom + y, 0xAAAAAA );
                         }
@@ -6817,7 +6878,6 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
             lUInt16 lastWordSrcIndex;
             for (j=0; j<frmline->word_count; j++)
             {
-                ltext_word_iters++;
                 word = &frmline->words[j];
                 srcline = &m_pbuffer->srctext[word->src_text_index];
                 if ( (srcline->flags & LTEXT_HAS_EXTRA) && getLTextExtraProperty(srcline, LTEXT_EXTRA_CSS_HIDDEN) && !buf->WantsHiddenContent() )
@@ -6845,6 +6905,13 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                 else if (word->flags & LTEXT_WORD_IS_INLINE_BOX)
                 {
                     ldomNode * node = (ldomNode *) srcline->object;
+                    // Logically, the coordinates of the top left of the box are:
+                    // int x0 = x + frmline->x + word->x;
+                    // int y0 = line_y + frmline->baseline - word->o.baseline + word->y;
+                    // But we have updated the node's RenderRectAccesor x/y in alignLine(),
+                    // ahd DrawDocument() will by default fetch them to shift the block
+                    // it has to draw. So, we can use the provided x/y as-is, with
+                    // the offsets from the RenderRectAccesor.
                     RenderRectAccessor node_fmt( node );
                     int node_x = node_fmt.getX();
                     int node_y = node_fmt.getY();
@@ -6883,13 +6950,21 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         DrawDocument( *buf, node, x0, y0, dx, dy, doc_x_ib, doc_y_ib, page_height, absmarks, bookmarks );
                     }
                     else {
+                        // inline-block boxes with negative margins can overflow the
+                        // line height, and so possibly the page when that line is
+                        // at top or bottom of page.
+                        // When witnessed, that overflow was very small, and probably
+                        // aimed at vertically aligning the box vs the text, but enough
+                        // to have their glyphs truncated when clipped to the page rect.
+                        // So, to avoid that, we just drop that clip when drawing the
+                        // box, and restore it when done.
                         lvRect curclip;
-                        buf->GetClipRect( &curclip );
+                        buf->GetClipRect( &curclip ); // backup clip
                         if ( draw_extra_info ) {
                             buf->SetClipRect( &draw_extra_info->content_overflow_clip );
                         }
                         DrawDocument( *buf, node, x0, y0, dx, dy, doc_x_ib, doc_y_ib, page_height, absmarks, bookmarks );
-                        buf->SetClipRect(&curclip);
+                        buf->SetClipRect(&curclip); // restore original page clip
                     }
                 }
                 else if (word->flags & LTEXT_WORD_IS_PAD)
@@ -7072,9 +7147,8 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                     if ( range->intersects( lineRect, mark ) ) {
                         // Vertical-rl: same axis-swap and ruby-inflation adjustment as marks above.
                         if (is_vertical) {
-                            int ann_w = (int)frmline->height > m_pbuffer->strut_height
-                                        ? (int)frmline->height - m_pbuffer->strut_height : 0;
-                            buf->InvertRect( line_x - (int)m_pbuffer->strut_height - ann_w, mark.left + y, line_x - ann_w, mark.right + y);
+                            lvRect r = vertMarkRect(mark);
+                            buf->InvertRect( r.left, r.top, r.right, r.bottom );
                         } else {
                             buf->InvertRect( mark.left + x, mark.top + y, mark.right + x, mark.bottom + y);
                         }

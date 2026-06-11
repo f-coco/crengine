@@ -127,6 +127,13 @@ typedef struct
     lInt16          valign_dy; /* drift y from baseline */
     lInt16          interval; /**< \brief line height in screen pixels */
     lInt16          letter_spacing; /**< \brief additional letter spacing, pixels */
+    lInt16          vert_inline_box_depth; /**< \brief fork (vertical-rl): visual column depth of a
+                                                ruby inline box, in px.  Set by measureText for ruby
+                                                inline boxes; read by the vertical Draw/layout paths to
+                                                set vstate.vert_min_next_x.  Kept separate from
+                                                letter_spacing (which upstream guarantees is 0 for
+                                                objects) so honoring CSS letter-spacing on objects, or
+                                                a non-ruby inline box, cannot corrupt vertical layout. */
     lUInt32         color;    /**< \brief color */
     lUInt32         bgcolor;  /**< \brief background color */
     lUInt32         flags;    /**< \brief flags */
@@ -292,7 +299,6 @@ typedef struct
    lUInt32               height;        /**< height of text fragment */
    lUInt16               width;         /**< width of text fragment */
    lUInt16               page_height;   /**< max page height */
-   lUInt16               full_page_height; /**< unreduced page height for columns 2+ */
    LVHashTable<lUInt32, lString32Collection*> * inlineboxes_links;
 
     // Each line box starts with a zero-width inline box (called "strut") with
@@ -488,7 +494,7 @@ public:
 
     lUInt32 Format(lUInt16 width, lUInt16 page_height,
                         int para_direction=0, // = REND_DIRECTION_UNSET in lvrend.h
-                        int writing_mode=0, // = css_wm_horizontal_tb in cssdef.h
+                        int writing_mode=0, // = css_wm_inherit in cssdef.h (treated as horizontal)
                         int usable_left_overflow=0, int usable_right_overflow=0,
                         bool hanging_punctuation=false,
                         BlockFloatFootprint * float_footprint = NULL );

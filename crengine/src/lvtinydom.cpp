@@ -21591,17 +21591,21 @@ int ldomNode::renderFinalBlock(  LFormattedTextRef & frmtext, RenderRectAccessor
     // the inner content in that context.
     // This page_h we provide to f->Format() is only used to enforce a max height to images
     int page_h = getDocument()->getPageHeight();
-    int full_page_h = page_h;  // original page height before bvo reduction
     // Vertical-rl: reduce page_h by the block's accumulated inline-start offset so
     // processParagraphVertical() does not place characters past clip.bottom.
     // With Option C (CSSLogical in renderBlockElementEnhanced), getX() stores the
     // inline-start content edge (CSS padding-top for vertical-rl), so bvo is
     // naturally 0 for typical body content that has no CSS padding-top/border-top.
     //
-    // NOTE: the reduction is correct ONLY for the first column of the paragraph
-    // (which starts at bvo from the top).  Columns 2+ start at the page top and
-    // should use the full page_h.  full_page_height carries that unreduced value
-    // so processParagraphVertical can apply it to non-first columns.
+    // KNOWN LIMITATION: the reduction is applied to the whole paragraph, but it is
+    // only strictly correct for the FIRST column (which starts at bvo from the top).
+    // Columns 2+ start at the page top and could use the full page_h; with bvo>0
+    // they end up bvo px short, leaving a small gap at the column bottom.  This is
+    // only observable when the final block carries CSS padding-top/border-top
+    // (bvo>0), which is rare for body text, so the simpler whole-paragraph reduction
+    // is kept.  (An earlier attempt threaded an unreduced page height through to the
+    // formatter for non-first columns; that consumer was never implemented, so the
+    // field was removed to avoid carrying dead state.)
     {
         css_writing_mode_t wm = getStyle()->writing_mode;
         if (css_wm_is_vertical(wm)) {
@@ -21629,9 +21633,6 @@ int ldomNode::renderFinalBlock(  LFormattedTextRef & frmtext, RenderRectAccessor
                 page_h -= bvo;
         }
     }
-    // Store the unreduced page height so processParagraphVertical can use it
-    // for columns 2+ (which start at the page top, not at bvo).
-    f->GetBuffer()->full_page_height = (lUInt16)full_page_h;
     // Save or restore outer floats footprint (it is only provided
     // when rendering the document - when this is called to draw the
     // node, or search for text and links, we need to get it from
