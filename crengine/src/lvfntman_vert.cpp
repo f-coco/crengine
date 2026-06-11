@@ -268,22 +268,26 @@ int getJLReqVertSlotWidth(lChar32 c, int em_px, int natural_advance_px)
     return (em_px * layout.width_halves) / 2;
 }
 
-int getJLReqVertCwa(lChar32 c, int em_px)
+int getJLReqVertCwa(lChar32 c, int em_px, int vadv_px)
 {
     JLReqVertLayout layout = getJLReqVertLayout(getJLReqVertClass(c));
     // cwa = align_num * (fwidth - vadv) per ltj-setwidth.lua:269.
     // align_num: 0 (left), 0.5 (middle), 1 (right) — our enum maps to
     // 0, 1, 2; divide by 2 to recover the fractional value.
-    // vadv is the font's vertical advance, which for CJK = em.
-    int fwidth = (em_px * layout.width_halves) / 2;
-    int vadv   = em_px;
-    return (((int)layout.align) * (fwidth - vadv)) / 2;
+    // fwidth is the JFM slot width, taken from getJLReqVertSlotWidth so the
+    // multi-em composite preservation (2em kana-repeat / dash composites) is
+    // honoured; vadv_px is the font's natural vertical advance for this glyph.
+    // For a font-supplied 2em glyph fwidth == vadv_px → cwa = 0 (the glyph
+    // already fills its slot), avoiding the spurious half-em overshoot that a
+    // hardcoded vadv = em produced.
+    int fwidth = getJLReqVertSlotWidth(c, em_px, vadv_px);
+    return (((int)layout.align) * (fwidth - vadv_px)) / 2;
 }
 
 lChar32 getVertPresentationForm(lChar32 c)
 {
     // LuaTeX-ja vert_form_table port (ltj-jfont.lua:948-957).
-    // 27 codepoint mappings to U+FE10-FE48 (CJK Compatibility Forms block).
+    // 23 codepoint mappings to U+FE10-FE48 (CJK Compatibility Forms block).
     //
     // NOTE: dashes / leaders (U+2014, U+2013, U+2025, U+2026) are DELIBERATELY
     // omitted here, even though LuaTeX-ja's vert_form_table lists them.
@@ -336,6 +340,7 @@ int getJLReqGlueKernEighths(JLReqVertClass prev_class, JLReqVertClass next_class
     // Switch on prev (rows of the matrix), then next (columns).
     // Pairs not listed default to 0.
     switch (prev_class) {
+        case JLREQ_VERT_KANA_REPEAT:  // jfm-ujisv t[200] = copy(t[0]) — same as BODY row
         case JLREQ_VERT_CJK_BODY:
             switch (next_class) {
                 case JLREQ_VERT_OPEN_BRACKET:        return 4; // 0.5em

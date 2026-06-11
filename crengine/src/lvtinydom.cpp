@@ -7595,6 +7595,14 @@ void ldomNode::initNodeRendMethod()
                     if ( _nid == el_rubyBox || _nid == el_rbc || _nid == el_rtc ) {
                         setRendMethod( erm_table_row );
                         return;
+                    } else {
+                        // Unexpected element directly under a first-level rubyBox:
+                        // keep it invisible on re-renders, matching the
+                        // needs_wrapping=true path below (which sets erm_invisible
+                        // for non-row children).  Without this, a malformed
+                        // level-2 node would become visible after a cache reload.
+                        setRendMethod( erm_invisible );
+                        return;
                     }
                 }
                 // rbox3: parent=rbox2(el_rubyBox/rbc/rtc), gpar=rbox1(el_rubyBox),

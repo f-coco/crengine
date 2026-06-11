@@ -89,9 +89,10 @@ enum JLReqVertClass {
     JLREQ_VERT_OTHER                // Latin/numerals/etc — rotation path or default
 };
 
-// Returns the JLReq vertical class for `c`.  Vertical marks already detected
-// by isJapaneseHorizontalMark()/LFNT_HINT_VERTICAL_MARK return
-// JLREQ_VERT_VERT_MARK here too (callers may dispatch on either signal).
+// Returns the JLReq vertical class for `c`.  Note: this classifier never
+// returns JLREQ_VERT_VERT_MARK — that fork-only class is signalled separately
+// via LFNT_HINT_VERTICAL_MARK / isJapaneseHorizontalMark() at the call sites,
+// and only appears as a defensive case in the layout/glue switches below.
 JLReqVertClass getJLReqVertClass(lChar32 c);
 
 // Per-class JFM layout (LuaTeX-ja jfm-ujisv.lua port).
@@ -134,22 +135,29 @@ int getJLReqVertSlotWidth(lChar32 c, int em_px, int natural_advance_px);
 
 // Convenience: JFM in-slot shift (cwa) in the advance direction for `c`,
 // in pixels.  Implements `cwa = align * (fwidth - vadv)` from LuaTeX-ja
-// ltj-setwidth.lua capsule_glyph_tate() line 269, with vadv = em (CJK
-// natural vertical advance).  Returns a NEGATIVE value for half-em
-// classes with align >= MIDDLE, shifting the glyph "backward" in
-// advance direction (= up in tate) to overlap with the previous slot.
-int getJLReqVertCwa(lChar32 c, int em_px);
+// ltj-setwidth.lua capsule_glyph_tate() line 269.  `vadv_px` is the font's
+// natural vertical advance for the glyph (em for ordinary CJK, but 2em+ for
+// composite kana-repeat / dash glyphs supplied by the font's +vrt2 feature),
+// and fwidth is taken from getJLReqVertSlotWidth so it matches the slot width
+// Phase 3 applied.  Returns a NEGATIVE value for half-em classes with
+// align >= MIDDLE (shifting the glyph "backward" = up in tate to overlap the
+// previous slot), and 0 for a glyph that already fills its slot.
+int getJLReqVertCwa(lChar32 c, int em_px, int vadv_px);
 
 // LuaTeX-ja vform table port (ltj-jfont.lua:945-957, ltj-pretreat.lua:171-175).
 //
 // Returns the Unicode "presentation form for vertical" codepoint that should
 // replace `c` in vertical writing modes, or `c` itself if no mapping exists.
 //
-// Mapping is the standard JLReq mapping for CJK Compatibility Forms block:
-//   2014 EM DASH                   → FE31 PRES. FORM FOR VERT EM DASH
-//   2013 EN DASH                   → FE32 PRES. FORM FOR VERT EN DASH
-//   2025 TWO DOT LEADER            → FE30 PRES. FORM FOR VERT TWO DOT LEADER
-//   2026 HORIZONTAL ELLIPSIS       → FE19 PRES. FORM FOR VERT HORIZ ELLIPSIS
+// The standard JLReq mapping for the CJK Compatibility Forms block also covers
+// the dashes/leaders below, but THIS IMPLEMENTATION DELIBERATELY OMITS them so
+// the font's +vrt2 feature can produce continuous-stroke composites instead
+// (see the NOTE in getVertPresentationForm):
+//   2014 EM DASH                   → FE31 PRES. FORM FOR VERT EM DASH      (omitted)
+//   2013 EN DASH                   → FE32 PRES. FORM FOR VERT EN DASH      (omitted)
+//   2025 TWO DOT LEADER            → FE30 PRES. FORM FOR VERT TWO DOT LEADER (omitted)
+//   2026 HORIZONTAL ELLIPSIS       → FE19 PRES. FORM FOR VERT HORIZ ELLIPSIS (omitted)
+// The 23 mappings actually applied are:
 //   3001 IDEOGRAPHIC COMMA         → FE11 PRES. FORM FOR VERT IDEOG COMMA
 //   3002 IDEOGRAPHIC FULL STOP     → FE12 PRES. FORM FOR VERT IDEOG FULL STOP
 //   3008..3011 angle/lenticular brackets → FE3F..FE3C

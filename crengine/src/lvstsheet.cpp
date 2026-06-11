@@ -4828,6 +4828,13 @@ bool LVCssDeclaration::parse( const char * &decl, bool higher_importance, lxmlDo
             case cssd_writing_mode2: // -webkit-writing-mode
                 IF_g_SET_n_AND_break(true, css_wm_inherit, css_wm_horizontal_tb);
                 n = parse_name( decl, css_wm_names, -1 );
+                // vertical-lr is rendered as vertical-rl (unsupported): the fork's
+                // target is Japanese tategumi, and CSSLogical BS/BE indices and the
+                // draw anchor are hard-coded rl.  Alias at parse time so the value is
+                // honest about what gets rendered, rather than silently producing
+                // rl geometry under an lr label.
+                if ( n == css_wm_vertical_lr )
+                    n = css_wm_vertical_rl;
                 break;
             case cssd_text_orientation:
                 IF_g_SET_n_AND_break(true, css_to_inherit, css_to_mixed);

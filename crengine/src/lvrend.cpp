@@ -3703,7 +3703,10 @@ void renderFinalBlock( ldomNode * enode, LFormattedText * txform, RenderRectAcce
         if ( style->text_combine_upright != css_tcu_none ) { // tate-chu-yoko
             flags |= LTEXT_IS_TCY;
         }
-        if ( style->text_emphasis_style != css_tes_none ) { // kenten/bouten
+        if ( style->text_emphasis_style != css_tes_none
+                && style->text_emphasis_style != css_tes_inherit ) { // kenten/bouten
+            // css_tes_inherit is the unresolved initial value (root has no parent
+            // to inherit from): treat it as none so ordinary text gets no marks.
             flags |= LTEXT_HAS_EXTRA;
         }
 
@@ -5824,7 +5827,7 @@ private:
 public:
     FlowState( LVRendPageContext & ctx, int width, int usable_left_overflow, int usable_right_overflow,
                             int rendflags, int dir=REND_DIRECTION_UNSET, lInt32 langNodeIdx=0,
-                            int writingMode=1, int pageWidth=0 ):
+                            int writingMode=css_wm_horizontal_tb, int pageWidth=0 ):
         direction(dir),
         lang_node_idx(langNodeIdx),
         context(ctx),
@@ -5964,12 +5967,6 @@ public:
         if ( isVertical() )
             return c_x;
         return c_y;
-    }
-    /// Get the flow advance relative to current level start
-    int getCurrentFlowRelativeAdvance() {
-        if ( isVertical() )
-            return c_x - l_x;
-        return c_y - l_y;
     }
     /// Current flow position: c_x for vertical, c_y for horizontal
     int flowPos() const { return css_wm_is_vertical(writing_mode) ? c_x : c_y; }
@@ -11587,7 +11584,14 @@ void setNodeStyle( ldomNode * enode, css_style_ref_t parent_style, LVFontRef par
     UPDATE_STYLE_FIELD( border_collapse, css_border_c_inherit );
     // Vertical text: writing-mode and text-orientation are inherited per CSS spec
     UPDATE_STYLE_FIELD( writing_mode, css_wm_inherit );
+    // Note: text_orientation has initial value css_to_mixed (not css_to_inherit),
+    // so this propagation is currently inert, and no rendering code consumes the
+    // field yet — it is parsed-but-unused.  Left in place for when 'upright' is
+    // wired up; do not rely on it inheriting until the initial value matches.
     UPDATE_STYLE_FIELD( text_orientation, css_to_inherit );
+    // text-emphasis-style inherits per CSS Text Decoration L3; without this a
+    // <span> child of an emphasised <p> would lose its kenten/bouten marks.
+    UPDATE_STYLE_FIELD( text_emphasis_style, css_tes_inherit );
 
     // Firefox and Webkit/Chromium reset text-align: to 'start' for table if it originates from
     // the HTML align= attribute (eg: <center><table>):

@@ -1173,8 +1173,7 @@ static inline void drawGlyphItem(LVDrawBuf * buf, int x, int y,
 }
 
 // Vertical-rl glyph rotation helpers — definitions live in fork-only
-// lvfntman_vert_slot.cpp (extracted Phase D A2 to reduce soft-fork
-// divergence in lvfntman.cpp).
+// lvfntman_vert.cpp (which absorbed the former lvfntman_vert_slot.cpp).
 bool needsVerticalRotation90CW(lChar32 c);
 void drawGlyphItemRotated90CW(LVDrawBuf * buf, int glyph_x, int glyph_y,
         LVFontGlyphCacheItem * item, const lUInt32 * palette);
@@ -2884,12 +2883,13 @@ public:
             // writing modes, substitute selected codepoints to their CJK
             // Compatibility Forms vertical presentation variants (U+FE10..FE48)
             // before HarfBuzz shaping, per LuaTeX-ja's vform_table (ltj-jfont.lua
-            // 945-957, ltj-pretreat.lua 173-175).  Without this, fonts whose +vert
-            // GSUB returns a 2em-tall ligature for U+2014+U+2014 (Noto Serif JP
-            // gid16762) draw the bar in the wrong slot.  Substituting U+2014 →
-            // U+FE31 produces a 1em-tall glyph per — that chains naturally.
-            // Font-conditional: only substitute when the font cmap actually
-            // contains the FE-form glyph (LuaTeX-ja line 996: `if t.characters[v]`).
+            // 945-957, ltj-pretreat.lua 173-175).  Dashes/leaders (U+2014, U+2013,
+            // U+2025, U+2026) are DELIBERATELY NOT substituted here: for fonts
+            // whose +vrt2 maps them to multi-em composites (Hiragino nibu-dashi,
+            // etc.) we let +vrt2 produce the continuous-stroke composite instead
+            // (see getVertPresentationForm).  Font-conditional: only substitute
+            // when the font cmap actually contains the FE-form glyph (LuaTeX-ja
+            // line 996: `if t.characters[v]`).
             bool is_vertical_subst = (hints & LFNT_HINT_IS_VERTICAL) != 0;
             auto subst_for_vert = [&](lChar32 ch) -> lChar32 {
                 if (!is_vertical_subst) return ch;
@@ -4478,6 +4478,7 @@ public:
                             else {
                                 // Regular drawing of glyph at the baseline
                                 int w;
+                                int vert_natural_adv = _size; // font's natural vertical advance (em default)
                                 if ( glyph_pos[i].x_advance )
                                     w = FONT_METRIC_TO_PX(glyph_pos[i].x_advance + _synth_weight_strength);
                                 else
@@ -4487,6 +4488,11 @@ public:
                                 // x_advance.  Override w with abs(y_advance) when present.
                                 if (is_vertical_draw && glyph_pos[i].y_advance) {
                                     w = abs(FONT_METRIC_TO_PX(glyph_pos[i].y_advance + _synth_weight_strength));
+                                    // Natural vertical advance (before Phase 3 slot
+                                    // override) — fed to getJLReqVertCwa so the in-slot
+                                    // shift uses the font's real advance (2em+ for
+                                    // composite glyphs), not a hardcoded em.
+                                    vert_natural_adv = w;
                                     // Phase 3 (LuaTeX-ja jfm-ujisv.lua half-em compaction):
                                     // override em advance with em/2 for half-em classes.
                                     // For non-CJK (Latin/space/digits): use horizontal
@@ -4645,7 +4651,7 @@ public:
                                     lUInt32 cluster_idx = glyph_info[i].cluster;
                                     if (cluster_idx < (lUInt32)len)
                                         cluster_char = text[cluster_idx];
-                                    int cwa = getJLReqVertCwa(cluster_char, _size);
+                                    int cwa = getJLReqVertCwa(cluster_char, _size, vert_natural_adv);
                                     VertGlyphMetrics vm;
                                     if (_vert_metrics_cache.get(_face, glyph_info[i].codepoint, vm)) {
                                         int col_center = x + _size / 2;

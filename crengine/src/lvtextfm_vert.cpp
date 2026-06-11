@@ -1596,8 +1596,8 @@ void drawVerticalEmphasisMarks(
     if ( !(srcline->flags & LTEXT_HAS_EXTRA) )
         return;
     int em_style = getLTextExtraProperty(srcline, LTEXT_EXTRA_CSS_TEXT_EMPHASIS);
-    if ( em_style <= 0 )
-        return;
+    if ( em_style <= 0 || em_style == css_tes_inherit )
+        return; // none, or unresolved inherit (treated as none)
     // Map style enum to Unicode mark character, per CSS Text Decoration L3
     // (§ text-emphasis-style): dot = • / ◦, circle = ● / ○, double-circle =
     // ◉ / ◎, triangle = ▲ / △, sesame = ﹅ / ﹆.

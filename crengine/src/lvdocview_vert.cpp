@@ -41,7 +41,7 @@ int LVDocView::vertPageRight( const lvRect & pageRect, int page_content_height )
 /// page-HEIGHT heuristic that returned true if ANY page was short.  That
 /// false-positived on horizontal rtl-spine EPUBs with no writing-mode CSS
 /// (e.g. calibre conversions): a short title page made isVerticalText() true,
-/// and ReaderRolling forced RTL page-turn on horizontal text ("横書き RTL").
+/// and ReaderRolling forced RTL page-turn on horizontal text (horizontal-RTL).
 bool LVDocView::isVerticalText() const {
     if (m_pages.length() > 0) {
         for (int i = 0; i < m_pages.length(); i++) {
