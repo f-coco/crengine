@@ -636,27 +636,12 @@ public:
     // and between y and y+h
     // Also set offset_x to the x where this width is available
     int getAvailableWidthAtY(int start_y, int h, int & offset_x) {
-        // For vertical text, the "line width" is the column height (page_height).
-        // Using m_pbuffer->width (horizontal block width) would make alignLine
-        // think the column massively overflows, causing heavy space compression.
-        // Return page_height directly: processParagraphVertical already limits
-        // column content via char_count_adv so frmline->width ≤ page_height,
-        // giving extra_width ≥ 0 and no spurious space reduction.  The previous
-        // (page_height - strut_height) value caused extra_width = -strut which
-        // triggered space reduction, shifting ruby inline-box word->x values
-        // upward without the vstate.vert_min_next_x clamping that protects plain chars.
-        // This check is hoisted ABOVE the floatcount==0 short path: outer-float
-        // footprints are registered as fake floats in Format(), so a vertical final
-        // block with an ancestor footprint has floatcount>0 and would otherwise fall
-        // through to the horizontal float/width logic below.
-        if ( m_pbuffer->writing_mode == css_wm_vertical_rl ||
-             m_pbuffer->writing_mode == css_wm_vertical_lr ) {
-            offset_x = 0;
-            return m_pbuffer->page_height;
-        }
+        bool is_vertical = (m_pbuffer->writing_mode == css_wm_vertical_rl ||
+                            m_pbuffer->writing_mode == css_wm_vertical_lr);
+        int line_extent = is_vertical ? m_pbuffer->page_height : m_pbuffer->width;
         if (m_pbuffer->floatcount == 0) { // common short path when no float
             int fl_left_max_x = 0;
-            int fl_right_min_x = m_pbuffer->width;
+            int fl_right_min_x = line_extent;
             if ( m_initial_letter_exclusion.active ) {
                 int y = start_y;
                 while ( y <= start_y + h ) {
@@ -678,7 +663,7 @@ public:
             return fl_right_min_x - fl_left_max_x;
         }
         int fl_left_max_x = 0;
-        int fl_right_min_x = m_pbuffer->width;
+        int fl_right_min_x = line_extent;
         // We need to scan line by line from start_y to start_y+h to be sure
         int y = start_y;
         while (y <= start_y + h) {
@@ -718,13 +703,16 @@ public:
     int getYWithAvailableWidth(int start_y, int required_width, int required_height, int & offset_x, bool get_right_offset_x=false) {
         int y = start_y;
         int w;
+        bool is_vertical = (m_pbuffer->writing_mode == css_wm_vertical_rl ||
+                            m_pbuffer->writing_mode == css_wm_vertical_lr);
+        int line_extent = is_vertical ? m_pbuffer->page_height : m_pbuffer->width;
         while (true) {
             w = getAvailableWidthAtY(y, required_height, offset_x);
             if (w >= required_width) // found it
                 break;
-            if (w == m_pbuffer->width) { // We're past all floats
+            if (w == line_extent) { // We're past all floats
                 // returns this y even if required_width is larger than
-                // m_pbuffer->width and it will overflow
+                // the line extent and it will overflow
                 offset_x = 0;
                 break;
             }
@@ -732,8 +720,8 @@ public:
         }
         if (get_right_offset_x) {
             int left_floats_w = offset_x;
-            int right_floats_w = m_pbuffer->width - left_floats_w - w;
-            offset_x = m_pbuffer->width - right_floats_w - required_width;
+            int right_floats_w = line_extent - left_floats_w - w;
+            offset_x = line_extent - right_floats_w - required_width;
             if (offset_x < 0) // overflow
                 offset_x = 0;
         }
@@ -795,7 +783,9 @@ public:
             // if UNSET (and not with the direction determined by fribidi from the text).
             // We provide 0,0 as the usable left/right overflows, so no glyph/hanging
             // punctuation will leak outside the floatBox.
-            renderBlockElement( alt_context, node, 0, 0, m_pbuffer->width, 0, 0, m_specified_para_dir );
+            int container_width = css_wm_is_vertical(m_pbuffer->writing_mode)
+                    ? m_pbuffer->page_height : m_pbuffer->width;
+            renderBlockElement( alt_context, node, 0, 0, container_width, 0, 0, m_specified_para_dir );
             // (renderBlockElement will ensure style->height if requested.)
             // Gather footnotes links accumulated by alt_context
             // (We only need to gather links in the rendering phase, for

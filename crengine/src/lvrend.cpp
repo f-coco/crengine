@@ -6221,8 +6221,7 @@ public:
         // Most often for content lines, lvtextfm.cpp's LVFormatter will
         // have already checked for float (via BlockFloatFootprint), so
         // avoid calling hasFloatRunningAtY() when not needed
-        // (skip float checks entirely for vertical mode)
-        if ( !isVertical() && !(flags & RN_SPLIT_BEFORE_AVOID) && hasFloatRunningAtY(c_y) )
+        if ( !(flags & RN_SPLIT_BEFORE_AVOID) && hasFloatRunningAtY(c_y) )
             flags |= RN_SPLIT_BEFORE_AVOID;
         flags |= line_dir_flag;
         context.AddLine( flowPos(), flowPos() + height, flags );
@@ -6277,10 +6276,8 @@ public:
             // but this has to be done if not done by pushVerticalMargin()
             resetFloatsLevelToTopLevel();
         }
-        // skip_float_checks=true for vertical (floats not supported in vertical mode)
         addSpaceToContext( flowPos(), flowPos() + height, line_h,
-                           split_avoid_before, split_avoid_inside, split_avoid_after,
-                           isVertical() );
+                           split_avoid_before, split_avoid_inside, split_avoid_after );
         advanceFlowPos( height );
         last_split_after_flag = split_avoid_after ? RN_SPLIT_AVOID : RN_SPLIT_AUTO;
         if ( !seen_content_since_page_split ) {
@@ -7668,16 +7665,6 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
     // is this a floating float container (floatBox)?
     bool is_floating = BLOCK_RENDERING(flags, FLOAT_FLOATBOXES) && enode->isEffectiveFloatingBox();
     bool is_floatbox_child = BLOCK_RENDERING(flags, FLOAT_FLOATBOXES) && parent && parent->isEffectiveFloatingBox();
-    // FORK (vertical-rl): floats are rendered as in-flow blocks in vertical
-    // writing modes (their positioning math is horizontal-axis only and would
-    // draw the float on top of the column text). The sibling-loop above lets a
-    // floatBox fall through to the normal block branch; here we make the
-    // floatBox itself (and its child) render as a plain block rather than a
-    // float, so it occupies its own column band.
-    if ( flow->isVertical() ) {
-        is_floating = false;
-        is_floatbox_child = false;
-    }
     // is this a inline block container (inlineBox)?
     bool is_inline_box = enode->isEffectiveBoxingInlineBox();
     bool is_inline_box_child = parent && parent->isEffectiveBoxingInlineBox();
@@ -8812,18 +8799,10 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
                     //   float on that side BUT the following non-floating blocks should
                     //   not move and continue being rendered at the current y
 
-                    if ( child->isFloatingBox() && !flow->isVertical() ) {
+                    if ( child->isFloatingBox() ) {
                         // Block floats are positioned respecting the current collapsed
                         // margin, without actually globally pushing it, and without
                         // collapsing with it.
-                        // FORK (vertical-rl): float positioning (addFloat /
-                        // getYWithAvailableWidth) is all horizontal-axis math and lands
-                        // the float at a swapped/wrong screen position, drawing the
-                        // illustration on top of the column text (Momo's div.leftfig).
-                        // In vertical mode we skip the float path and let the floatBox
-                        // fall through to the normal in-flow block branch below, so the
-                        // illustration gets its own column band (see also the is_floating
-                        // gate in renderBlockElementEnhanced).
                         int flt_vertical_margin = flow->getCurrentVerticalMargin();
                         bool is_right = ( child_style->float_ == css_f_right ) ||
                               ( is_rtl && child_style->float_ == css_f_inline_start ) ||

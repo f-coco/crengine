@@ -575,9 +575,7 @@ void addLineVertical( LVFormatter* fmt, int start, int end, int x, src_text_frag
 /// coordinate swap. Uses page_height as the line extent instead of width.
 ///
 /// Key differences from processParagraphHorizontal():
-/// - maxWidth -> maxHeight (using m_pbuffer->page_height)
-/// - Float handling skipped (floats are a horizontal concept)
-/// - getYWithAvailableWidth / fillAndMoveToY skipped (no vertical float avoidance)
+/// - maxWidth -> maxHeight (using the current column's available inline extent)
 /// - addLineHorizontal -> addLineVertical
 ///
 /// addLineVertical currently delegates to addLineHorizontal, so line creation
@@ -638,7 +636,7 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
         //
         // Fix: get the font's per-character advance (≈ font size) and use
         // char_count × font_advance for the column-height limit check.
-        int maxHeight = fmt->m_pbuffer->page_height;
+        int fullHeight = fmt->m_pbuffer->page_height;
         // Per-character horizontal advance (≈ font size for CJK), used to limit
         // column height based on actual character count rather than cluster advances.
         int avg_char_advance = 0;
@@ -698,8 +696,16 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
             // xkanjiskip / inter-class glue and under-counts the real column fill.
             int col_used_est_at_normal_wrap = -1;
 
-            // Float handling skipped in vertical mode (Step 1).
-            // TODO (Step 2+): implement vertical float positioning if needed.
+            int maxHeight = fmt->getCurrentLineWidth();
+            if ( maxHeight <= avg_char_advance ) {
+                int unused_x;
+                int new_y = fmt->getYWithAvailableWidth(fmt->m_line_advance,
+                        avg_char_advance, fmt->m_pbuffer->strut_height, unused_x);
+                fmt->fillAndMoveToY( new_y );
+                maxHeight = fmt->getCurrentLineWidth();
+            }
+            if ( maxHeight <= 0 )
+                maxHeight = fullHeight;
 
             if ( fmt->m_flags[pos] & LCHAR_IS_CLUSTER_TAIL && pos > 0 ) {
                 int bpos = pos - 1;
@@ -727,10 +733,13 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                 lUInt16 flags = fmt->m_flags[i];
                 if ( flags & LCHAR_IS_OBJECT ) {
                     if ( fmt->m_charindex[i] == FLOAT_CHAR_INDEX ) {
-                        // Skip floats in vertical layout (Step 1).
-                        // TODO (Step 2+): implement vertical float handling.
                         src_text_fragment_t * src = fmt->m_srcs[i];
-                        src->o.objflags |= LTEXT_OBJECT_IS_FLOAT_DONE;
+                        if ( !(src->o.objflags & LTEXT_OBJECT_IS_FLOAT_DONE) ) {
+                            int currentWidth = y + col_used_est;
+                            fmt->addFloat( src, currentWidth );
+                            src->o.objflags |= LTEXT_OBJECT_IS_FLOAT_DONE;
+                            maxHeight = fmt->getCurrentLineWidth();
+                        }
                         if ( i==fmt->m_length-1 ) {
                             lastNormalWrap = i;
                         }
