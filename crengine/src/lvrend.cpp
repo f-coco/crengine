@@ -9639,6 +9639,24 @@ static void DrawBorderVertical(ldomNode *enode, LVDrawBuf & drawbuf,
     if (hasRight)  drawbuf.FillRect(screen_right - rwidth, screen_top,           screen_right,         screen_bottom,       colRight);
     if (hasLeft)   drawbuf.FillRect(screen_left,          screen_top,            screen_left + lwidth, screen_bottom,       colLeft);
 }
+
+static void DrawBackgroundColorVertical(LVDrawBuf & drawbuf,
+                               int x0, int y0, int doc_x, int doc_y, RenderRectAccessor fmt, lUInt32 bg_color)
+{
+    lvRect clip;
+    drawbuf.GetClipRect(&clip);
+    draw_extra_info_t * dei = (draw_extra_info_t*)drawbuf.GetDrawExtraInfo();
+    int anchor = (dei && dei->vert_column_clip_right) ? dei->vert_column_clip_right : clip.right;
+
+    int box_w = fmt.getWidth();   // doc-X extent -> screen height
+    int box_h = fmt.getHeight();  // doc-Y extent -> screen width
+    int screen_top    = x0 + doc_x;
+    int screen_bottom = screen_top + box_w;
+    int screen_right  = anchor - (y0 + doc_y);
+    int screen_left   = screen_right - box_h;
+
+    drawbuf.FillRect(screen_left, screen_top, screen_right, screen_bottom, bg_color);
+}
 // === END FORK ===============================================================
 
 //draw border lines,support color,width,all styles, not support border-collapse
@@ -10124,6 +10142,12 @@ void DrawBackgroundImage(ldomNode *enode,LVDrawBuf & drawbuf,int x0,int y0,int d
     // (The provided width and height gives the area we have to draw the background image on)
     css_style_ref_t style=enode->getStyle();
     if (!style->background_image.empty()) {
+        // FORK (vertical-rl): regular element background images need the same
+        // doc-X/doc-Y to screen-Y/screen-X mapping as borders and background
+        // colors. Keep body/canvas background drawing on the legacy path.
+        bool draw_vertical = clip_to_target && css_wm_is_vertical(style->writing_mode);
+        int target_width = draw_vertical ? height : width;
+        int target_height = draw_vertical ? width : height;
         lString32 filepath = lString32(style->background_image.c_str());
         LVImageSourceRef img = enode->getParentNode()->getDocument()->getObjectImageSource(filepath);
         if (img.isNull()) { // filepath may be url-encoded
@@ -10143,8 +10167,8 @@ void DrawBackgroundImage(ldomNode *enode,LVDrawBuf & drawbuf,int x0,int y0,int d
                 int new_w = 0;
                 int new_h = 0;
                 RenderRectAccessor fmt( enode );
-                int container_w = fmt.getWidth();
-                int container_h = fmt.getHeight();
+                int container_w = draw_vertical ? target_width : fmt.getWidth();
+                int container_h = draw_vertical ? target_height : fmt.getHeight();
                 bool check_lengths = true;
                 if ( bg_w.type == css_val_unspecified && bg_h.type == css_val_unspecified ) {
                     if ( bg_w.value == css_generic_contain && bg_h.value == css_generic_contain ) {
@@ -10222,9 +10246,9 @@ void DrawBackgroundImage(ldomNode *enode,LVDrawBuf & drawbuf,int x0,int y0,int d
                 case css_background_repeat:
                 default:
                     // No need to tile if image is larger than target
-                    if ( width > img_w ) {
+                    if ( target_width > img_w ) {
                         hori_transform = IMG_TRANSFORM_TILE;
-                        transform_w = width;
+                        transform_w = target_width;
                     }
                     break;
             }
@@ -10236,9 +10260,9 @@ void DrawBackgroundImage(ldomNode *enode,LVDrawBuf & drawbuf,int x0,int y0,int d
                 case css_background_repeat:
                 default:
                     // No need to tile if image is larger than target
-                    if ( height > img_h ) {
+                    if ( target_height > img_h ) {
                         vert_transform = IMG_TRANSFORM_TILE;
-                        transform_h = height;
+                        transform_h = target_height;
                     }
                     break;
             }
@@ -10254,12 +10278,12 @@ void DrawBackgroundImage(ldomNode *enode,LVDrawBuf & drawbuf,int x0,int y0,int d
                 case css_background_center_top:
                 case css_background_center_center:
                 case css_background_center_bottom:
-                    draw_x = (width - img_w)/2;
+                    draw_x = (target_width - img_w)/2;
                     break;
                 case css_background_right_top:
                 case css_background_right_center:
                 case css_background_right_bottom:
-                    draw_x = width - img_w;
+                    draw_x = target_width - img_w;
                     break;
                 default:
                     break;
@@ -10272,12 +10296,12 @@ void DrawBackgroundImage(ldomNode *enode,LVDrawBuf & drawbuf,int x0,int y0,int d
                 case css_background_left_center:
                 case css_background_center_center:
                 case css_background_right_center:
-                    draw_y = (height - img_h)/2;
+                    draw_y = (target_height - img_h)/2;
                     break;
                 case css_background_left_bottom:
                 case css_background_center_bottom:
                 case css_background_right_bottom:
-                    draw_y = height - img_h;
+                    draw_y = target_height - img_h;
                     break;
                 default:
                     break;
@@ -10314,13 +10338,38 @@ void DrawBackgroundImage(ldomNode *enode,LVDrawBuf & drawbuf,int x0,int y0,int d
             */
             LVImageSourceRef transformed = LVCreateStretchFilledTransform(img, transform_w, transform_h,
                                                hori_transform, vert_transform, transform_x, transform_y);
+            int vertical_screen_left = 0;
+            int vertical_screen_top = 0;
+            int vertical_screen_right = 0;
+            int vertical_screen_bottom = 0;
+            if (draw_vertical) {
+                lvRect clip;
+                drawbuf.GetClipRect(&clip);
+                draw_extra_info_t * dei = (draw_extra_info_t*)drawbuf.GetDrawExtraInfo();
+                int anchor = (dei && dei->vert_column_clip_right) ? dei->vert_column_clip_right : clip.right;
+                vertical_screen_top = x0 + doc_x;
+                vertical_screen_bottom = vertical_screen_top + width;
+                vertical_screen_right = anchor - (y0 + doc_y);
+                vertical_screen_left = vertical_screen_right - height;
+            }
             // We use the DrawBuf clip facility to ensure we don't draw outside this node fmt
             lvRect orig_clip;
             if (clip_to_target) {
                 drawbuf.GetClipRect( &orig_clip ); // Backup the original one
                 // Set a new one to the target area
-                lvRect target_clip = lvRect(x0+doc_x, y0+doc_y, x0+doc_x+width, y0+doc_y+height);;
-                // But don't overflow page top and bottom, in case target spans multiple pages
+                lvRect target_clip;
+                if (draw_vertical) {
+                    target_clip = lvRect(vertical_screen_left, vertical_screen_top,
+                                         vertical_screen_right, vertical_screen_bottom);
+                }
+                else {
+                    target_clip = lvRect(x0+doc_x, y0+doc_y, x0+doc_x+target_width, y0+doc_y+target_height);
+                }
+                // But don't overflow the current clip, in case target spans multiple pages
+                if ( target_clip.left < orig_clip.left )
+                    target_clip.left = orig_clip.left;
+                if ( target_clip.right > orig_clip.right )
+                    target_clip.right = orig_clip.right;
                 if ( target_clip.top < orig_clip.top )
                     target_clip.top = orig_clip.top;
                 if ( target_clip.bottom > orig_clip.bottom )
@@ -10328,7 +10377,13 @@ void DrawBackgroundImage(ldomNode *enode,LVDrawBuf & drawbuf,int x0,int y0,int d
                 drawbuf.SetClipRect( &target_clip );
             }
             // Draw
-            drawbuf.Draw(transformed, x0+doc_x+draw_x, y0+doc_y+draw_y, transform_w, transform_h);
+            if (draw_vertical) {
+                drawbuf.Draw(transformed, vertical_screen_left+draw_x,
+                             vertical_screen_top+draw_y, transform_w, transform_h);
+            }
+            else {
+                drawbuf.Draw(transformed, x0+doc_x+draw_x, y0+doc_y+draw_y, transform_w, transform_h);
+            }
             if (clip_to_target) {
                 drawbuf.SetClipRect( &orig_clip ); // Restore the original one
             }
@@ -10634,8 +10689,12 @@ void DrawDocument( LVDrawBuf & drawbuf, ldomNode * enode, int x0, int y0, int dx
                 }
                 else {
                     // Regular element: draw bgcolor or image inside its border box
-                    if ( draw_bg_color )
-                        drawbuf.FillRect( x0 + doc_x, y0 + doc_y, x0 + doc_x+fmt.getWidth(), y0+doc_y+fmt.getHeight(), bg_color );
+                    if ( draw_bg_color ) {
+                        if ( css_wm_is_vertical(style->writing_mode) )
+                            DrawBackgroundColorVertical(drawbuf, x0, y0, doc_x, doc_y, fmt, bg_color);
+                        else
+                            drawbuf.FillRect( x0 + doc_x, y0 + doc_y, x0 + doc_x+fmt.getWidth(), y0+doc_y+fmt.getHeight(), bg_color );
+                    }
                     if ( draw_bg_image )
                         DrawBackgroundImage(enode, drawbuf, x0, y0, doc_x, doc_y, fmt.getWidth(), fmt.getHeight());
                         // (Commented identical calls below as they seem redundant with what was just done here)
