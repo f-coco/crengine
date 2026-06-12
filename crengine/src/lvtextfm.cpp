@@ -596,6 +596,31 @@ public:
         m_initial_letter_exclusion.end_y = exclusion_end;
     }
 
+    int getLineExtent() {
+        return css_wm_is_vertical(m_pbuffer->writing_mode)
+                ? m_pbuffer->page_height : m_pbuffer->width;
+    }
+
+    int getVerticalImageInlineExtent(ldomNode * node, int fallback) {
+        if ( !node )
+            return fallback;
+        int extent = fallback;
+        if ( node->isEffectiveImage() ) {
+            ldomNode * image_node = node->getEffectiveNode();
+            int img_width = 0;
+            int img_height = 0;
+            getStyledImageSize( image_node, img_width, img_height, getLineExtent(), -1, true );
+            if ( img_height > extent )
+                extent = img_height;
+        }
+        for ( int i=0; i<node->getChildCount(); i++ ) {
+            int child_extent = getVerticalImageInlineExtent(node->getChildNode(i), extent);
+            if ( child_extent > extent )
+                extent = child_extent;
+        }
+        return extent;
+    }
+
     // Embedded floats positioning helpers.
     // Returns y of the bottom of the lowest float
     int getFloatsMaxBottomY() {
@@ -636,9 +661,7 @@ public:
     // and between y and y+h
     // Also set offset_x to the x where this width is available
     int getAvailableWidthAtY(int start_y, int h, int & offset_x) {
-        bool is_vertical = (m_pbuffer->writing_mode == css_wm_vertical_rl ||
-                            m_pbuffer->writing_mode == css_wm_vertical_lr);
-        int line_extent = is_vertical ? m_pbuffer->page_height : m_pbuffer->width;
+        int line_extent = getLineExtent();
         if (m_pbuffer->floatcount == 0) { // common short path when no float
             int fl_left_max_x = 0;
             int fl_right_min_x = line_extent;
@@ -703,9 +726,7 @@ public:
     int getYWithAvailableWidth(int start_y, int required_width, int required_height, int & offset_x, bool get_right_offset_x=false) {
         int y = start_y;
         int w;
-        bool is_vertical = (m_pbuffer->writing_mode == css_wm_vertical_rl ||
-                            m_pbuffer->writing_mode == css_wm_vertical_lr);
-        int line_extent = is_vertical ? m_pbuffer->page_height : m_pbuffer->width;
+        int line_extent = getLineExtent();
         while (true) {
             w = getAvailableWidthAtY(y, required_height, offset_x);
             if (w >= required_width) // found it
@@ -803,6 +824,12 @@ public:
         RenderRectAccessor fmt( node );
         width = fmt.getWidth();
         height = fmt.getHeight();
+        int margin_width = width;
+        if ( css_wm_is_vertical(m_pbuffer->writing_mode) ) {
+            int inline_extent = getVerticalImageInlineExtent(node, width);
+            if ( inline_extent > width )
+                width = inline_extent;
+        }
 
         flt->width = width;
         flt->height = height;
@@ -816,7 +843,9 @@ public:
             if ( flt->is_right )
                 flt->inward_margin = cfmt.getX();
             else
-                flt->inward_margin = width - (cfmt.getX() + cfmt.getWidth());
+                flt->inward_margin = margin_width - (cfmt.getX() + cfmt.getWidth());
+            if ( flt->inward_margin < 0 )
+                flt->inward_margin = 0;
         }
 
         // If there are already floats to position, don't position any more for now
@@ -985,7 +1014,7 @@ public:
     bool isCurrentLineWithFloat() {
         int x;
         int w = getAvailableWidthAtY(m_line_advance, m_pbuffer->strut_height, x);
-        return w < m_pbuffer->width;
+        return w < getLineExtent();
     }
     bool isCurrentLineWithFloatOnLeft() {
         int x;
@@ -995,7 +1024,7 @@ public:
     bool isCurrentLineWithFloatOnRight() {
         int x;
         int w = getAvailableWidthAtY(m_line_advance, m_pbuffer->strut_height, x);
-        return x + w < m_pbuffer->width;
+        return x + w < getLineExtent();
     }
     void checkOngoingFloat() {
         // Check if there is still some float spanning at current m_line_advance
@@ -1034,8 +1063,9 @@ public:
             // limit the usable overflow.
             int fl_left_max_x = 0;
             int fl_left_max_x_overflow = - m_usable_left_overflow;
-            int fl_right_min_x = m_pbuffer->width;
-            int fl_right_min_x_overflow = m_pbuffer->width + m_usable_right_overflow;
+            int line_extent = getLineExtent();
+            int fl_right_min_x = line_extent;
+            int fl_right_min_x_overflow = line_extent + m_usable_right_overflow;
             // We need to scan pixel line by pixel line along the strut height to be sure
             int y = m_line_advance;
             int end_y = y + m_pbuffer->strut_height;
@@ -2521,6 +2551,11 @@ public:
                                     ? base_horiz_advance_pre : annot_depth;
                         } else {
                             advance = width;
+                        }
+                        if ( css_wm_is_vertical(m_pbuffer->writing_mode) && !is_ruby_inline_pre ) {
+                            int inline_extent = getVerticalImageInlineExtent(node, advance);
+                            if ( inline_extent > advance )
+                                advance = inline_extent;
                         }
                         m_srcs[start]->o.width = advance; // word->width uses o.width for frmline advance
                         m_srcs[start]->o.height = height;

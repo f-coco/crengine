@@ -6093,6 +6093,26 @@ public:
     bool hasActiveFloats() {
         return _floats.length() > 0;
     }
+    int getVerticalImageInlineExtent(ldomNode * node, int fallback) {
+        if ( !node )
+            return fallback;
+        int extent = fallback;
+        if ( node->isEffectiveImage() ) {
+            ldomNode * image_node = node->getEffectiveNode();
+            int img_width = 0;
+            int img_height = 0;
+            int container_width = isVertical() ? page_height : o_width;
+            getStyledImageSize( image_node, img_width, img_height, container_width, -1, true );
+            if ( img_height > extent )
+                extent = img_height;
+        }
+        for ( int i=0; i<node->getChildCount(); i++ ) {
+            int child_extent = getVerticalImageInlineExtent(node->getChildNode(i), extent);
+            if ( child_extent > extent )
+                extent = child_extent;
+        }
+        return extent;
+    }
     bool hasFloatRunningAtY( int y, int h=0 ) {
         for (int i=0; i<_floats.length(); i++) {
             BlockFloat * flt = _floats[i];
@@ -7086,6 +7106,12 @@ public:
         RenderRectAccessor fmt( node );
         int width = fmt.getWidth();
         int height = fmt.getHeight();
+        int margin_width = width;
+        if ( isVertical() ) {
+            int inline_extent = getVerticalImageInlineExtent(node, width);
+            if ( inline_extent > width )
+                width = inline_extent;
+        }
         int x = fmt.getX();   // a floatBox has no margin and no padding, but x carries the container's padding left
         int y = fmt.getY();   // (but y must be =0, as padding_top has already been accounted in c_y
         // printf("  block addFloat w=%d h=%d x=%d y=%d\n", width, height, x, y);
@@ -7099,7 +7125,17 @@ public:
             fy = pos_y;
         int fx = 0;
         fy = getYWithAvailableWidth(fy, width, height, x_min, x_max, fx, is_right);
-        _floats.push( new BlockFloat( fx, fy, fx + width, fy + height, is_right, level, true, node, link_ids) );
+        BlockFloat * block_float = new BlockFloat( fx, fy, fx + width, fy + height, is_right, level, true, node, link_ids);
+        if ( isVertical() && node->getChildCount() > 0 ) {
+            RenderRectAccessor cfmt(node->getChildNode(0));
+            if ( is_right )
+                block_float->inward_margin = cfmt.getX();
+            else
+                block_float->inward_margin = margin_width - (cfmt.getX() + cfmt.getWidth());
+            if ( block_float->inward_margin < 0 )
+                block_float->inward_margin = 0;
+        }
+        _floats.push( block_float );
 
         // Get relative coordinates to current container top
         shift_x = fx - x_min;
@@ -7274,7 +7310,7 @@ public:
                 }
             }
         }
-        if ( floats_involved > 0 && floats_involved <= 5) {
+        if ( !isVertical() && floats_involved > 0 && floats_involved <= 5) {
             // We can use floatIds
             footprint.use_floatIds = true;
             footprint.nb_floatIds = floats_involved;
