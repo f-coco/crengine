@@ -19,6 +19,8 @@
 int s_ruby_vert_ok   = 0;
 int s_ruby_vert_miss = 0;
 int s_ruby_col_x_max = 0;
+int s_list_marker_vert_ok = 0;
+int s_list_marker_vert_miss = 0;
 
 void lvrend_reset_ruby_diag() {
     s_ruby_vert_ok = s_ruby_vert_miss = s_ruby_col_x_max = 0;
@@ -28,4 +30,14 @@ void lvrend_get_ruby_diag(int *ok_out, int *miss_out, int *col_x_max_out) {
     *ok_out        = s_ruby_vert_ok;
     *miss_out      = s_ruby_vert_miss;
     *col_x_max_out = s_ruby_col_x_max;
+}
+
+void lvrend_reset_list_marker_diag() {
+    s_list_marker_vert_ok = 0;
+    s_list_marker_vert_miss = 0;
+}
+
+void lvrend_get_list_marker_diag(int *ok_out, int *miss_out) {
+    *ok_out = s_list_marker_vert_ok;
+    *miss_out = s_list_marker_vert_miss;
 }

@@ -61,6 +61,23 @@ bool gRenderScaleFontWithDPI = DEF_RENDER_SCALE_FONT_WITH_DPI;
 extern int s_ruby_vert_ok;
 extern int s_ruby_vert_miss;
 extern int s_ruby_col_x_max;
+extern int s_list_marker_vert_ok;
+extern int s_list_marker_vert_miss;
+
+static int resolveEffectiveWritingMode(ldomNode *enode)
+{
+    int writing_mode = enode->getStyle()->writing_mode;
+    if ( writing_mode == css_wm_inherit ) {
+        for (ldomNode * p = enode->getParentNode(); p && p->isElement(); p = p->getParentNode()) {
+            css_style_ref_t ps = p->getStyle();
+            if ( !ps.isNull() && ps->writing_mode != css_wm_inherit ) {
+                writing_mode = ps->writing_mode;
+                break;
+            }
+        }
+    }
+    return writing_mode;
+}
 
 int scaleForRenderDPI( int value ) {
     // if gRenderDPI == 0 or 96, use value as is (1px = 1px)
@@ -10811,8 +10828,13 @@ void DrawDocument( LVDrawBuf & drawbuf, ldomNode * enode, int x0, int y0, int dx
                     }
                     int list_marker_width;
                     renderListItemMarker( enode, list_marker_width, NULL, txform.get(), txt_flags);
+                    int marker_writing_mode = resolveEffectiveWritingMode(enode);
+                    if ( css_wm_is_vertical(marker_writing_mode) )
+                        s_list_marker_vert_ok++;
+                    else
+                        s_list_marker_vert_miss++;
                     /*
-                    lUInt32 h = txform->Format( (lUInt16)list_marker_width, (lUInt16)page_height, direction );
+                    lUInt32 h = txform->Format( (lUInt16)list_marker_width, (lUInt16)page_height, direction, marker_writing_mode );
                     lvRect clip;
                     drawbuf.GetClipRect( &clip );
                     if (doc_y + y0 + h <= clip.bottom) {...} // draw only if marker fully fits on page
@@ -10827,7 +10849,7 @@ void DrawDocument( LVDrawBuf & drawbuf, ldomNode * enode, int x0, int y0, int dx
                         else
                             shift_x += list_marker_width;
                     }
-                    txform->Format( (lUInt16)list_marker_width, (lUInt16)page_height, direction );
+                    txform->Format( (lUInt16)list_marker_width, (lUInt16)page_height, direction, marker_writing_mode );
                     if ( is_rtl ) {
                         // Draw it starting after 'width'
                         txform->Draw( &drawbuf, doc_x+x0 + width + shift_x, doc_y+y0 + padding_top );
@@ -11010,8 +11032,13 @@ void DrawDocument( LVDrawBuf & drawbuf, ldomNode * enode, int x0, int y0, int dx
                     }
                     int list_marker_width;
                     renderListItemMarker( enode, list_marker_width, NULL, txform.get(), txt_flags);
+                    int marker_writing_mode = resolveEffectiveWritingMode(enode);
+                    if ( css_wm_is_vertical(marker_writing_mode) )
+                        s_list_marker_vert_ok++;
+                    else
+                        s_list_marker_vert_miss++;
                     /*
-                    lUInt32 h = txform->Format( (lUInt16)list_marker_width, (lUInt16)page_height, direction );
+                    lUInt32 h = txform->Format( (lUInt16)list_marker_width, (lUInt16)page_height, direction, marker_writing_mode );
                     lvRect clip;
                     drawbuf.GetClipRect( &clip );
                     if (doc_y + y0 + h <= clip.bottom) {...} // draw only if marker fully fits on page
@@ -11019,7 +11046,7 @@ void DrawDocument( LVDrawBuf & drawbuf, ldomNode * enode, int x0, int y0, int dx
                     // Better to draw it, even if it slightly overflows, or we might lose some
                     // list item number for no real reason
                     // Draw it ouside our box, as per-CSS-specs, possibly shifted by shift_x:
-                    txform->Format( (lUInt16)list_marker_width, (lUInt16)page_height, direction );
+                    txform->Format( (lUInt16)list_marker_width, (lUInt16)page_height, direction, marker_writing_mode );
                     if ( is_rtl ) {
                         // Draw it starting after 'width'
                         txform->Draw( &drawbuf, doc_x+x0 + width + shift_x, doc_y+y0 + padding_top, NULL, NULL );
