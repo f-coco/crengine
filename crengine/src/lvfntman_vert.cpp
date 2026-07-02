@@ -148,6 +148,10 @@ JLReqVertClass getJLReqVertClass(lChar32 c)
             break;
     }
 
+    // --- Half-width dash (class [105]) ---
+    if (c == 0x30A0 /* ゠ */ || c == 0x2013 /* – */)
+        return JLREQ_VERT_HALF_DASH;
+
     // --- Exclamation / question marks (class [6]) ---
     switch (c) {
         case 0xFF01: // ！
@@ -164,6 +168,14 @@ JLReqVertClass getJLReqVertClass(lChar32 c)
     // --- Halfwidth katakana (class [7]) ---
     if (c >= 0xFF61 && c <= 0xFF9F)
         return JLREQ_VERT_HALF_KANA;
+
+    // --- Box drawing characters (class [8]) ---
+    if (c >= 0x2500 && c <= 0x257F)
+        return JLREQ_VERT_BOX_DRAWING;
+
+    // --- Combining dakuten / handakuten (class [307]) ---
+    if (c == 0x3099 || c == 0x309A)
+        return JLREQ_VERT_COMBINING_MARK;
 
     // --- Vertical iteration marks (class [200]) ---
     // jfm-ujisv: t[200] = copy(t[0]) with width = 2.0; chars = {'〱', '〲'}.
@@ -222,6 +234,11 @@ JLReqVertLayout getJLReqVertLayout(JLReqVertClass cls)
             out.width_halves = 2;
             out.align        = JLREQ_ALIGN_LEFT;
             break;
+        case JLREQ_VERT_HALF_DASH:
+            // ゠ – — half-em, centred; jfm-ujisv class [105].
+            out.width_halves = 1;
+            out.align        = JLREQ_ALIGN_MIDDLE;
+            break;
         case JLREQ_VERT_EXCLAM_QUEST:
             // ？！‼⁇⁈⁉ — full em, glyph at slot top (= align='left')
             // per jfm-ujisv class [6].
@@ -232,6 +249,16 @@ JLReqVertLayout getJLReqVertLayout(JLReqVertClass cls)
             // halfwidth katakana — half-em slot, glyph at slot top
             out.width_halves = 1;
             out.align        = JLREQ_ALIGN_LEFT;
+            break;
+        case JLREQ_VERT_BOX_DRAWING:
+            // Box drawing — full em, glyph at slot top; jfm-ujisv class [8].
+            out.width_halves = 2;
+            out.align        = JLREQ_ALIGN_LEFT;
+            break;
+        case JLREQ_VERT_COMBINING_MARK:
+            // Combining dakuten/handakuten — zero-width, right-aligned.
+            out.width_halves = 0;
+            out.align        = JLREQ_ALIGN_RIGHT;
             break;
         case JLREQ_VERT_VERT_MARK:
             // ー — ‥ … 〜 ～ — full em, centred (vertical bar/dot pattern)
@@ -334,75 +361,139 @@ lChar32 getVertPresentationForm(lChar32 c)
     }
 }
 
-int getJLReqGlueKernEighths(JLReqVertClass prev_class, JLReqVertClass next_class)
+static inline JLReqVertGlueSpec jfmGlue(int base, int stretch, int shrink,
+                                        int priority=0, bool kanjiskip_stretch=false,
+                                        bool kanjiskip_shrink=false, bool kern=false)
 {
-    // Encodes jfm-ujisv.lua [N].glue[M].base in eighths of em.
+    return JLReqVertGlueSpec((lInt8)base, (lInt8)stretch, (lInt8)shrink,
+                             (lUInt8)priority, (lUInt8)priority,
+                             kanjiskip_stretch, kanjiskip_shrink, kern);
+}
+
+static inline JLReqVertGlueSpec jfmKern(int base)
+{
+    return jfmGlue(base, 0, 0, 0, false, false, true);
+}
+
+static inline JLReqVertGlueSpec jfmNone()
+{
+    return JLReqVertGlueSpec();
+}
+
+JLReqVertGlueSpec getJLReqVertGlueSpec(JLReqVertClass prev_class, JLReqVertClass next_class)
+{
+    // Encodes jfm-ujisv.lua [N].glue[M] in eighths of em.
     // Switch on prev (rows of the matrix), then next (columns).
     // Pairs not listed default to 0.
     switch (prev_class) {
         case JLREQ_VERT_KANA_REPEAT:  // jfm-ujisv t[200] = copy(t[0]) — same as BODY row
         case JLREQ_VERT_CJK_BODY:
             switch (next_class) {
-                case JLREQ_VERT_OPEN_BRACKET:        return 4; // 0.5em
-                case JLREQ_VERT_MIDDLE_DOT:          return 2; // 0.25em
-                default: return 0;
+                case JLREQ_VERT_OPEN_BRACKET:        return jfmGlue(4, 0, 4, 0, true, false);
+                case JLREQ_VERT_CLOSE_BRACKET_COMMA: return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_MIDDLE_DOT:          return jfmGlue(2, 0, 2, 1);
+                case JLREQ_VERT_PERIOD:              return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_EXCLAM_QUEST:        return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_HALF_KANA:           return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_BOX_DRAWING:         return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_COMBINING_MARK:      return jfmKern(0);
+                default: return jfmNone();
             }
         case JLREQ_VERT_OPEN_BRACKET:
             switch (next_class) {
-                case JLREQ_VERT_MIDDLE_DOT:          return 2;
-                default: return 0;
+                case JLREQ_VERT_CJK_BODY:            return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_OPEN_BRACKET:        return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_CLOSE_BRACKET_COMMA: return jfmGlue(0, 0, 0, 0, true, true);
+                case JLREQ_VERT_MIDDLE_DOT:          return jfmGlue(2, 0, 2, 1);
+                case JLREQ_VERT_PERIOD:              return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_DASH:
+                case JLREQ_VERT_HALF_DASH:
+                case JLREQ_VERT_EXCLAM_QUEST:
+                case JLREQ_VERT_HALF_KANA:
+                case JLREQ_VERT_BOX_DRAWING:         return jfmGlue(0, 0, 0, 0, false, true);
+                default: return jfmNone();
             }
         case JLREQ_VERT_CLOSE_BRACKET_COMMA:
             switch (next_class) {
-                case JLREQ_VERT_CJK_BODY:            return 4;
-                case JLREQ_VERT_OPEN_BRACKET:        return 4;
-                case JLREQ_VERT_MIDDLE_DOT:          return 2;
-                case JLREQ_VERT_DASH:                return 4;
-                case JLREQ_VERT_EXCLAM_QUEST:        return 4;
-                case JLREQ_VERT_HALF_KANA:           return 4;
-                default: return 0;
+                case JLREQ_VERT_CJK_BODY:            return jfmGlue(4, 0, 4, 0, true, false);
+                case JLREQ_VERT_OPEN_BRACKET:        return jfmGlue(4, 0, 4, 0, true, false);
+                case JLREQ_VERT_CLOSE_BRACKET_COMMA: return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_MIDDLE_DOT:          return jfmGlue(2, 0, 2, 1);
+                case JLREQ_VERT_PERIOD:              return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_DASH:
+                case JLREQ_VERT_HALF_DASH:
+                case JLREQ_VERT_EXCLAM_QUEST:
+                case JLREQ_VERT_HALF_KANA:
+                case JLREQ_VERT_BOX_DRAWING:         return jfmGlue(4, 0, 4, 0, true, false);
+                default: return jfmNone();
             }
         case JLREQ_VERT_MIDDLE_DOT:
             switch (next_class) {
-                case JLREQ_VERT_MIDDLE_DOT:          return 4;
+                case JLREQ_VERT_MIDDLE_DOT:          return jfmGlue(4, 0, 2, 1);
                 // Every other class gets 0.25em around middle dot.
-                default:                             return 2;
+                default:                             return jfmGlue(2, 0, 2, 1);
             }
         case JLREQ_VERT_PERIOD:
             switch (next_class) {
-                case JLREQ_VERT_CJK_BODY:            return 4;
-                case JLREQ_VERT_OPEN_BRACKET:        return 4;
-                case JLREQ_VERT_MIDDLE_DOT:          return 6; // 0.75em
-                case JLREQ_VERT_DASH:                return 4;
-                case JLREQ_VERT_EXCLAM_QUEST:        return 4;
-                case JLREQ_VERT_HALF_KANA:           return 4;
-                default: return 0;
+                case JLREQ_VERT_CJK_BODY:            return jfmGlue(4, 0, 4, 0, true, false);
+                case JLREQ_VERT_OPEN_BRACKET:        return jfmGlue(4, 0, 4, 0, true, false);
+                case JLREQ_VERT_MIDDLE_DOT:          return jfmGlue(6, 0, 2, 1, true, false);
+                case JLREQ_VERT_DASH:
+                case JLREQ_VERT_HALF_DASH:
+                case JLREQ_VERT_EXCLAM_QUEST:
+                case JLREQ_VERT_HALF_KANA:
+                case JLREQ_VERT_BOX_DRAWING:         return jfmGlue(4, 0, 4, 0, true, false);
+                default: return jfmNone();
             }
         case JLREQ_VERT_DASH:
+        case JLREQ_VERT_HALF_DASH:
             switch (next_class) {
-                case JLREQ_VERT_OPEN_BRACKET:        return 4;
-                case JLREQ_VERT_MIDDLE_DOT:          return 2;
-                default: return 0;
+                case JLREQ_VERT_OPEN_BRACKET:        return jfmGlue(4, 0, 4, 0, true, false);
+                case JLREQ_VERT_CLOSE_BRACKET_COMMA: return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_MIDDLE_DOT:          return jfmGlue(2, 0, 2, 1);
+                case JLREQ_VERT_PERIOD:              return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_EXCLAM_QUEST:        return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_DASH:
+                case JLREQ_VERT_HALF_DASH:           return jfmKern(0);
+                default: return jfmNone();
             }
         case JLREQ_VERT_EXCLAM_QUEST:
             switch (next_class) {
-                case JLREQ_VERT_CJK_BODY:            return 8; // 1.0em
-                case JLREQ_VERT_OPEN_BRACKET:        return 4;
-                case JLREQ_VERT_MIDDLE_DOT:          return 6;
-                case JLREQ_VERT_HALF_KANA:           return 8;
-                default: return 0;
+                case JLREQ_VERT_CJK_BODY:            return jfmGlue(8, 0, 4, 0, true, false);
+                case JLREQ_VERT_OPEN_BRACKET:        return jfmGlue(4, 0, 4, 0, true, false);
+                case JLREQ_VERT_CLOSE_BRACKET_COMMA: return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_MIDDLE_DOT:          return jfmGlue(6, 0, 2, 1);
+                case JLREQ_VERT_PERIOD:              return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_DASH:
+                case JLREQ_VERT_HALF_DASH:           return jfmKern(0);
+                case JLREQ_VERT_EXCLAM_QUEST:        return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_HALF_KANA:           return jfmGlue(8, 0, 4, 0, true, false);
+                case JLREQ_VERT_BOX_DRAWING:         return jfmGlue(0, 0, 0, 0, false, true);
+                default: return jfmNone();
             }
         case JLREQ_VERT_HALF_KANA:
+        case JLREQ_VERT_COMBINING_MARK:
+        case JLREQ_VERT_BOX_DRAWING:
             switch (next_class) {
-                case JLREQ_VERT_OPEN_BRACKET:        return 4;
-                case JLREQ_VERT_MIDDLE_DOT:          return 2;
-                default: return 0;
+                case JLREQ_VERT_OPEN_BRACKET:        return jfmGlue(4, 0, 4, 0, true, false);
+                case JLREQ_VERT_CLOSE_BRACKET_COMMA: return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_MIDDLE_DOT:          return jfmGlue(2, 0, 2, 1);
+                case JLREQ_VERT_PERIOD:              return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_EXCLAM_QUEST:        return jfmGlue(0, 0, 0, 0, false, true);
+                case JLREQ_VERT_HALF_KANA:
+                case JLREQ_VERT_BOX_DRAWING:         return jfmGlue(0, 0, 0, 0, false, true);
+                default: return jfmNone();
             }
         case JLREQ_VERT_VERT_MARK:    // not in jfm-ujisv; treat as default body
         case JLREQ_VERT_OTHER:
-            return 0;
+            return jfmNone();
     }
-    return 0;
+    return jfmNone();
+}
+
+int getJLReqGlueKernEighths(JLReqVertClass prev_class, JLReqVertClass next_class)
+{
+    return getJLReqVertGlueSpec(prev_class, next_class).base_eighths;
 }
 
 int getJLReqCjkToNonCjkEighths(JLReqVertClass curr_cls)
@@ -417,8 +508,11 @@ int getJLReqCjkToNonCjkEighths(JLReqVertClass curr_cls)
         case JLREQ_VERT_MIDDLE_DOT:          return 2; // [3].glue[0]=0.25em
         case JLREQ_VERT_PERIOD:              return 4; // [4].glue[0]=0.5em
         case JLREQ_VERT_DASH:                return 2; // [5]: no glue[0]   → xkanjiskip
+        case JLREQ_VERT_HALF_DASH:           return 2; // [105]: no glue[0] → xkanjiskip
         case JLREQ_VERT_EXCLAM_QUEST:        return 2; // [6] EXCLUDED from prop. → xkanjiskip
         case JLREQ_VERT_HALF_KANA:           return 2; // [7]: no glue[0]   → xkanjiskip
+        case JLREQ_VERT_BOX_DRAWING:         return 2; // [8]: no glue[0]   → xkanjiskip
+        case JLREQ_VERT_COMBINING_MARK:      return 0; // [307]: zero-width combining mark
         case JLREQ_VERT_VERT_MARK:           return 2; // fork-only, treat as body
         case JLREQ_VERT_KANA_REPEAT:         return 2; // [200] inherits [0]
         case JLREQ_VERT_OTHER:               return 0; // shouldn't happen (both non-CJK)
@@ -437,8 +531,11 @@ int getJLReqNonCjkToCjkEighths(JLReqVertClass next_cls)
         case JLREQ_VERT_MIDDLE_DOT:          return 2; // [0]→[3] = 0.25em
         case JLREQ_VERT_PERIOD:              return 0; // [0]→[4] = 0       (explicit)
         case JLREQ_VERT_DASH:                return 2; // [0]: no [5] entry → xkanjiskip
+        case JLREQ_VERT_HALF_DASH:           return 2; // [0]: no [105] entry → xkanjiskip
         case JLREQ_VERT_EXCLAM_QUEST:        return 0; // [0]→[6] = 0       (explicit)
         case JLREQ_VERT_HALF_KANA:           return 0; // [0]→[7] = 0       (explicit)
+        case JLREQ_VERT_BOX_DRAWING:         return 0; // [0]→[8] = 0       (explicit)
+        case JLREQ_VERT_COMBINING_MARK:      return 0; // [0]→[307] kern 0
         case JLREQ_VERT_VERT_MARK:           return 2; // fork-only, treat as body
         case JLREQ_VERT_KANA_REPEAT:         return 2; // [200]: no [0]→[200] → xkanjiskip
         case JLREQ_VERT_OTHER:               return 0; // shouldn't happen

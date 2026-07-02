@@ -3054,7 +3054,8 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
         // When true, CENTER alignment uses round-half-up so that annotation and
         // base cells both land on the same integer pixel center (JLReq §3.3.8).
         bool is_inner_vert_cell = false;
-        if ( is_vert && fmt->m_pbuffer->width > 0
+        if ( is_vert && isVerticalRubyInnerLine(fmt, frmline)
+                     && fmt->m_pbuffer->width > 0
                      && fmt->m_pbuffer->width < width ) {
             is_inner_vert_cell = true;
             width = fmt->m_pbuffer->width;
@@ -3543,45 +3544,6 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
                 fmt->m_cjk_prev_line_added_space_mod = 0;
             }
             if ( extra_width > 0
-                    && (fmt->m_writing_mode == css_wm_vertical_rl
-                        || fmt->m_writing_mode == css_wm_vertical_lr) ) {
-                // Fork: LuaTeX-ja kanjiskip-style vertical line justification.
-                // Distribute extra_width as small kanjiskip between adjacent
-                // non-inline-box words (most CJK chars are 1-word, so this
-                // catches CJK-CJK and CJK-punctuation boundaries).  Cap the
-                // per-gap stretch so chars don't drift far past their natural
-                // grid positions (LuaTeX-ja default kanjiskip stretch = 0pt
-                // plus 0.4pt ≈ 1-2px at typical font sizes).  Total added
-                // ≤ extra_width so the line never exceeds maxHeight.
-                int gaps = 0;
-                for ( int i = 0; i < (int)frmline->word_count - 1; i++ ) {
-                    if ( !(frmline->words[i].flags & LTEXT_WORD_IS_INLINE_BOX)
-                       && !(frmline->words[i+1].flags & LTEXT_WORD_IS_INLINE_BOX) ) {
-                        gaps++;
-                    }
-                }
-                if ( gaps > 0 ) {
-                    // Per-gap stretch limit: ~10% of em (≈ kanjiskip 0.4pt at typical font sizes).
-                    int em_for_cap = fmt->m_pbuffer->strut_height > 0
-                                   ? fmt->m_pbuffer->strut_height : 20;
-                    int max_per_gap = em_for_cap / 10;
-                    if ( max_per_gap < 1 ) max_per_gap = 1;
-                    int per_gap = extra_width / gaps;
-                    if ( per_gap > max_per_gap ) per_gap = max_per_gap;
-                    int total_added = per_gap * gaps;
-                    int delta = 0;
-                    for ( int i = 0; i < (int)frmline->word_count; i++ ) {
-                        frmline->words[i].x += delta;
-                        if ( i < (int)frmline->word_count - 1
-                           && !(frmline->words[i].flags & LTEXT_WORD_IS_INLINE_BOX)
-                           && !(frmline->words[i+1].flags & LTEXT_WORD_IS_INLINE_BOX) ) {
-                            delta += per_gap;
-                        }
-                    }
-                    frmline->width += total_added;
-                }
-            }
-            else if ( extra_width > 0
                     && fmt->m_writing_mode != css_wm_vertical_rl
                     && fmt->m_writing_mode != css_wm_vertical_lr ) {
                 // distribute additional space
@@ -3632,7 +3594,7 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
         // vertical-mode line (the Phase 5 mirror must run on every vertical
         // line, not just those with ruby — see ruby_position_spec.lua).
         if ( hasInlineBoxes || css_wm_is_vertical(fmt->m_pbuffer->writing_mode) ) {
-            alignLineHorizontalVerticalPostPass( fmt, frmline, hasInlineBoxes );
+            alignLineHorizontalVerticalPostPass( fmt, frmline, hasInlineBoxes, alignment, usable_width );
         }
     }
 

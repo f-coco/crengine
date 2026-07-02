@@ -95,6 +95,8 @@ void applyVerticalFrmlineDimensions(LVFormatter * fmt, formatted_line_t * frmlin
 bool applyVerticalNNRubyCenterDistribution(
     formatted_line_t * frmline, int slot_width, int extra_width,
     LVFormatter * fmt);
+bool isVerticalRubyInnerLine(LVFormatter * fmt, formatted_line_t * frmline);
+bool isVerticalRubyAnnotationLine(LVFormatter * fmt, formatted_line_t * frmline);
 
 // Vertical-mode PAD border drawing (defined in lvtextfm_vert.cpp).  Handles
 // both right-pad and left-pad cases.  Scans frmline->words[] for the paired
@@ -174,7 +176,8 @@ void applyVerticalWordDraw(
 // either has inline boxes OR is in vertical writing mode (the Phase 5
 // mirror must run on every vertical line, not just those with ruby).
 // formatted_line_t is declared in lvtextfm.h; forward via the typedef name.
-void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * frmline, bool hasInlineBoxes );
+void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * frmline,
+        bool hasInlineBoxes, int alignment=0, int usable_width=-1 );
 
 // Punctuation helpers (defined in lvtextfm.cpp; used from
 // measureText() in lvtextfm.cpp, which is earlier in the TU).

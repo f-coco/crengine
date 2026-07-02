@@ -3336,6 +3336,13 @@ bool renderAsListStylePositionInside( const css_style_ref_t style, bool is_rtl=f
     return false;
 }
 
+static inline bool shouldApplyVerticalRlDefaultInterline( css_style_ref_t style )
+{
+    return style->writing_mode == css_wm_vertical_rl
+        && style->line_height.type == css_val_unspecified
+        && style->line_height.value == css_generic_normal;
+}
+
 //=======================================================================
 // Render final block
 //=======================================================================
@@ -3582,6 +3589,12 @@ void renderFinalBlock( ldomNode * enode, LFormattedText * txform, RenderRectAcce
         // not if it was already in screen_px, which means it has already
         // been scaled (in setNodeStyle() when inherited).
         int interline_scale_factor = enode->getDocument()->getInterlineScaleFactor();
+        if ( shouldApplyVerticalRlDefaultInterline(style) ) {
+            // Vertical Japanese text normally needs a wider line pitch than
+            // horizontal text.  Apply the fork's vertical default only when
+            // the book did not author an explicit line-height.
+            interline_scale_factor += INTERLINE_SCALE_FACTOR_NO_SCALE * 55 / 100;
+        }
         if ( style->line_height.type != css_val_screen_px && interline_scale_factor != INTERLINE_SCALE_FACTOR_NO_SCALE ) {
             if ( RENDER_RECT_PTR_HAS_FLAG(fmt, NO_INTERLINE_SCALE_UP) && interline_scale_factor > INTERLINE_SCALE_FACTOR_NO_SCALE ) {
                 // Don't scale up (for <ruby> content, so we can increase interline to make

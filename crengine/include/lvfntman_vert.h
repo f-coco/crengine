@@ -75,10 +75,16 @@ enum JLReqVertClass {
                                     //   width = 0.5 em, align = left
     JLREQ_VERT_DASH,                // jfm-ujisv [5]: — ― ‥ … 〳 〴 〵
                                     //   width = 1.0 em, align = left
+    JLREQ_VERT_HALF_DASH,           // jfm-ujisv [105]: ゠ – (half-width dash)
+                                    //   width = 0.5 em, align = middle
     JLREQ_VERT_EXCLAM_QUEST,        // jfm-ujisv [6]: ？ ！ ‼ ⁇ ⁈ ⁉
                                     //   width = 1.0 em, align = left
     JLREQ_VERT_HALF_KANA,           // jfm-ujisv [7]: U+FF61..U+FF9F (halfwidth)
                                     //   width = 0.5 em, align = left
+    JLREQ_VERT_BOX_DRAWING,         // jfm-ujisv [8]: box drawing characters
+                                    //   width = 1.0 em, align = left
+    JLREQ_VERT_COMBINING_MARK,      // jfm-ujisv [307]: combining dakuten/handakuten
+                                    //   width = 0, align = right
     JLREQ_VERT_VERT_MARK,           // fork-only compensation — NOT in jfm-ujisv.
                                     //   Dispatched on LFNT_HINT_VERTICAL_MARK,
                                     //   not on classifier output.  See lvfntman.cpp.
@@ -180,17 +186,11 @@ int getJLReqVertCwa(lChar32 c, int em_px, int vadv_px);
 // since this header has no FT_Face dependency.
 lChar32 getVertPresentationForm(lChar32 c);
 
-// JFM inter-class glue base value in eighths of em.
+// JFM inter-class glue in eighths of em.
 //
-// Implements LuaTeX-ja jfm-ujisv.lua [prev].glue[next] base value
-// (= the first element of each glue 3-tuple {base, stretch, shrink}).
-// Returns 0 for class pairs not explicitly listed (LuaTeX-ja default).
-//
-// LuaTeX-ja distributes this as TeX glue (justifiable), but crengine's
-// vertical layout uses fixed advance widths; we apply only the base
-// value as an inter-character kern.  Stretch/shrink are dropped — they
-// matter only for justification, which JLReq itself recommends against
-// for short paragraphs.
+// Implements LuaTeX-ja jfm-ujisv.lua [prev].glue[next] values
+// ({base, stretch, shrink}) plus the kanjiskip_stretch /
+// kanjiskip_shrink hints used by line adjustment.
 //
 // Examples (BODY = class [0] CJK, OPEN = [1], CLOSE = [2] (incl. 、，)):
 //   getJLReqGlueKernEighths(CLOSE, BODY) → 4 (0.5em after 、 before next char)
@@ -200,6 +200,31 @@ lChar32 getVertPresentationForm(lChar32 c);
 //   getJLReqGlueKernEighths(PERIOD, MIDDLE_DOT)   → 6 (0.75em between 。and ・)
 //
 // Apply during layout as: `m_advance[i] += em_px * getJLReqGlueKernEighths(c_prev_class, c_class) / 8`
+struct JLReqVertGlueSpec {
+    lInt8  base_eighths;
+    lInt8  stretch_eighths;
+    lInt8  shrink_eighths;
+    lUInt8 stretch_priority;
+    lUInt8 shrink_priority;
+    bool   kanjiskip_stretch;
+    bool   kanjiskip_shrink;
+    bool   is_kern;
+
+    JLReqVertGlueSpec()
+        : base_eighths(0), stretch_eighths(0), shrink_eighths(0),
+          stretch_priority(0), shrink_priority(0),
+          kanjiskip_stretch(false), kanjiskip_shrink(false),
+          is_kern(false) {}
+    JLReqVertGlueSpec(lInt8 base, lInt8 stretch, lInt8 shrink,
+                      lUInt8 stretch_prio, lUInt8 shrink_prio,
+                      bool k_stretch=false, bool k_shrink=false, bool kern=false)
+        : base_eighths(base), stretch_eighths(stretch), shrink_eighths(shrink),
+          stretch_priority(stretch_prio), shrink_priority(shrink_prio),
+          kanjiskip_stretch(k_stretch), kanjiskip_shrink(k_shrink),
+          is_kern(kern) {}
+};
+
+JLReqVertGlueSpec getJLReqVertGlueSpec(JLReqVertClass prev_class, JLReqVertClass next_class);
 int getJLReqGlueKernEighths(JLReqVertClass prev_class, JLReqVertClass next_class);
 
 // JFM inter-class spacing for CJK ↔ non-CJK boundary, eighths of em.

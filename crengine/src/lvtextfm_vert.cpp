@@ -18,6 +18,7 @@
 // This file is #included at the end of lvtextfm.cpp, so MIN_WORD_LEN_TO_HYPHENATE
 // / MAX_WORD_SIZE and the addLineHorizontal declaration are already in scope from
 // the enclosing translation unit — no local re-#define or forward decl needed.
+#include <vector>
 
 // =============================================================================
 // Vertical-mode diagnostic globals (Phase C Step 1 + 2a relocation).
@@ -94,6 +95,277 @@ void ltext_get_vert_bleed(int *count_out, int *max_px_out) {
     *max_px_out = ltext_vert_bleed_max_px;
 }
 
+struct VertJustifyGap {
+    int word_index;
+    int stretch_px;
+    int shrink_px;
+    int stretch_priority;
+    int shrink_priority;
+};
+
+struct VertWordLayoutInfo {
+    bool text;
+    bool preformatted;
+    bool object;
+    bool inline_box;
+    bool image;
+    bool pad;
+    bool cjk;
+    bool ends_with_space;
+    JLReqVertClass jfm_class;
+    int em;
+    int effective_width;
+};
+
+static inline int vertEighthsToPx( int em, int eighths ) {
+    return (em * eighths) / 8;
+}
+
+static inline int vertClampToInt16( int v ) {
+    if ( v > 32767 )
+        return 32767;
+    if ( v < -32768 )
+        return -32768;
+    return v;
+}
+
+static inline int getVerticalInlineBoxDepth( src_text_fragment_t * srcline, int fallback_depth ) {
+    return srcline && srcline->vert_inline_box_depth > 0
+        ? (int)srcline->vert_inline_box_depth
+        : fallback_depth;
+}
+
+static inline bool vertIsSpaceChar( lChar32 c ) {
+    return c == ' ' || c == '\t' || c == 0x00A0 || c == 0x3000;
+}
+
+static VertWordLayoutInfo getVerticalWordLayoutInfo( LVFormatter* fmt, formatted_word_t * word ) {
+    VertWordLayoutInfo info;
+    info.text = false;
+    info.preformatted = false;
+    info.object = false;
+    info.inline_box = (word->flags & LTEXT_WORD_IS_INLINE_BOX) != 0;
+    info.image = (word->flags & LTEXT_WORD_IS_IMAGE) != 0;
+    info.pad = (word->flags & LTEXT_WORD_IS_PAD) != 0;
+    info.cjk = false;
+    info.ends_with_space = false;
+    info.jfm_class = JLREQ_VERT_OTHER;
+    info.em = fmt->m_pbuffer->strut_height > 0 ? fmt->m_pbuffer->strut_height : 20;
+    info.effective_width = (int)word->width;
+
+    if ( (int)word->src_text_index >= fmt->m_pbuffer->srctextlen )
+        return info;
+    src_text_fragment_t * src = &fmt->m_pbuffer->srctext[word->src_text_index];
+    info.object = (src->flags & LTEXT_SRC_IS_OBJECT) != 0;
+    info.preformatted = (src->flags & LTEXT_FLAG_PREFORMATTED) != 0;
+    if ( info.object )
+        return info;
+    info.text = src->t.text != NULL && word->t.len > 0;
+    if ( src->t.font ) {
+        int sz = ((LVFont *)src->t.font)->getSize();
+        if ( sz > 0 )
+            info.em = sz;
+    }
+    if ( !info.text )
+        return info;
+
+    bool word_acts_as_cjk = isWordAllVertRotationChars(src->t.text + word->t.start, (int)word->t.len);
+    info.cjk = ((word->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_FLEXIBLE_WIDTH_CJK)) != 0)
+               || word_acts_as_cjk;
+    lChar32 first_char = src->t.text[word->t.start];
+    lChar32 last_char = src->t.text[word->t.start + word->t.len - 1];
+    info.ends_with_space = vertIsSpaceChar(last_char);
+    if ( info.cjk )
+        info.jfm_class = getJLReqVertClass(first_char);
+
+    bool is_half_em_jfm = false;
+    if ( info.cjk )
+        is_half_em_jfm = (getJLReqVertLayout(info.jfm_class).width_halves == 1);
+    info.effective_width = (info.cjk && !is_half_em_jfm && (int)word->width < info.em)
+                         ? info.em : (int)word->width;
+    return info;
+}
+
+static void shiftVerticalWordsFrom( formatted_line_t * frmline, int start_index, int delta ) {
+    if ( delta == 0 )
+        return;
+    for ( int i=start_index; i<(int)frmline->word_count; i++ ) {
+        int next_x = (int)frmline->words[i].x + delta;
+        frmline->words[i].x = (lInt16)vertClampToInt16(next_x);
+    }
+}
+
+static int distributeVerticalJustifyByPriority( formatted_line_t * frmline,
+        const std::vector<VertJustifyGap> & gaps, int remaining, bool stretch ) {
+    if ( remaining <= 0 || gaps.empty() )
+        return 0;
+    int total_applied = 0;
+    for ( int priority=0; priority<=3 && remaining>0; priority++ ) {
+        int total_capacity = 0;
+        for ( size_t i=0; i<gaps.size(); i++ ) {
+            int cap = stretch ? gaps[i].stretch_px : gaps[i].shrink_px;
+            int gap_priority = stretch ? gaps[i].stretch_priority : gaps[i].shrink_priority;
+            if ( gap_priority == priority && cap > 0 )
+                total_capacity += cap;
+        }
+        if ( total_capacity <= 0 )
+            continue;
+        int to_apply = remaining < total_capacity ? remaining : total_capacity;
+        int distributed = 0;
+        int carry = 0;
+        for ( size_t i=0; i<gaps.size(); i++ ) {
+            int cap = stretch ? gaps[i].stretch_px : gaps[i].shrink_px;
+            int gap_priority = stretch ? gaps[i].stretch_priority : gaps[i].shrink_priority;
+            if ( gap_priority != priority || cap <= 0 )
+                continue;
+            int amount = (cap * to_apply + carry) / total_capacity;
+            carry = (cap * to_apply + carry) % total_capacity;
+            if ( amount > cap )
+                amount = cap;
+            if ( amount <= 0 && distributed < to_apply )
+                amount = 1;
+            if ( amount > to_apply - distributed )
+                amount = to_apply - distributed;
+            if ( amount <= 0 )
+                continue;
+            shiftVerticalWordsFrom(frmline, gaps[i].word_index, stretch ? amount : -amount);
+            distributed += amount;
+        }
+        remaining -= distributed;
+        total_applied += distributed;
+    }
+    if ( stretch && remaining > 0 ) {
+        int count = 0;
+        for ( size_t i=0; i<gaps.size(); i++ ) {
+            int cap = stretch ? gaps[i].stretch_px : gaps[i].shrink_px;
+            if ( cap > 0 )
+                count++;
+        }
+        if ( count <= 0 )
+            count = (int)gaps.size();
+        int div = remaining / count;
+        int mod = remaining % count;
+        for ( size_t i=0; i<gaps.size() && remaining>0; i++ ) {
+            int cap = stretch ? gaps[i].stretch_px : gaps[i].shrink_px;
+            if ( cap <= 0 && count != (int)gaps.size() )
+                continue;
+            int amount = div;
+            if ( mod > 0 ) {
+                amount++;
+                mod--;
+            }
+            if ( amount <= 0 )
+                amount = 1;
+            if ( amount > remaining )
+                amount = remaining;
+            shiftVerticalWordsFrom(frmline, gaps[i].word_index, stretch ? amount : -amount);
+            remaining -= amount;
+            total_applied += amount;
+        }
+    }
+    return total_applied;
+}
+
+static void collectVerticalJustifyGaps( std::vector<VertJustifyGap> & gaps,
+        int word_index, formatted_word_t * prev_word,
+        const VertWordLayoutInfo & prev, const VertWordLayoutInfo & curr,
+        const JLReqVertGlueSpec & jfm_spec, bool cjk_non_cjk_boundary ) {
+    if ( prev.preformatted || curr.preformatted )
+        return;
+    if ( prev.object || curr.object || prev.inline_box || curr.inline_box
+            || prev.image || curr.image || prev.pad || curr.pad )
+        return;
+    VertJustifyGap gap;
+    gap.word_index = word_index;
+    gap.stretch_px = 0;
+    gap.shrink_px = 0;
+    gap.stretch_priority = 1;
+    gap.shrink_priority = 1;
+
+    if ( prev.ends_with_space && (prev_word->flags & LTEXT_WORD_CAN_ADD_SPACE_AFTER) ) {
+        gap.stretch_px = prev.em / 2;
+        if ( gap.stretch_px < 1 )
+            gap.stretch_px = 1;
+        gap.shrink_px = (int)prev_word->width - (int)prev_word->min_width;
+        if ( gap.shrink_px < 0 )
+            gap.shrink_px = 0;
+        gap.stretch_priority = 0;
+        gap.shrink_priority = 0;
+    }
+    else if ( prev.cjk && curr.cjk ) {
+        gap.stretch_px = vertEighthsToPx(curr.em, jfm_spec.stretch_eighths);
+        gap.shrink_px = vertEighthsToPx(curr.em, jfm_spec.shrink_eighths);
+        if ( jfm_spec.kanjiskip_stretch || (jfm_spec.base_eighths == 0
+                && jfm_spec.stretch_eighths == 0 && jfm_spec.shrink_eighths == 0
+                && !jfm_spec.is_kern) ) {
+            gap.stretch_px += curr.em / 4; // kanjiskip = {0, .25, 0}
+        }
+        gap.stretch_priority = 1 + (int)jfm_spec.stretch_priority;
+        gap.shrink_priority = 1 + (int)jfm_spec.shrink_priority;
+    }
+    else if ( cjk_non_cjk_boundary ) {
+        gap.stretch_px = vertEighthsToPx(curr.em, 2); // xkanjiskip stretch .25em
+        gap.shrink_px = vertEighthsToPx(curr.em, 1);  // xkanjiskip shrink .125em
+        gap.stretch_priority = 1;
+        gap.shrink_priority = 1;
+    }
+
+    if ( gap.stretch_px > 0 || gap.shrink_px > 0 )
+        gaps.push_back(gap);
+}
+
+static void applyVerticalJustification( formatted_line_t * frmline,
+        const std::vector<VertJustifyGap> & gaps, int alignment, int usable_width ) {
+    if ( alignment != LTEXT_ALIGN_WIDTH || usable_width <= 0 || gaps.empty() )
+        return;
+    int extra = usable_width - (int)frmline->width;
+    if ( extra == 0 )
+        return;
+    if ( extra < 0 && frmline->x > 0 )
+        return;
+    int applied = distributeVerticalJustifyByPriority(frmline, gaps,
+            extra > 0 ? extra : -extra, extra > 0);
+    if ( applied > 0 ) {
+        frmline->width = (lUInt16)(extra > 0
+                ? (int)frmline->width + applied
+                : (int)frmline->width - applied);
+    }
+}
+
+static void syncVerticalInlineBoxPositionsAfterJustify( LVFormatter* fmt,
+        formatted_line_t * frmline ) {
+    int vert_layout_min_x = 0;
+    for ( int i=0; i<(int)frmline->word_count; i++ ) {
+        formatted_word_t * word = &frmline->words[i];
+        if ( !(word->flags & LTEXT_WORD_IS_INLINE_BOX) ) {
+            VertWordLayoutInfo info = getVerticalWordLayoutInfo(fmt, word);
+            if ( info.object || info.image || info.pad ) {
+                continue;
+            }
+            int clamped_x = (int)word->x < vert_layout_min_x
+                          ? vert_layout_min_x : (int)word->x;
+            int next_x = clamped_x + info.effective_width;
+            if ( next_x > vert_layout_min_x )
+                vert_layout_min_x = next_x;
+            continue;
+        }
+
+        if ( (int)word->src_text_index >= fmt->m_pbuffer->srctextlen )
+            continue;
+        src_text_fragment_t * srcline = &fmt->m_pbuffer->srctext[word->src_text_index];
+        ldomNode * node = (ldomNode *) srcline->object;
+        if ( !node )
+            continue;
+        RenderRectAccessor node_fmt( node );
+        int ib_layout_depth = getVerticalInlineBoxDepth(srcline, (int)word->width);
+        int clamped_ib_x = (int)word->x < vert_layout_min_x
+                         ? vert_layout_min_x : (int)word->x;
+        node_fmt.setX( frmline->x + clamped_ib_x );
+        node_fmt.push();
+        vert_layout_min_x = clamped_ib_x + ib_layout_depth;
+    }
+}
+
 // =============================================================================
 // alignLineHorizontalVerticalPostPass
 //
@@ -115,7 +387,8 @@ void ltext_get_vert_bleed(int *count_out, int *max_px_out) {
 // have a different word->x layout from lines with ruby, breaking column
 // stride consistency (see spec/unit/ruby_position_spec.lua).
 // =============================================================================
-void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * frmline, bool hasInlineBoxes ) {
+void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * frmline,
+        bool hasInlineBoxes, int alignment, int usable_width ) {
     #if MATHML_SUPPORT==1
         lUInt16 needed_baseline = frmline->baseline;
         lUInt16 needed_height = frmline->height;
@@ -125,122 +398,33 @@ void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * f
     // pre-clamp layout position, causing sbox.y to sit above the rendered
     // glyph by clamp_delta (≈ 1/5 em when the ruby group nearly touches
     // the preceding character).
-    bool is_vert_frmline = (fmt->m_pbuffer->writing_mode == css_wm_vertical_rl ||
-                            fmt->m_pbuffer->writing_mode == css_wm_vertical_lr);
+    bool is_vert_frmline = css_wm_is_vertical(fmt->m_pbuffer->writing_mode);
     int vert_layout_min_x = 0;  // mirrors vert_min_next_x in Draw()
-    // Phase 5 xkanjiskip tracker: needs to mirror vert_prev_was_non_cjk_word
-    // in Draw so word->x positions align with where Draw places each glyph.
-    // 0 = no previous word yet; +1 = prev was non-CJK; -1 = prev was CJK.
-    int vert_layout_prev_class = 0;
-    // Phase 5 inter-CJK class tracker (mirror of Draw's vert_prev_cjk_class).
-    // Stores the JFM class of the most recent CJK char so the next CJK can
-    // look up jfm-ujisv.lua [N].glue[M] inter-class spacing.  -1 = none.
-    int vert_layout_prev_cjk_class = -1;
-    (void)hasInlineBoxes;  // currently unused; kept for parity with upstream guard
+    std::vector<VertJustifyGap> vert_justify_gaps;
+    VertWordLayoutInfo prev_info;
+    formatted_word_t * prev_word = NULL;
+    bool have_prev_info = false;
     for ( int i=0; i<frmline->word_count; i++ ) {
         formatted_word_t * wi = &frmline->words[i];
         if ( is_vert_frmline && !(wi->flags & LTEXT_WORD_IS_INLINE_BOX) ) {
-            // Plain / space word: advance vert_layout_min_x past it.
-            // Mirror DRAW's word classification: applyVerticalWordDraw routes
-            // "vertical mark" words (em dash / leaders / ー / 〜 etc. that
-            // are typeset upright in vertical mode) through the plain-CJK
-            // path even when LTEXT_WORD_IS_CJK is not set on the word.  For
-            // LAYOUT-vs-DRAW xkanjiskip / JFM-glue / prev_cjk_class tracking
-            // to stay in sync, treat such words as CJK here too — otherwise
-            // a "PERIOD → em-dash → BODY" sequence inserts 0.25em xkanjiskip
-            // in LAYOUT but 0.5em PERIOD→DASH JFM glue in DRAW, leaving the
-            // following char's word->x ~6 px behind its rendered position
-            // (highlight rect appears above the glyph).
-            bool word_acts_as_cjk = false;
-            if ( (int)wi->src_text_index < fmt->m_pbuffer->srctextlen ) {
-                src_text_fragment_t * sx = &fmt->m_pbuffer->srctext[wi->src_text_index];
-                if ( !(sx->flags & LTEXT_SRC_IS_OBJECT) && sx->t.text && wi->t.len > 0
-                     && isWordAllVertRotationChars(sx->t.text + wi->t.start, (int)wi->t.len) ) {
-                    word_acts_as_cjk = true;
+            VertWordLayoutInfo curr_info = getVerticalWordLayoutInfo(fmt, wi);
+            JLReqVertGlueSpec jfm_spec;
+            bool boundary_cjk_non_cjk = false;
+            int base_glue = 0;
+            if ( have_prev_info && curr_info.text && prev_info.text ) {
+                boundary_cjk_non_cjk = (prev_info.cjk && !curr_info.cjk)
+                                    || (!prev_info.cjk && curr_info.cjk);
+                if ( boundary_cjk_non_cjk ) {
+                    base_glue = vertEighthsToPx(curr_info.em, 2); // xkanjiskip = .25em
                 }
-            }
-            int eff_w = (int)wi->width;
-            // Guard: only access t.font when the source fragment is a text
-            // fragment (not an image, inline-box pad, or other object type).
-            if ( (int)wi->src_text_index < fmt->m_pbuffer->srctextlen ) {
-                src_text_fragment_t * si = &fmt->m_pbuffer->srctext[wi->src_text_index];
-                if ( !(si->flags & LTEXT_SRC_IS_OBJECT) && si->t.font ) {
-                    LVFont * fi = (LVFont *)si->t.font;
-                    int font_sz = fi->getSize();
-                    // CJK punctuation with VERY narrow HarfBuzz TTB advance (no Phase 3
-                    // override applied — i.e. font has no proper vmtx, advance < em/2)
-                    // needs a font_size minimum so the glyph doesn't overlap the next char.
-                    // BUT Phase 3 (LuaTeX-ja JFM half-em compaction, see
-                    // getJLReqVertSlotWidth) intentionally sets word->width = em/2 for
-                    // class [1] [2] [3] [4] [7] chars, and Phase 4 cwa positions the
-                    // bitmap correctly within that half-em slot.  We must NOT clamp those
-                    // up to em — that would re-introduce the same "char at top of em slot
-                    // with gap below" behaviour that Phase 4 is supposed to fix.
-                    //
-                    // Non-CJK words (Latin, space) use the actual advance so that
-                    // vert_layout_min_x matches the draw's vert_min_next_x tracking.
-                    bool is_cjk = ((wi->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_FLEXIBLE_WIDTH_CJK)) != 0)
-                                  || word_acts_as_cjk;  // mirror DRAW's vert-mark routing
-                    bool is_half_em_jfm = false;
-                    if ( is_cjk && si->t.text && wi->t.len > 0 ) {
-                        JLReqVertLayout layout = getJLReqVertLayout(
-                            getJLReqVertClass(si->t.text[wi->t.start]) );
-                        is_half_em_jfm = (layout.width_halves == 1);
-                    }
-                    eff_w = (is_cjk && !is_half_em_jfm && (int)wi->width < font_sz)
-                          ? font_sz : (int)wi->width;
+                else if ( prev_info.cjk && curr_info.cjk ) {
+                    jfm_spec = getJLReqVertGlueSpec(prev_info.jfm_class, curr_info.jfm_class);
+                    base_glue = vertEighthsToPx(curr_info.em, jfm_spec.base_eighths);
                 }
-            }
-            // Phase 5 xkanjiskip mirror: shift this word's layout position by
-            // 0.25em when transitioning CJK↔non-CJK, matching the Draw side.
-            // Without this, getRect() for the post-boundary word would return
-            // the layout position from m_advance (no xkanjiskip), while Draw
-            // renders at +0.25em — causing highlights to be offset.
-            bool wi_is_cjk = ((wi->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_FLEXIBLE_WIDTH_CJK)) != 0)
-                             || word_acts_as_cjk;  // mirror DRAW's vert-mark routing
-            bool boundary_cjk_non_cjk =
-                   (vert_layout_prev_class == +1 && wi_is_cjk)    // non-CJK → CJK
-                || (vert_layout_prev_class == -1 && !wi_is_cjk);  // CJK → non-CJK
-            if (boundary_cjk_non_cjk) {
-                int em_for_kern = 20; // fallback
-                if ( (int)wi->src_text_index < fmt->m_pbuffer->srctextlen ) {
-                    src_text_fragment_t * sik = &fmt->m_pbuffer->srctext[wi->src_text_index];
-                    if ( !(sik->flags & LTEXT_SRC_IS_OBJECT) && sik->t.font ) {
-                        em_for_kern = ((LVFont *)sik->t.font)->getSize();
-                    }
-                }
-                vert_layout_min_x += em_for_kern / 4;  // 0.25em
-            }
-            vert_layout_prev_class = wi_is_cjk ? -1 : +1;
-            // Phase 5 CJK↔CJK inter-class glue mirror (matches Draw side).
-            // Look up jfm-ujisv.lua [N].glue[M] for (prev_cjk_class,curr_cjk_class)
-            // and shift vert_layout_min_x BEFORE this word.  Keeps
-            // word->width = compacted slot width.
-            JLReqVertClass curr_cjk_cls_lay = JLREQ_VERT_OTHER;
-            if ( wi_is_cjk && (int)wi->src_text_index < fmt->m_pbuffer->srctextlen ) {
-                src_text_fragment_t * sicls = &fmt->m_pbuffer->srctext[wi->src_text_index];
-                if ( !(sicls->flags & LTEXT_SRC_IS_OBJECT) && sicls->t.text && wi->t.len > 0 ) {
-                    curr_cjk_cls_lay = getJLReqVertClass(sicls->t.text[wi->t.start]);
-                }
-            }
-            if ( wi_is_cjk && vert_layout_prev_cjk_class >= 0 ) {
-                int eighths = getJLReqGlueKernEighths(
-                        (JLReqVertClass)vert_layout_prev_cjk_class, curr_cjk_cls_lay);
-                if ( eighths > 0 ) {
-                    int em_for_glue = 20;
-                    if ( (int)wi->src_text_index < fmt->m_pbuffer->srctextlen ) {
-                        src_text_fragment_t * sig = &fmt->m_pbuffer->srctext[wi->src_text_index];
-                        if ( !(sig->flags & LTEXT_SRC_IS_OBJECT) && sig->t.font ) {
-                            em_for_glue = ((LVFont *)sig->t.font)->getSize();
-                        }
-                    }
-                    vert_layout_min_x += (em_for_glue * eighths) / 8;
-                }
-            }
-            if ( wi_is_cjk ) {
-                vert_layout_prev_cjk_class = (int)curr_cjk_cls_lay;
-            } else {
-                vert_layout_prev_cjk_class = -1;
+                if ( base_glue > 0 )
+                    vert_layout_min_x += base_glue;
+                collectVerticalJustifyGaps(vert_justify_gaps, i, prev_word,
+                        prev_info, curr_info, jfm_spec, boundary_cjk_non_cjk);
             }
             // Mirror Draw()'s vert_min_next_x clamping: if a previous word's
             // effective advance pushed vert_layout_min_x past this word's layout
@@ -249,9 +433,18 @@ void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * f
             // above the actual glyph when font CJK advances are slightly < font_size.
             if ( (int)wi->x < vert_layout_min_x )
                 wi->x = (lInt16)vert_layout_min_x;
-            int next_x = wi->x + eff_w;
+            int next_x = wi->x + curr_info.effective_width;
             if ( next_x > vert_layout_min_x )
                 vert_layout_min_x = next_x;
+            if ( curr_info.object || curr_info.image || curr_info.pad ) {
+                have_prev_info = false;
+                prev_word = NULL;
+            }
+            else {
+                prev_info = curr_info;
+                prev_word = wi;
+                have_prev_info = true;
+            }
             continue;
         }
         if ( frmline->words[i].flags & LTEXT_WORD_IS_INLINE_BOX ) {
@@ -270,8 +463,7 @@ void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * f
                 RENDER_RECT_SET_FLAG(source_fmt, BOX_IS_DISCARDED);
             }
             RenderRectAccessor node_fmt( node );
-            bool vert_mode = (fmt->m_pbuffer->writing_mode == css_wm_vertical_rl ||
-                              fmt->m_pbuffer->writing_mode == css_wm_vertical_lr);
+            bool vert_mode = is_vert_frmline;
             // Inline-box advance MUST match the Draw side's ib_actual_depth
             // (lvtextfm.cpp applyVerticalInlineBoxDraw): the actual visual
             // column depth is stored in srcline->vert_inline_box_depth by
@@ -281,9 +473,7 @@ void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * f
             // while Draw advances vert_min_next_x by that depth would put
             // the following char's highlight rect (positioned by word->x) half
             // an em BELOW its glyph.  Use the same fallback chain as Draw.
-            int ib_layout_depth = (srcline->vert_inline_box_depth > 0)
-                ? (int)srcline->vert_inline_box_depth
-                : (int)word->width;
+            int ib_layout_depth = getVerticalInlineBoxDepth(srcline, (int)word->width);
             if ( RENDER_RECT_HAS_FLAG(node_fmt, BOX_IS_POSITIONNED) ) {
                 if ( is_vert_frmline ) {
                     // The box was positioned in a previous pass against an
@@ -298,26 +488,24 @@ void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * f
                     // the glyph, producing a highlight rect above the glyph
                     // — visible on `<CJK><ruby><CJK>` sequences with a JFM
                     // glue boundary entering the ruby.
+                    bool is_ruby_box = isRubyInlineBox(node);
                     int clamped_x = node_fmt.getX() - frmline->x;
-                    if ( clamped_x < vert_layout_min_x ) {
+                    if ( is_ruby_box )
                         clamped_x = vert_layout_min_x;
+                    else if ( clamped_x < vert_layout_min_x )
+                        clamped_x = vert_layout_min_x;
+                    if ( node_fmt.getX() != frmline->x + clamped_x ) {
                         // Also push the recorded position so getRect() for
                         // characters inside the box reports the actually-
                         // drawn column position.
                         node_fmt.setX( frmline->x + clamped_x );
                         node_fmt.push();
                     }
+                    word->x = (lInt16)vertClampToInt16(clamped_x);
                     int nx = clamped_x + ib_layout_depth;
                     if ( nx > vert_layout_min_x ) vert_layout_min_x = nx;
-                    // Mirror DRAW's applyVerticalInlineBoxDraw: treat the
-                    // inline box as a CJK-ish predecessor for the next word's
-                    // xkanjiskip / glue lookup.  Without this, a SPACE coming
-                    // right after a ruby box does not get the CJK→non-CJK
-                    // 0.25em xkanjiskip in LAYOUT while DRAW does insert it,
-                    // and the following CJK character's word->x drifts 0.25em
-                    // before its rendered column position.
-                    vert_layout_prev_class     = -1;
-                    vert_layout_prev_cjk_class = -1;
+                    have_prev_info = false;
+                    prev_word = NULL;
                 }
                 continue;
             }
@@ -325,21 +513,15 @@ void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * f
             if ( is_vert_frmline ) {
                 // Apply the same clamping that Draw() will use at render time
                 // so getRect() returns the rendered (not pre-clamp) position.
-                int ib_word_x    = word->x;
-                int clamped_ib_x = (ib_word_x < vert_layout_min_x)
-                                   ? vert_layout_min_x : ib_word_x;
+                bool is_ruby_box = isRubyInlineBox(node);
+                int ib_word_x = word->x;
+                int clamped_ib_x = is_ruby_box || ib_word_x < vert_layout_min_x
+                                  ? vert_layout_min_x : ib_word_x;
+                word->x = (lInt16)vertClampToInt16(clamped_ib_x);
                 node_fmt.setX( frmline->x + clamped_ib_x );
                 vert_layout_min_x = clamped_ib_x + ib_layout_depth;
-                // Mirror DRAW's applyVerticalInlineBoxDraw:
-                //   state.vert_prev_cjk_class = -1            (no JFM glue lookup vs box)
-                //   state.vert_prev_was_non_cjk_word = false  (= "prev was CJK-ish")
-                // Treating the box as CJK-ish makes the next non-CJK word
-                // (e.g. a SPACE separating the ruby from the following CJK)
-                // trigger the CJK→non-CJK xkanjiskip the DRAW side inserts,
-                // keeping word->x (the highlight rect base) aligned with the
-                // rendered glyph position.
-                vert_layout_prev_cjk_class = -1;
-                vert_layout_prev_class     = -1;
+                have_prev_info = false;
+                prev_word = NULL;
             } else {
                 node_fmt.setX( frmline->x + word->x );
             }
@@ -394,6 +576,13 @@ void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * f
                 }
             #endif
         }
+    }
+    if ( is_vert_frmline ) {
+        if ( vert_layout_min_x > (int)frmline->width )
+            frmline->width = (lUInt16)vert_layout_min_x;
+        applyVerticalJustification(frmline, vert_justify_gaps, alignment, usable_width);
+        if ( hasInlineBoxes )
+            syncVerticalInlineBoxPositionsAfterJustify(fmt, frmline);
     }
     #if MATHML_SUPPORT==1
         if ( needed_height > frmline->height ) {
@@ -822,9 +1011,7 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                 //    their real advance (no em floor — flooring these is exactly the #17 bug).
                 int eff_adv;
                 if ( is_inline_box ) {
-                    eff_adv = (fmt->m_srcs[i]->vert_inline_box_depth > 0)
-                              ? (int)fmt->m_srcs[i]->vert_inline_box_depth
-                              : fmt->m_srcs[i]->o.width;
+                    eff_adv = getVerticalInlineBoxDepth(fmt->m_srcs[i], fmt->m_srcs[i]->o.width);
                 }
                 else {
                     eff_adv = adv_delta;
@@ -836,13 +1023,17 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                 // between two consecutive CJK chars.  Skipped around inline boxes (their
                 // surrounding spacing is already folded into letter_spacing).
                 if ( !is_object_char &&
-                       ( (est_prev_class == +1 && is_cjk_char) || (est_prev_class == -1 && !is_cjk_char) ) )
+                       ( (est_prev_class == +1 && is_cjk_char) || (est_prev_class == -1 && !is_cjk_char) ) ) {
                     eff_adv += cur_char_em / 4;
+                    spaceReduceWidth += cur_char_em / 8; // xkanjiskip shrink = .125em
+                }
                 if ( is_cjk_char && est_prev_cjk_class >= 0 ) {
-                    int eighths = getJLReqGlueKernEighths(
+                    JLReqVertGlueSpec spec = getJLReqVertGlueSpec(
                             (JLReqVertClass)est_prev_cjk_class, cur_jfm_class);
-                    if ( eighths > 0 )
-                        eff_adv += cur_char_em * eighths / 8;
+                    if ( spec.base_eighths > 0 )
+                        eff_adv += cur_char_em * spec.base_eighths / 8;
+                    if ( spec.shrink_eighths > 0 )
+                        spaceReduceWidth += cur_char_em * spec.shrink_eighths / 8;
                 }
                 col_used_est += eff_adv;
                 if ( is_object_char ) {
@@ -858,7 +1049,8 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                 // old two-part test (m_advance for the real advance + an "every char = one
                 // em" safety estimate); that estimate over-counted narrow Latin and half-em
                 // punctuation, breaking mixed CJK/Latin columns early (issue #17).
-                if ( y + col_used_est > maxHeight + spaceReduceWidth ) {
+                int fitSpaceReduceWidth = y <= 0 ? spaceReduceWidth : 0;
+                if ( y + col_used_est > maxHeight + fitSpaceReduceWidth ) {
                     // burasagari / end-of-line punctuation hanging: if the overflowing character is
                     // a sentence-end punctuation that must not start a new column (line-start kinsoku),
                     // include it in the current column and stop here.  The glyph will draw
@@ -867,7 +1059,7 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                     // trailing blank of the em-square may be clipped at clip.bottom.
                     if ( fmt->m_hanging_punctuation && isVerticalHangingChar(fmt->m_text[i]) ) {
                         int prev_adv = col_used_est - eff_adv;
-                        if ( y + prev_adv <= maxHeight + spaceReduceWidth ) {
+                        if ( y + prev_adv <= maxHeight + fitSpaceReduceWidth ) {
                             lastNormalWrap = i;  // include this char in current column
                             i++;
                             break;
@@ -885,7 +1077,7 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                                 if ( wa8 < 0 )
                                     wa8 = -wa8;
                                 w = w * wa8 / 8;
-                                if ( y + fmt->m_advance[i-1]-w0 + w <= maxHeight + spaceReduceWidth ) {
+                                if ( y + fmt->m_advance[i-1]-w0 + w <= maxHeight + fitSpaceReduceWidth ) {
                                     does_fit = true;
                                 }
                                 if ( !does_fit ) {
@@ -895,7 +1087,7 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
                                         if ( wa8 < 0 )
                                             wa8 = -wa8;
                                         w = w * wa8 / 8;
-                                        if ( y + fmt->m_advance[i-1]-w0 + w <= maxHeight + spaceReduceWidth ) {
+                                        if ( y + fmt->m_advance[i-1]-w0 + w <= maxHeight + fitSpaceReduceWidth ) {
                                             does_fit = true;
                                         }
                                     }
@@ -1023,7 +1215,8 @@ void processParagraphVertical( LVFormatter* fmt, int start, int end, bool isLast
 
             // Hyphenation
             tryHyphenBreak(fmt, pos, wordpos, lastNormalWrap, lastMandatoryWrap,
-                           y, w0, maxHeight, spaceReduceWidth, unusedPercent, lastHyphWrap);
+                           y, w0, maxHeight, y <= 0 ? spaceReduceWidth : 0,
+                           unusedPercent, lastHyphWrap);
 
             // Decide best position to end this line
             int wrapPos = lastHyphWrap;
@@ -1301,8 +1494,7 @@ VertRubyInlineBoxMetrics computeVertRubyInlineBoxMetrics(
     m.annot_font_size_pre = 0;
     m.advance_per_char_pre = lastFont ? lastFont->getSize()
         : (pbuffer->strut_height > 0 ? pbuffer->strut_height : 1);
-    m.vert_inline_box = (pbuffer->writing_mode == css_wm_vertical_rl ||
-                         pbuffer->writing_mode == css_wm_vertical_lr);
+    m.vert_inline_box = css_wm_is_vertical(pbuffer->writing_mode);
     m.is_ruby_inline_pre = m.vert_inline_box && isRubyInlineBox(node);
 
     if ( m.is_ruby_inline_pre && m.advance_per_char_pre > 0 ) {
@@ -1412,7 +1604,29 @@ void applyVerticalFrmlineDimensions(LVFormatter * fmt, formatted_line_t * frmlin
 // applyVerticalNNRubyCenterDistribution to gate per-char annotation
 // distribution: applies only when this frmline IS a ruby annotation
 // cell, not when it's some other narrow centred block (e.g. headings).
-static bool isInsideRubyAnnotation(LVFormatter * fmt, formatted_line_t * frmline)
+bool isVerticalRubyInnerLine(LVFormatter * fmt, formatted_line_t * frmline)
+{
+    if ( frmline->word_count < 1 ) return false;
+    formatted_word_t * w0 = &frmline->words[0];
+    if ( (int)w0->src_text_index >= fmt->m_pbuffer->srctextlen ) return false;
+    src_text_fragment_t * src = &fmt->m_pbuffer->srctext[w0->src_text_index];
+    if ( src->flags & LTEXT_SRC_IS_OBJECT ) return false;
+    ldomNode * n = (ldomNode *)src->object;
+    if ( !n ) return false;
+    // Limit traversal depth so a deeply nested fragment doesn't burn time.
+    for ( int depth = 0; depth < 8 && n; depth++ ) {
+        if ( n->isElement() ) {
+            lUInt16 id = n->getNodeId();
+            if ( id == el_rubyBox || id == el_rbc || id == el_rb
+                    || id == el_rtc || id == el_rt || id == el_rp )
+                return true;
+        }
+        n = n->getParentNode();
+    }
+    return false;
+}
+
+bool isVerticalRubyAnnotationLine(LVFormatter * fmt, formatted_line_t * frmline)
 {
     if ( frmline->word_count < 1 ) return false;
     formatted_word_t * w0 = &frmline->words[0];
@@ -1486,7 +1700,7 @@ bool applyVerticalNNRubyCenterDistribution(
     // Belt-and-braces: also require the fragment to actually be inside
     // <rt>/<rtc>/<rp>, so non-ruby content matching the metric signature
     // (e.g. a short centred heading) is never per-char distributed.
-    if ( !isInsideRubyAnnotation(fmt, frmline) )
+    if ( !isVerticalRubyAnnotationLine(fmt, frmline) )
         return false;
     int next_x = 0;
     for ( int wi = 0; wi < N; wi++ ) {
@@ -1776,9 +1990,7 @@ void applyVerticalInlineBoxDraw(
     // character starts after the ruby group's visual end, preventing
     // character-overlap.  Fall back to word->width if vert_inline_box_depth was
     // not set (non-ruby inline boxes, horizontal mode).
-    int ib_actual_depth = (srcline->vert_inline_box_depth > 0)
-        ? (int)srcline->vert_inline_box_depth
-        : (int)word->width;
+    int ib_actual_depth = getVerticalInlineBoxDepth(srcline, (int)word->width);
     state.vert_min_next_x = clamped_ib_x + ib_actual_depth;
     state.vert_prev_plain_y0 = y + (int)frmline->x + clamped_ib_x;
     state.vert_prev_effective_width = ib_actual_depth;
@@ -1896,17 +2108,8 @@ void applyVerticalWordDraw(
         // of the rotated block; the caller updates it past the block end
         // after DrawTextString returns (using word->width).
         int font_h = font->getHeight();
-        // Phase 5 xkanjiskip for CJK → non-CJK boundary: insert 0.25em
-        // BEFORE the Latin block when the previous word was CJK.
-        if ( !state.vert_prev_was_non_cjk_word && state.vert_prev_plain_y0 >= 0 ) {
-            state.vert_min_next_x += font->getSize() / 4;  // 0.25em
-        }
-        // Honour LAYOUT post-pass position (word->x) the same way plain CJK
-        // does: the highlight rect for this Latin word is positioned by
-        // word->x via getRect(), so DRAW must place the glyph at the same
-        // column position to keep them in sync.  state.vert_min_next_x is
-        // kept as a lower bound for ordering.  See the comment in the plain
-        // CJK branch below for the full rationale.
+        // Honour LAYOUT post-pass position (word->x) while keeping the
+        // previous visual end as a lower bound to avoid overlap.
         int clamped_x = (int)word->x > state.vert_min_next_x
                         ? (int)word->x : state.vert_min_next_x;
         // Synchronise state.vert_min_next_x with where the glyph actually
@@ -1945,38 +2148,16 @@ void applyVerticalWordDraw(
         if ( (int)frmline->height <= strut && em < strut )
             x0_out += (strut - em) / 2;
     }
-    // Phase 5 xkanjiskip for non-CJK → CJK boundary: insert 0.25em
-    // (= 2/8 em) BEFORE this CJK word when the previous word was non-CJK.
-    if ( state.vert_prev_was_non_cjk_word ) {
-        state.vert_min_next_x += font->getSize() / 4;  // 0.25em
-    }
-    // Phase 5 CJK ↔ CJK inter-class glue: look up jfm-ujisv.lua [N].glue[M]
-    // for (prev_cjk_class, curr_cjk_class) and shift vert_min_next_x BEFORE
-    // this glyph.  word->width stays at the compacted slot width so the
-    // highlight rect matches the glyph; glue renders as empty space between.
     JLReqVertClass curr_cjk_class = JLREQ_VERT_OTHER;
     if ( srcline->t.text && word->t.len > 0 ) {
         curr_cjk_class = getJLReqVertClass(srcline->t.text[word->t.start]);
     }
-    if ( state.vert_prev_cjk_class >= 0 ) {
-        int eighths = getJLReqGlueKernEighths(
-                (JLReqVertClass)state.vert_prev_cjk_class, curr_cjk_class);
-        if ( eighths > 0 ) {
-            state.vert_min_next_x += ((int)font->getSize() * eighths) / 8;
-        }
-    }
-    // word->x carries the LAYOUT post-pass position (vert_layout_min_x at
-    // word-time, with Phase 5 xkanjiskip + JFM glue + ruby-box clamping
-    // already applied).  getRect() uses word->x to position the highlight
-    // rect, so DRAW must place the glyph at the same column position;
-    // otherwise the highlight visibly drifts from the glyph.
+    // word->x carries the LAYOUT post-pass position, including JFM base glue,
+    // xkanjiskip and justification stretch/shrink. getRect() uses word->x to
+    // position the highlight rect, so DRAW must place the glyph at the same
+    // column position.
     //
-    // state.vert_min_next_x is a lower bound — it must clamp the position
-    // for words that follow a wider preceding item (image / multi-em
-    // composite glyph) whose effective advance the LAYOUT side may have
-    // under-counted.  Take the max so both constraints hold simultaneously:
-    // never draw before vert_min_next_x, but always honour LAYOUT's
-    // post-pass position when it's further along.
+    // Keep the previous visual end as a lower bound to avoid overlap.
     int clamped_x = (int)word->x > state.vert_min_next_x
                     ? (int)word->x : state.vert_min_next_x;
     y0_out = y + frmline->x + clamped_x;
