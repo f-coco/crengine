@@ -3048,8 +3048,7 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
         // is wider than base, the annotation fills its own (larger) slot with
         // zero shift, and the base is centred inside that slot — giving equal
         // overhang on both sides.  Never fall back to page_height.
-        bool is_vert = (fmt->m_pbuffer->writing_mode == css_wm_vertical_rl ||
-                        fmt->m_pbuffer->writing_mode == css_wm_vertical_lr);
+        bool is_vert = css_wm_is_vertical(fmt->m_pbuffer->writing_mode);
         // Track whether we clamped to an inner ruby cell's declared slot width.
         // When true, CENTER alignment uses round-half-up so that annotation and
         // base cells both land on the same integer pixel center (JLReq §3.3.8).
@@ -3660,8 +3659,7 @@ void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fr
         int usable_left_overflow;
         int usable_right_overflow;
         fmt->getCurrentLineUsableOverflows(usable_left_overflow, usable_right_overflow);
-        bool is_vertical_mode = (fmt->m_pbuffer->writing_mode == css_wm_vertical_rl ||
-                                 fmt->m_pbuffer->writing_mode == css_wm_vertical_lr);
+        bool is_vertical_mode = css_wm_is_vertical(fmt->m_pbuffer->writing_mode);
 
         // Find out text alignment to ensure for this line
         int align = para->flags & LTEXT_FLAG_NEWLINE;
