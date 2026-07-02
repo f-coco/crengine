@@ -2493,8 +2493,8 @@ LVFontRef getFont(ldomNode * node, css_style_rec_t * style, int documentId)
     if ( sz > 340 )
         sz = 340;
     int fw;
-    if (style->font_weight>=css_fw_100 && style->font_weight<=css_fw_900)
-        fw = ((style->font_weight - css_fw_100)+1) * 100;
+    if (style->font_weight >= 1 && style->font_weight <= 1000)
+        fw = (int)style->font_weight;
     else
         fw = 400;
     fw += (rend_font_base_weight - 400);
@@ -2508,6 +2508,12 @@ LVFontRef getFont(ldomNode * node, css_style_rec_t * style, int documentId)
     else if ( fw>999 )
         fw = 999;
     // printf("cssd_font_family: %d %s", style->font_family, style->font_name.c_str());
+    // wght/ital are passed via the weight/italic params below, not here:
+    // GetFont's computeVariations() derives those from weight/italic and
+    // ignores requested.wght/requested.ital.
+    LVFontVariations variations;
+    if (style->font_optical_sizing != css_fos_none && gRenderDPI >= 100)
+        variations.set(LVFONT_TAG_OPSZ, sz * 72.0f / (float)gRenderDPI);
     LVFontRef fnt = fontMan->GetFont(
         sz,
         fw,
@@ -2515,7 +2521,8 @@ LVFontRef getFont(ldomNode * node, css_style_rec_t * style, int documentId)
         style->font_family,
         lString8(style->font_name.c_str()),
         style->font_features.value, // (.type is always css_val_unspecified after setNodeStyle())
-        documentId, true); // useBias=true, so that our preferred font gets used
+        documentId, true, // useBias=true, so that our preferred font gets used
+        variations.empty() ? NULL : &variations);
     //fnt = LVCreateFontTransform( fnt, LVFONT_TRANSFORM_EMBOLDEN );
     return fnt;
 }
@@ -9686,6 +9693,7 @@ void DrawBorder(ldomNode *enode,LVDrawBuf & drawbuf,int x0,int y0,int doc_x,int 
         DrawBorderVertical(enode, drawbuf, x0, y0, doc_x, doc_y, fmt);
         return;
     }
+    const bool invert_colors = drawbuf.getInvertColors();
     bool hastopBorder = (style->border_style_top >=css_border_solid);
     bool hasrightBorder = (style->border_style_right >=css_border_solid);
     bool hasbottomBorder = (style->border_style_bottom >=css_border_solid);
@@ -9744,6 +9752,11 @@ void DrawBorder(ldomNode *enode,LVDrawBuf & drawbuf,int x0,int y0,int doc_x,int 
                 if ( (topBordercolor & 0xFFFFFF) == 0 ) {
                     shadecolor = o|0x4c4c4c; // Firefox uses these values when color is real black 0x000000 (but not if 0x010101)
                     lightcolor = o|0xb2b2b2;
+                }
+                if ( invert_colors ) {
+                    topBordercolor = invertNonGrayscaleColor(topBordercolor);
+                    shadecolor = invertNonGrayscaleColor(shadecolor);
+                    lightcolor = invertNonGrayscaleColor(lightcolor);
                 }
             }
             int left=1,right=1;
@@ -9852,6 +9865,11 @@ void DrawBorder(ldomNode *enode,LVDrawBuf & drawbuf,int x0,int y0,int doc_x,int 
                 if ( (rightBordercolor & 0xFFFFFF) == 0 ) {
                     shadecolor = o|0x4c4c4c;
                     lightcolor = o|0xb2b2b2;
+                }
+                if ( invert_colors ) {
+                    rightBordercolor = invertNonGrayscaleColor(rightBordercolor);
+                    shadecolor = invertNonGrayscaleColor(shadecolor);
+                    lightcolor = invertNonGrayscaleColor(lightcolor);
                 }
             }
             int up=1,down=1;
@@ -9963,6 +9981,11 @@ void DrawBorder(ldomNode *enode,LVDrawBuf & drawbuf,int x0,int y0,int doc_x,int 
                     shadecolor = o|0x4c4c4c;
                     lightcolor = o|0xb2b2b2;
                 }
+                if ( invert_colors ) {
+                    bottomBordercolor = invertNonGrayscaleColor(bottomBordercolor);
+                    shadecolor = invertNonGrayscaleColor(shadecolor);
+                    lightcolor = invertNonGrayscaleColor(lightcolor);
+                }
             }
             int left=1,right=1;
             left=(hasleftBorder)?0:1;
@@ -10061,6 +10084,11 @@ void DrawBorder(ldomNode *enode,LVDrawBuf & drawbuf,int x0,int y0,int doc_x,int 
                 if ( (leftBordercolor & 0xFFFFFF) == 0 ) {
                     shadecolor = o|0x4c4c4c;
                     lightcolor = o|0xb2b2b2;
+                }
+                if ( invert_colors ) {
+                    leftBordercolor = invertNonGrayscaleColor(leftBordercolor);
+                    shadecolor = invertNonGrayscaleColor(shadecolor);
+                    lightcolor = invertNonGrayscaleColor(lightcolor);
                 }
             }
             int up=1,down=1;
@@ -10545,6 +10573,7 @@ void DrawBodyBackground( LVDrawBuf & drawbuf, bool draw_bg_color, bool draw_bg_i
         css_style_ref_t style = enode->getStyle();
         // If not css_val_color, it must be (css_val_unspecified, css_generic_currentcolor)
         lUInt32 bg_color = style->background_color.type == css_val_color ? style->background_color.value : style->color.value;
+        bg_color = drawbuf.getInvertColors() ? invertNonGrayscaleColor(bg_color) : bg_color;
         drawbuf.FillRect(bg_left, bg_top, bg_right, bg_bottom, bg_color);
     }
     if ( draw_bg_image ) {
@@ -10672,6 +10701,7 @@ void DrawDocument( LVDrawBuf & drawbuf, ldomNode * enode, int x0, int y0, int dx
         bool restoreBackgroundColor = false;
         // If not css_val_color, it must be (css_val_unspecified, css_generic_currentcolor)
         lUInt32 bg_color = style->background_color.type == css_val_color ? style->background_color.value : style->color.value;
+        bg_color = drawbuf.getInvertColors() ? invertNonGrayscaleColor(bg_color) : bg_color;
         lUInt32 oldColor = 0;
 
         // Don't draw background color for TR and THEAD/TFOOT/TBODY as it could
@@ -11686,6 +11716,7 @@ void setNodeStyle( ldomNode * enode, css_style_ref_t parent_style, LVFontRef par
     /// Keywords properties
     // These have "inherit" as their initial value (others, less straightforward, are handled below)
     UPDATE_STYLE_FIELD( font_style, css_fs_inherit );
+    UPDATE_STYLE_FIELD( font_optical_sizing, css_fos_inherit );
     UPDATE_STYLE_FIELD( white_space, css_ws_inherit );
     UPDATE_STYLE_FIELD( text_align, css_ta_inherit );
     UPDATE_STYLE_FIELD( text_align_last, css_ta_inherit );
@@ -11821,36 +11852,28 @@ void setNodeStyle( ldomNode * enode, css_style_ref_t parent_style, LVFontRef par
         pstyle->font_weight = parent_style->font_weight;
         break;
     case css_fw_normal:
-        pstyle->font_weight = css_fw_400;
+        pstyle->font_weight = 400;
         break;
     case css_fw_bold:
-        pstyle->font_weight = css_fw_700;
+        pstyle->font_weight = 700;
         break;
     case css_fw_bolder:
-        if (parent_style->font_weight < css_fw_400)
-            pstyle->font_weight = css_fw_400;
-        else if (parent_style->font_weight < css_fw_600)
-            pstyle->font_weight = css_fw_700;
+        if (parent_style->font_weight < 400)
+            pstyle->font_weight = 400;
+        else if (parent_style->font_weight < 600)
+            pstyle->font_weight = 700;
         else
-            pstyle->font_weight = css_fw_900;
+            pstyle->font_weight = 900;
         break;
     case css_fw_lighter:
-        if (parent_style->font_weight < css_fw_400)
-            pstyle->font_weight = css_fw_100;
-        else if (parent_style->font_weight < css_fw_600)
-            pstyle->font_weight = css_fw_300;
+        if (parent_style->font_weight < 400)
+            pstyle->font_weight = 100;
+        else if (parent_style->font_weight < 600)
+            pstyle->font_weight = 300;
         else
-            pstyle->font_weight = css_fw_700;
+            pstyle->font_weight = 700;
         break;
-    case css_fw_100:
-    case css_fw_200:
-    case css_fw_300:
-    case css_fw_400:
-    case css_fw_500:
-    case css_fw_600:
-    case css_fw_700:
-    case css_fw_800:
-    case css_fw_900:
+    default: // already a resolved numeric weight [1, 1000]
         break;
     }
 

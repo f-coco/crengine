@@ -36,6 +36,8 @@ lUInt32 calcHash(font_ref_t & f)
     v = v * 31 + (lUInt32)f->getBitmapMode();
     v = v * 31 + (lUInt32)f->getTypeFace().getHash();
     v = v * 31 + (lUInt32)f->getBaseline();
+    v = v * 31 + f->getVariationHash();
+    v = v * 31 + (lUInt32)f->getSynthWeight();
     f->_hash = v;
     return v;
 }
@@ -44,7 +46,7 @@ lUInt32 calcHash(font_ref_t & f)
 lUInt32 calcHash(css_style_rec_t & rec)
 {
     if ( !rec.hash )
-        rec.hash = (((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((
+        rec.hash = ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((
          + (lUInt32)rec.important[0]) * 31
          + (lUInt32)rec.important[1]) * 31
          + (lUInt32)rec.important[2]) * 31
@@ -69,6 +71,7 @@ lUInt32 calcHash(css_style_rec_t & rec)
          + (lUInt32)rec.font_style) * 31
          + (lUInt32)rec.font_weight) * 31
          + (lUInt32)rec.font_features.pack()) * 31
+         + (lUInt32)rec.font_optical_sizing) * 31
          + (lUInt32)rec.line_height.pack()) * 31
          + (lUInt32)rec.color.pack()) * 31
          + (lUInt32)rec.background_color.pack()) * 31
@@ -178,6 +181,7 @@ bool operator == (const css_style_rec_t & r1, const css_style_rec_t & r2)
            r1.font_name == r2.font_name &&
            r1.font_family == r2.font_family&&
            r1.font_features == r2.font_features&&
+           r1.font_optical_sizing == r2.font_optical_sizing&&
            r1.border_style_top==r2.border_style_top&&
            r1.border_style_right==r2.border_style_right&&
            r1.border_style_bottom==r2.border_style_bottom&&
@@ -342,6 +346,8 @@ lString8 joinPropertyValueList( const lString8Collection & list )
 static const char * style_magic = "CR3STYLE";
 #define ST_PUT_ENUM(v) buf << (lUInt8)v
 #define ST_GET_ENUM(t,v) { lUInt8 tmp; buf >> tmp; v=(t)tmp; if (buf.error()) return false; }
+#define ST_PUT_U16(v) buf << (lUInt16)v
+#define ST_GET_U16(t,v) { lUInt16 tmp; buf >> tmp; v=(t)tmp; if (buf.error()) return false; }
 #define ST_PUT_LEN(v) buf << (lUInt8)v.type << (lInt32)v.value;
 #define ST_GET_LEN(v) { lUInt8 t; buf >> t; lInt32 val; buf >> val; v.type = (css_value_type_t)t; v.value = val; if (buf.error()) return false; }
 #define ST_PUT_LEN4(v) ST_PUT_LEN(v[0]);ST_PUT_LEN(v[1]);ST_PUT_LEN(v[2]);ST_PUT_LEN(v[3]);
@@ -370,8 +376,9 @@ bool css_style_rec_t::serialize( SerialBuf & buf )
     buf << font_name;               //    lString8             font_name;
     ST_PUT_LEN(font_size);          //    css_length_t         font_size;
     ST_PUT_ENUM(font_style);        //    css_font_style_t     font_style;
-    ST_PUT_ENUM(font_weight);       //    css_font_weight_t    font_weight;
+    ST_PUT_U16(font_weight);        //    lUInt16              font_weight;
     ST_PUT_LEN(font_features);      //    css_length_t         font_features;
+    ST_PUT_ENUM(font_optical_sizing);
     ST_PUT_LEN(text_indent);        //    css_length_t         text_indent;
     ST_PUT_LEN(line_height);        //    css_length_t         line_height;
     ST_PUT_LEN(width);              //    css_length_t         width;
@@ -450,8 +457,9 @@ bool css_style_rec_t::deserialize( SerialBuf & buf )
     buf >> font_name;                                       //    lString8             font_name;
     ST_GET_LEN(font_size);                                  //    css_length_t         font_size;
     ST_GET_ENUM(css_font_style_t, font_style);              //    css_font_style_t     font_style;
-    ST_GET_ENUM(css_font_weight_t, font_weight);            //    css_font_weight_t    font_weight;
+    ST_GET_U16(lUInt16, font_weight);
     ST_GET_LEN(font_features);                              //    css_length_t         font_features;
+    ST_GET_ENUM(css_font_optical_sizing_t, font_optical_sizing);
     ST_GET_LEN(text_indent);                                //    css_length_t         text_indent;
     ST_GET_LEN(line_height);                                //    css_length_t         line_height;
     ST_GET_LEN(width);                                      //    css_length_t         width;
