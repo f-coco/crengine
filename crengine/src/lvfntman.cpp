@@ -5511,8 +5511,9 @@ public:
     virtual int DrawTextString(LVDrawBuf* buf, int x, int y,
                                 const lChar32* text, int len, lChar32 def_char,
                                 lUInt32* palette, bool addHyphen, TextLangCfg* lc,
-                                lUInt32 flags, int ls, int width, int tbg,
-                                int tw, int th, SVGGlyphsCollector* svg) {
+                                lUInt32 flags, int letter_spacing, int width,
+                                int text_decoration_back_gap,
+                                int target_w, int target_h, SVGGlyphsCollector* svg) {
         int x0 = x;
         // Shift small-font glyphs down so their baseline aligns with the normal font's.
         int y_small = y + (_font->getBaseline() - _smallFont->getBaseline());
@@ -5530,34 +5531,45 @@ public:
                 x += f->DrawTextString(buf, x, f == _smallFont ? y_small : y,
                                        run.mapped + i, runLen, def_char,
                                        palette, runHasHyphen, lc, noDecFlags,
-                                       ls, -1, 0, -1, -1, svg);
+                                       letter_spacing, -1, 0, -1, -1, svg);
                 i = j;
             }
         }
-        if (flags & LFNT_DRAW_DECORATION_MASK) {
-            // Match LVFreeTypeFace::DrawTextString's formulas exactly (using the main
-            // font's real underline metrics, not a generic size-based approximation),
-            // so decorated small-caps text lines up with plain text on the same line.
-            // This is a deliberate duplicate (not shared via a helper) of the
-            // LFNT_DRAW_UNDERLINE/OVERLINE/LINE_THROUGH block in
-            // LVFreeTypeFace::DrawTextString() above (lvfntman.cpp:4759-4786):
-            // keep the two in sync if those formulas ever change.
+        // This is a deliberate duplicate (not shared via a helper) of the
+        // LFNT_DRAW_UNDERLINE/OVERLINE/LINE_THROUGH block in
+        // LVFreeTypeFace::DrawTextString() above (lvfntman.cpp:4759-4786):
+        // keep the two in sync if those formulas ever change.
+        int advance = x - x0;
+        if ( flags & LFNT_DRAW_DECORATION_MASK ) {
+            // text decoration: underline, etc.
+            // Don't overflow the provided width (which may be lower than our
+            // pen x if last glyph was a space not accounted in word width)
+            if ( width >= 0 && x > x0 + width)
+                x = x0 + width;
+            // And start the decoration before x0 if it is continued
+            // from previous word
+            x0 -= text_decoration_back_gap;
             int thickness = getUnderlineThickness();
             lUInt32 cl = buf->GetTextColor();
-            if (flags & LFNT_DRAW_UNDERLINE) {
+            if ( flags & LFNT_DRAW_UNDERLINE ) {
                 int liney = y + getBaseline() + getUnderlineOffset();
-                buf->FillRect(x0, liney, x, liney+thickness, cl);
+                buf->FillRect( x0, liney, x, liney+thickness, cl );
             }
-            if (flags & LFNT_DRAW_OVERLINE) {
+            if ( flags & LFNT_DRAW_OVERLINE ) {
+                // For now, we use the underline thickness as the offset from top, so
+                // to not be too high (should probably be computed from other metrics)
                 int liney = y + thickness;
-                buf->FillRect(x0, liney, x, liney+thickness, cl);
+                buf->FillRect( x0, liney, x, liney+thickness, cl );
+                // If we want to use this flag while developping for visually marking the start of words, use this instead:
+                // buf->FillRect( x0-getBaseline()/4, y, x0+getBaseline()/4, y+1, cl );
             }
-            if (flags & LFNT_DRAW_LINE_THROUGH) {
+            if ( flags & LFNT_DRAW_LINE_THROUGH ) {
+                // int liney = y + getBaseline() - getSize()/4 - h/2;
                 int liney = y + getBaseline() - getSize()*2/7;
-                buf->FillRect(x0, liney, x, liney+thickness, cl);
+                buf->FillRect( x0, liney, x, liney+thickness, cl );
             }
         }
-        return x - x0;
+        return advance;
     }
     virtual ~LVFontSmallCapsTransform() {}
 };
@@ -7087,18 +7099,27 @@ public:
         _instance_cache.gc();
     }
 
-    /// returns available typefaces
+    /// returns available typefaces (global fonts only - excludes document-embedded fonts)
     virtual void getFaceList( lString32Collection & list )
     {
         FONT_MAN_GUARD
         list.clear();
         for (int i = 0; i < _registry.familyCount(); i++) {
             const LVFontFamily* f = _registry.familyAt(i);
-            // faceAt(0).typeface holds the original-case display name;
-            // getName() is the lowercase lookup key and must not be used for display.
+            // A family can hold a mix of global and document-scoped faces when
+            // a document font shares its typeface name with a global one, so
+            // find the first global face rather than assuming faceAt(0) is global.
             assert(f->faceCount() > 0); // registerFace() always adds a face; removeFonts() prunes empties
-            lString32 name = Utf8ToUnicode(f->faceAt(0).typeface);
-            list.add(name);
+            for (int j = 0; j < f->faceCount(); j++) {
+                const LVFontFace& face = f->faceAt(j);
+                if (face.documentId != -1)
+                    continue;
+                // typeface holds the original-case display name;
+                // getName() is the lowercase lookup key, not used for display.
+                lString32 name = Utf8ToUnicode(face.typeface);
+                list.add(name);
+                break;
+            }
         }
         list.sort();
     }
@@ -7672,7 +7693,11 @@ public:
                 smallVars.set(LVFONT_TAG_WDTH, computed_variations.wdth);
             if (computed_variations.opsz_set)
                 smallVars.set(LVFONT_TAG_OPSZ, computed_variations.opsz * 0.75f);
-            LVFontRef smallRef = GetFont(small_size, weight, italic,
+            // Downscaled glyphs lose apparent stroke thickness, so request a bit
+            // of extra weight on the small font to compensate.
+            int small_weight = weight + 100;
+            if (small_weight > 1000) small_weight = 1000;
+            LVFontRef smallRef = GetFont(small_size, small_weight, italic,
                                          face.css_family, face.typeface,
                                          features & ~(LFNT_OT_FEATURES_P_SMCP | LFNT_OT_FEATURES_P_C2SC),
                                          face.documentId, false, smallVars.empty() ? NULL : &smallVars);
