@@ -45,6 +45,24 @@
 #define MAX_ADDED_LETTER_SPACING_PERCENT 0
 #define CJK_WIDTH_SCALE_PERCENT 100
 
+static bool verticalTextDebugEnabled()
+{
+    return getenv("KO_DEBUG_VERT_BG") != NULL;
+}
+
+static bool isVerticalTextLineDebugClass(const lString32 &cls)
+{
+    return cls == "calibre10" || cls == "calibre11"
+        || cls == "calibre4" || cls == "calibre7"
+        || cls == "margin" || cls == "marginalia1"
+        || cls == "jitsuki" || cls == "jitsuki1" || cls == "jitsuki2";
+}
+
+static bool isVerticalInlineBorderDebugClass(const lString32 &cls)
+{
+    return cls == "marker" || cls == "marginalia1" || cls == "line";
+}
+
 // to debug formatter
 
 #if defined(_DEBUG) && 0
@@ -6525,6 +6543,56 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
             : (line_y + frmline->height > clip.top || ignore_clip);
         if (line_visible)
         {
+            if ( is_vertical && verticalTextDebugEnabled() ) {
+                ldomNode * line_node = NULL;
+                for ( int wi = 0; wi < frmline->word_count && !line_node; wi++ ) {
+                    src_text_fragment_t * line_src = &m_pbuffer->srctext[frmline->words[wi].src_text_index];
+                    line_node = (ldomNode *)line_src->object;
+                    if ( line_node && line_node->isEffectiveText() )
+                        line_node = line_node->getParentNode();
+                }
+                ldomNode * class_node = line_node;
+                while ( class_node && class_node->getRendMethod() != erm_final )
+                    class_node = class_node->getParentNode();
+                if ( class_node && class_node->isElement() ) {
+                    lString32 cls = class_node->getAttributeValue(attr_class);
+                    if ( isVerticalTextLineDebugClass(cls) ) {
+                        int ink_top = y + (int)frmline->x;
+                        int ink_bottom = ink_top;
+                        bool has_ink = false;
+                        for ( int wi = 0; wi < frmline->word_count; wi++ ) {
+                            formatted_word_t * w = &frmline->words[wi];
+                            if ( w->flags & LTEXT_WORD_IS_PAD )
+                                continue;
+                            int w_top = y + (int)frmline->x + (int)w->x;
+                            int w_bottom = w_top + (int)w->width;
+                            if ( w->flags & LTEXT_WORD_IS_IMAGE )
+                                w_bottom = w_top + (int)w->o.height;
+                            if ( !has_ink || w_top < ink_top )
+                                ink_top = w_top;
+                            if ( !has_ink || w_bottom > ink_bottom )
+                                ink_bottom = w_bottom;
+                            has_ink = true;
+                        }
+                        fprintf(stderr,
+                                "KO_DEBUG_VERT_BG line path=%s class=%s rect=(%d,%d,%d,%d) "
+                                "line_x=%d frm=(%d,%d,%d,%d) words=%d ink_y=(%d,%d) "
+                                "clip=(%d,%d,%d,%d)\n",
+                                LCSTR(ldomXPointer(class_node, 0).toString()),
+                                LCSTR(cls),
+                                line_x - (int)frmline->height,
+                                y + (int)frmline->x,
+                                line_x,
+                                y + (int)frmline->x + (int)frmline->width,
+                                line_x,
+                                (int)frmline->x, (int)frmline->y,
+                                (int)frmline->width, (int)frmline->height,
+                                (int)frmline->word_count,
+                                ink_top, ink_bottom,
+                                clip.left, clip.top, clip.right, clip.bottom);
+                    }
+                }
+            }
             // This line box is or has some part in the page regular clip.
             // If it is fully inside the regular clip, we extend the clip
             // to the provided content_overflow_clip to allow any glyph
@@ -6697,6 +6765,21 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
             // sides (ie. if an image sits at the baseline, the border will be drawn under the strut,
             // leaving some gap below the image)...
             if ( has_inline_borders ) {
+                auto logInlineBorder = [&](ldomNode * borderNode, int side, int x0, int x1, int y0, int h) {
+                    if ( !verticalTextDebugEnabled() || !borderNode )
+                        return;
+                    lString32 cls = borderNode->getAttributeValue(attr_class);
+                    if ( !isVerticalInlineBorderDebugClass(cls) )
+                        return;
+                    fprintf(stderr,
+                            "KO_DEBUG_VERT_BG inline_border path=%s class=%s side=%d "
+                            "rect=(%d,%d,%d,%d) line_x=%d frm=(%d,%d,%d,%d) vertical=%d\n",
+                            LCSTR(ldomXPointer(borderNode, 0).toString()),
+                            LCSTR(cls), side, x0, y0, x1, y0 + h, line_x,
+                            (int)frmline->x, (int)frmline->y,
+                            (int)frmline->width, (int)frmline->height,
+                            is_vertical ? 1 : 0);
+                };
                 // Draw top border, and then bottom border (we use the same kind
                 // of logic with lastWordStart/End as for background color above)
                 for (int side=0 ; side <=2; side+=2) {
@@ -6724,8 +6807,23 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         }
                         if ( thisBorderNode != lastBorderNode && lastBorderWordStart != -1 ) {
                             // The previous border over previous words ends: draw it
-                            drawBorder(buf, lastBorderWordStart, lastBorderWordEnd,
-                                        y+frmline->y, frmline->height, lastBorderNode, side);
+                            if ( is_vertical ) {
+                                logInlineBorder(lastBorderNode, side,
+                                            line_x - (int)frmline->height, line_x,
+                                            lastBorderWordStart,
+                                            lastBorderWordEnd - lastBorderWordStart);
+                                drawBorder(buf, line_x - (int)frmline->height, line_x,
+                                            lastBorderWordStart,
+                                            lastBorderWordEnd - lastBorderWordStart,
+                                            lastBorderNode, side);
+                            }
+                            else {
+                                logInlineBorder(lastBorderNode, side,
+                                            lastBorderWordStart, lastBorderWordEnd,
+                                            y+frmline->y, frmline->height);
+                                drawBorder(buf, lastBorderWordStart, lastBorderWordEnd,
+                                            y+frmline->y, frmline->height, lastBorderNode, side);
+                            }
                             lastBorderWordStart = -1;
                         }
                         lastBorderNode = thisBorderNode;
@@ -6737,18 +6835,18 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                                 bool is_mirrored = word->flags & LTEXT_WORD_DIRECTION_IS_RTL; // will be drawn as if on the other side
                                 if ( is_right_pad != is_mirrored ) { // unmirrored right pad, or mirrored left pad
                                     if ( lastBorderWordStart < 0 )
-                                        lastBorderWordStart = x + frmline->x + word->x;
-                                    lastBorderWordEnd = x + frmline->x + word->x + word->o.height;
+                                        lastBorderWordStart = (is_vertical ? y : x) + frmline->x + word->x;
+                                    lastBorderWordEnd = (is_vertical ? y : x) + frmline->x + word->x + word->o.height;
                                 }
                                 else { // unmirrored left pad, or mirrored right pad
-                                    lastBorderWordStart = x + frmline->x + word->x + word->width - word->o.height;
-                                    lastBorderWordEnd = x + frmline->x + word->x + word->width;
+                                    lastBorderWordStart = (is_vertical ? y : x) + frmline->x + word->x + word->width - word->o.height;
+                                    lastBorderWordEnd = (is_vertical ? y : x) + frmline->x + word->x + word->width;
                                 }
                             }
                             else { // normal word: use its full width
                                 if ( lastBorderWordStart < 0 )
-                                    lastBorderWordStart = x + frmline->x + word->x;
-                                lastBorderWordEnd = x + frmline->x + word->x + word->width;
+                                    lastBorderWordStart = (is_vertical ? y : x) + frmline->x + word->x;
+                                lastBorderWordEnd = (is_vertical ? y : x) + frmline->x + word->x + word->width;
                             }
                         }
                         else { // no new border
@@ -6758,8 +6856,23 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                     }
                     // Done with this line, any previous border ends: draw it
                     if ( lastBorderNode && lastBorderWordStart != -1 ) {
-                        drawBorder(buf, lastBorderWordStart, lastBorderWordEnd,
-                                    y+frmline->y, frmline->height, lastBorderNode, side);
+                        if ( is_vertical ) {
+                            logInlineBorder(lastBorderNode, side,
+                                        line_x - (int)frmline->height, line_x,
+                                        lastBorderWordStart,
+                                        lastBorderWordEnd - lastBorderWordStart);
+                            drawBorder(buf, line_x - (int)frmline->height, line_x,
+                                        lastBorderWordStart,
+                                        lastBorderWordEnd - lastBorderWordStart,
+                                        lastBorderNode, side);
+                        }
+                        else {
+                            logInlineBorder(lastBorderNode, side,
+                                        lastBorderWordStart, lastBorderWordEnd,
+                                        y+frmline->y, frmline->height);
+                            drawBorder(buf, lastBorderWordStart, lastBorderWordEnd,
+                                        y+frmline->y, frmline->height, lastBorderNode, side);
+                        }
                     }
                 }
 
@@ -6878,7 +6991,30 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         if (is_vertical) {
                             // Fork: extracted to lvtextfm_vert.cpp.
                             int x0, y0;
-                            applyVerticalImageDraw(frmline, word, y, line_x, vstate, x0, y0);
+                            int column_clip_right = draw_extra_info && draw_extra_info->vert_column_clip_right
+                                    ? draw_extra_info->vert_column_clip_right : clip.right;
+                            applyVerticalImageDraw(frmline, word, y, line_x, column_clip_right, vstate, x0, y0);
+                            if ( verticalTextDebugEnabled() ) {
+                                lString32 img_class = node->getAttributeValue(attr_class);
+                                lString32 parent_class;
+                                ldomNode * parent = node->getParentNode();
+                                if ( parent && parent->isElement() )
+                                    parent_class = parent->getAttributeValue(attr_class);
+                                fprintf(stderr,
+                                        "KO_DEBUG_VERT_BG image path=%s class=%s parent_class=%s "
+                                        "line_x=%d line_y=%d frm_x=%d frm_y=%d frm_width=%d frm_height=%d "
+                                        "word_x=%d word_width=%d word_height=%d draw=(%d,%d,%d,%d) "
+                                        "clip=(%d,%d,%d,%d) vstate_next=%d\n",
+                                        LCSTR(ldomXPointer(node, 0).toString()),
+                                        LCSTR(img_class),
+                                        LCSTR(parent_class),
+                                        line_x, line_y, (int)frmline->x, (int)frmline->y,
+                                        (int)frmline->width, (int)frmline->height,
+                                        (int)word->x, (int)word->width, (int)word->o.height,
+                                        x0, y0, x0 + (int)word->width, y0 + (int)word->o.height,
+                                        clip.left, clip.top, clip.right, clip.bottom,
+                                        vstate.vert_min_next_x);
+                            }
                             buf->Draw( img, x0, y0, word->width, word->o.height );
                         } else {
                             int xx = x + frmline->x + word->x;

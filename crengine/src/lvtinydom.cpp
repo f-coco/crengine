@@ -2332,6 +2332,37 @@ void RenderRectAccessor::setInvolvedFloatIds( int float_count, lUInt32 * float_i
     _modified = true;
 }
 
+int RenderRectAccessor::getVerticalTextBackgroundInlineSize()
+{
+    if ( _dirty ) {
+        _dirty = false;
+        _node->getRenderData(*this);
+#ifdef DEBUG_RENDER_RECT_ACCESS
+        rr_lock( _node );
+#endif
+    }
+    return _extra0;
+}
+
+void RenderRectAccessor::setVerticalTextBackgroundInlineSize( int size )
+{
+    if ( _dirty ) {
+        _dirty = false;
+        _node->getRenderData(*this);
+#ifdef DEBUG_RENDER_RECT_ACCESS
+        rr_lock( _node );
+#endif
+    }
+    if ( size < 0 )
+        size = 0;
+    if ( size > 0xFFFF )
+        size = 0xFFFF;
+    if ( _extra0 != size ) {
+        _extra0 = size;
+        _modified = true;
+    }
+}
+
 #endif
 
 

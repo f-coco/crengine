@@ -167,6 +167,10 @@ static inline int getVerticalEffectiveTextWidth( int width, int em, bool cjk, JL
     return (cjk && !isHalfEmJfmClass(cls) && width < em) ? em : width;
 }
 
+static inline int getVerticalImageInlineAdvance( formatted_word_t * word ) {
+    return word && word->o.height > 0 ? (int)word->o.height : (int)word->width;
+}
+
 static VertWordLayoutInfo getVerticalWordLayoutInfo( LVFormatter* fmt, formatted_word_t * word ) {
     VertWordLayoutInfo info;
     info.text = false;
@@ -179,7 +183,7 @@ static VertWordLayoutInfo getVerticalWordLayoutInfo( LVFormatter* fmt, formatted
     info.ends_with_space = false;
     info.jfm_class = JLREQ_VERT_OTHER;
     info.em = fmt->m_pbuffer->strut_height > 0 ? fmt->m_pbuffer->strut_height : 20;
-    info.effective_width = (int)word->width;
+    info.effective_width = info.image ? getVerticalImageInlineAdvance(word) : (int)word->width;
 
     if ( (int)word->src_text_index >= fmt->m_pbuffer->srctextlen )
         return info;
@@ -237,6 +241,12 @@ static VertColumnFitChar getVerticalColumnFitChar( LVFormatter* fmt, int index,
     if ( item.inline_box ) {
         item.effective_advance = getVerticalInlineBoxDepth(fmt->m_srcs[index],
                 fmt->m_srcs[index]->o.width);
+        return item;
+    }
+    if ( item.object && fmt->m_srcs[index]
+            && (fmt->m_srcs[index]->o.objflags & LTEXT_OBJECT_IS_IMAGE) ) {
+        item.effective_advance = fmt->m_srcs[index]->o.height > 0
+                ? fmt->m_srcs[index]->o.height : fmt->m_srcs[index]->o.width;
         return item;
     }
 
@@ -1573,10 +1583,10 @@ VertRubyInlineBoxMetrics computeVertRubyInlineBoxMetrics(
 //
 // Extracted from addLineHorizontal.  In vertical-rl/-lr mode, both
 // frmline->height and frmline->width represent the column WIDTH on screen
-// (cross-column extent).  The formatter computes them as if horizontal, so
-// we override them here.  Single-image lines use the image's physical
-// width so page-splitter and clip calculations see the correct horizontal
-// span.
+// (cross-column extent) for text lines.  The formatter computes them as if
+// horizontal, so we override them here.  Single-image lines are different:
+// the physical image width is the cross-column span, while the physical
+// image height is the inline advance down the vertical column.
 //
 // Per JLReq, ruby annotations overhang into the inter-column gap rather
 // than inflating the column.  The inter-column gap (strut − em) is wide
@@ -1591,7 +1601,10 @@ void applyVerticalFrmlineDimensions(LVFormatter * fmt, formatted_line_t * frmlin
     if ( frmline->word_count == 1 ) {
         formatted_word_t * w0 = &frmline->words[0];
         if ( w0->flags & LTEXT_WORD_IS_IMAGE ) {
-            col_width = (int)w0->width;
+            frmline->height = (int)w0->width;
+            frmline->width = getVerticalImageInlineAdvance(w0);
+            frmline->flags |= LTEXT_LINE_SPLIT_AVOID_BEFORE | LTEXT_LINE_SPLIT_AVOID_AFTER;
+            return;
         }
         else if ( w0->flags & LTEXT_WORD_IS_INLINE_BOX ) {
             // A display:inline-block element that wraps a wide image (e.g. EPUBs
@@ -1918,7 +1931,7 @@ void drawVerticalEmphasisMarks(
 // =============================================================================
 void applyVerticalImageDraw(
     formatted_line_t * frmline, formatted_word_t * word,
-    int y, int line_x, VerticalDrawState & state,
+    int y, int line_x, int column_clip_right, VerticalDrawState & state,
     int & x0_out, int & y0_out)
 {
     // In vertical-rl after the x/y swap at Draw() entry:
@@ -1932,13 +1945,34 @@ void applyVerticalImageDraw(
     // colliding with the text.  Clamp left to 0.
     int strut = (int)frmline->height;
     int img_w = (int)word->width;
-    x0_out = line_x - strut + (strut - img_w) / 2;
-    if ( x0_out < 0 ) x0_out = 0;
+    int line_right = line_x;
+    if ( column_clip_right > 0 && line_right > column_clip_right )
+        line_right = column_clip_right;
+    x0_out = line_right - strut + (strut - img_w) / 2;
+    int line_left = line_right - strut;
+    if ( img_w <= strut ) {
+        if ( x0_out < line_left )
+            x0_out = line_left;
+        if ( x0_out + img_w > line_right )
+            x0_out = line_right - img_w;
+    }
+    else if ( x0_out < 0 ) {
+        x0_out = 0;
+    }
     // Clamp the in-column position to the running tracker like the other branches
     // (plain CJK / Latin / inline-box) do, so an image after a wider preceding
     // glyph is not drawn back on top of it.
     int clamped_x = vertClampForward((int)word->x, state.vert_min_next_x);
-    y0_out = y + (int)frmline->x + clamped_x;
+    int img_h = (int)word->o.height;
+    int line_top = y;
+    int line_bottom = line_top + (int)frmline->width;
+    y0_out = line_top + clamped_x;
+    if ( img_h <= line_bottom - line_top ) {
+        if ( y0_out + img_h > line_bottom )
+            y0_out = line_bottom - img_h;
+        if ( y0_out < line_top )
+            y0_out = line_top;
+    }
     // Advance the per-column tracker past the image.  Plain CJK words derive
     // their draw position SOLELY from state.vert_min_next_x (see
     // applyVerticalWordDraw: clamped_x = state.vert_min_next_x), so a word
@@ -1949,9 +1983,9 @@ void applyVerticalImageDraw(
     // word->width, and word->x already carries the CJK→non-CJK xkanjiskip the
     // layout inserted before it.  The image is non-CJK, so the next CJK char
     // must get its own xkanjiskip and no inter-class glue from the image.
-    state.vert_min_next_x = clamped_x + (int)word->width;
+    state.vert_min_next_x = clamped_x + getVerticalImageInlineAdvance(word);
     state.vert_prev_plain_y0 = y0_out;
-    state.vert_prev_effective_width = (int)word->width;
+    state.vert_prev_effective_width = getVerticalImageInlineAdvance(word);
     state.vert_prev_was_non_cjk_word = true;
     state.vert_prev_cjk_class = -1;
 }

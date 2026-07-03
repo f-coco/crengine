@@ -79,6 +79,74 @@ static int resolveEffectiveWritingMode(ldomNode *enode)
     return writing_mode;
 }
 
+// FORK (vertical-rl): vertical box sizing diagnostics and image page-split
+// helpers. Keep these helpers local and fork-prefixed so upstream merges see
+// small call-site changes instead of scattered condition details.
+static bool forkVerticalBoxDebugEnabled()
+{
+    return getenv("KO_DEBUG_VERT_BG") != NULL;
+}
+
+static bool isForkVerticalBoxDebugClass(ldomNode *enode)
+{
+    if ( !enode || !enode->isElement() )
+        return false;
+    lString32 cls = enode->getAttributeValue(attr_class);
+    return cls == "sec1" || cls == "figure1" || cls == "column" || cls == "column1"
+        || cls == "figure2" || cls == "figure3" || cls == "figure4"
+        || cls == "figure5" || cls == "jitsuki" || cls == "jitsuki1"
+        || cls == "jitsuki2" || cls == "formula" || cls == "calibre13"
+        || cls == "margin1" || cls == "columntitle" || cls == "calibre20"
+        || cls == "line";
+}
+
+static bool shouldDebugForkVerticalBoxNode(ldomNode *enode)
+{
+    return forkVerticalBoxDebugEnabled() && isForkVerticalBoxDebugClass(enode);
+}
+
+static bool forkNodeContainsEffectiveImage(ldomNode *node)
+{
+    if ( !node )
+        return false;
+    if ( node->isEffectiveImage() )
+        return true;
+    for ( int i=0; i<node->getChildCount(); i++ ) {
+        if ( forkNodeContainsEffectiveImage(node->getChildNode(i)) )
+            return true;
+    }
+    return false;
+}
+
+static bool forkFormattedWordContainsImage(LFormattedTextRef txform, const formatted_word_t *word)
+{
+    if ( !word )
+        return false;
+    if ( word->flags & LTEXT_WORD_IS_IMAGE )
+        return true;
+    if ( !(word->flags & LTEXT_WORD_IS_INLINE_BOX) )
+        return false;
+    const src_text_fragment_t * src = txform->GetSrcInfo(word->src_text_index);
+    return src && forkNodeContainsEffectiveImage((ldomNode*)src->object);
+}
+
+static bool shouldStartForkVerticalImageLineOnFreshPage(bool is_vertical, LFormattedTextRef txform,
+                                                        const formatted_line_t *line)
+{
+    return is_vertical
+        && line
+        && line->word_count == 1
+        && line->x > 0
+        && forkFormattedWordContainsImage(txform, &line->words[0]);
+}
+
+static int setSplitBeforeAlways(int flags)
+{
+    flags &= ~(0x7 << RN_SPLIT_BEFORE);
+    flags |= RN_SPLIT_BEFORE_ALWAYS;
+    return flags;
+}
+
 int scaleForRenderDPI( int value ) {
     // if gRenderDPI == 0 or 96, use value as is (1px = 1px)
     if (gRenderDPI && gRenderDPI != BASE_CSS_DPI) {
@@ -9267,6 +9335,58 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
                     // just above if there were floats.)
 
                 int final_h = enode->renderFinalBlock( txform, &fmt, inner_width, &float_footprint );
+                int vertical_text_background_inline_size = 0;
+                if ( flow->isVertical() && auto_width && !IS_COLOR_FULLY_TRANSPARENT(background_color) ) {
+                    int used_end = 0;
+                    int measured_draw_ink_end = 0;
+                    int used_line_width_end = 0;
+                    int text_line_count = 0;
+                    bool debug_vert_bg = shouldDebugForkVerticalBoxNode(enode);
+                    int line_count = txform->GetLineCount();
+                    for (int li = 0; li < line_count; li++) {
+                        const formatted_line_t * line = txform->GetLineInfo(li);
+                        if ( (int)line->width > used_line_width_end )
+                            used_line_width_end = (int)line->width;
+                        bool line_has_text = false;
+                        for (int wi = 0; wi < line->word_count; wi++) {
+                            const formatted_word_t * word = &line->words[wi];
+                            if (word->flags & LTEXT_WORD_IS_PAD)
+                                continue;
+                            line_has_text = true;
+                        }
+                        if ( line_has_text )
+                            text_line_count++;
+                    }
+                    {
+                        LVInkMeasurementDrawBuf ink_buf(false, true, 1000000);
+                        txform->Draw(&ink_buf, 0, 0, NULL, NULL);
+                        lvRect ink_rect;
+                        if ( ink_buf.getInkArea(ink_rect) )
+                            measured_draw_ink_end = ink_rect.bottom;
+                        if ( measured_draw_ink_end > used_end )
+                            used_end = measured_draw_ink_end;
+                    }
+                    bool wrapped_full_end = text_line_count > 1;
+                    if ( wrapped_full_end ) {
+                        if ( inner_width > used_end )
+                            used_end = inner_width;
+                    }
+                    if ( used_end > 0 ) {
+                        vertical_text_background_inline_size = used_end + padding_left + padding_right;
+                    }
+                    if ( debug_vert_bg ) {
+                        fprintf(stderr,
+                            "KO_DEBUG_VERT_BG format path=%s block_width=%d inner_width=%d "
+                            "used_text_end=%d draw_ink_end=%d text_line_count=%d wrapped_full_end=%d "
+                            "used_line_width_end=%d missing_from_line=%d "
+                            "text_bg_width=%d padding_inline=(%d,%d) final_h=%d\n",
+                            LCSTR(ldomXPointer(enode, 0).toString()), width, inner_width,
+                            used_end, measured_draw_ink_end, text_line_count, wrapped_full_end ? 1 : 0,
+                            used_line_width_end, used_line_width_end - used_end,
+                            vertical_text_background_inline_size,
+                            padding_left, padding_right, final_h);
+                    }
+                }
                 int final_min_y = float_footprint.getFinalMinY();
                 int final_max_y = float_footprint.getFinalMaxY();
 
@@ -9314,6 +9434,15 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
                 fmt.setHeight( h );
                 fmt.setTopOverflow( top_overflow );
                 fmt.setBottomOverflow( bottom_overflow );
+                if ( vertical_text_background_inline_size > 0
+                        && vertical_text_background_inline_size != fmt.getWidth() ) {
+                    RENDER_RECT_SET_FLAG(fmt, VERTICAL_TEXT_BACKGROUND_SIZE_SET);
+                    fmt.setVerticalTextBackgroundInlineSize( vertical_text_background_inline_size );
+                }
+                else {
+                    RENDER_RECT_UNSET_FLAG(fmt, VERTICAL_TEXT_BACKGROUND_SIZE_SET);
+                    fmt.setVerticalTextBackgroundInlineSize( 0 );
+                }
                 fmt.push();
                 // (We set the height now because we know it, but it should be
                 // equal to what we will addContentLine/addContentSpace below.)
@@ -9347,7 +9476,6 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
                 for (int i=0; i<count; i++) {
                     const formatted_line_t * line = txform->GetLineInfo(i);
                     int line_flags = 0;
-
                     // We let the first line with allow split before,
                     // and the last line with allow split after (padding
                     // top and bottom will too, but will themselves stick
@@ -9380,6 +9508,26 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
                             line_flags |= RN_SPLIT_BEFORE_AVOID;
                         if (i < count-1)
                             line_flags |= RN_SPLIT_AFTER_AVOID;
+                    }
+
+                    bool force_vertical_image_page =
+                            shouldStartForkVerticalImageLineOnFreshPage(flow->isVertical(), txform, line);
+                    if ( force_vertical_image_page && shouldDebugForkVerticalBoxNode(enode) ) {
+                        fprintf(stderr,
+                            "KO_DEBUG_VERT_BG page_line path=%s class=%s line_x=%d "
+                            "line_y=%d line_width=%d line_height=%d word_flags=%u force_page=%d flags_before=%d\n",
+                            LCSTR(ldomXPointer(enode, 0).toString()),
+                            LCSTR(enode->getAttributeValue(attr_class)),
+                            (int)line->x, (int)line->y, (int)line->width, (int)line->height,
+                            (unsigned)line->words[0].flags, force_vertical_image_page ? 1 : 0,
+                            line_flags);
+                    }
+                    if ( force_vertical_image_page ) {
+                        // A right/bottom-aligned image in vertical text can visually sit
+                        // under earlier columns on the same page. Without full future-float
+                        // reflow, keep flow order by starting it on a fresh page.
+                        flow->addContentLine(0, RN_SPLIT_BOTH_AUTO, 0, true);
+                        line_flags = setSplitBeforeAlways(line_flags);
                     }
 
                     int lh = (vert_eph_cap > 0 && line->height > vert_eph_cap)
@@ -9608,6 +9756,36 @@ int renderBlockElement( LVRendPageContext & context, ldomNode * enode, int x, in
 }
 
 // === FORK (vertical-rl) =====================================================
+static int getVerticalInlineEndPadding(ldomNode *enode, RenderRectAccessor fmt)
+{
+    int padding_end = 0;
+    if ( RENDER_RECT_HAS_FLAG(fmt, INNER_FIELDS_SET) ) {
+        padding_end = fmt.getWidth() - fmt.getInnerX() - fmt.getInnerWidth();
+    }
+    else {
+        css_style_ref_t style = enode->getStyle();
+        CSSLogical DL((css_writing_mode_t)resolveEffectiveWritingMode(enode));
+        padding_end = lengthToPx( enode, style->padding[DL.padIE()], fmt.getWidth() )
+                + DEBUG_TREE_DRAW + measureBorder(enode, DL.brdIE());
+    }
+    return padding_end > 0 ? padding_end : 0;
+}
+
+static bool measureVerticalNodeInkBoxInlineSize(ldomNode *enode, RenderRectAccessor fmt,
+                                                int & measured_box_w, int & measured_ink_bottom)
+{
+    LVInkMeasurementDrawBuf ink_buf(false, true, 1000000);
+    DrawDocument( ink_buf, enode, 0, 0, fmt.getWidth(), fmt.getHeight(),
+            -fmt.getX(), -fmt.getY(), enode->getDocument()->getPageHeight(),
+            NULL, NULL, true, false, true );
+    lvRect ink_rect;
+    if ( !ink_buf.getInkArea(ink_rect) )
+        return false;
+    measured_ink_bottom = ink_rect.bottom;
+    measured_box_w = measured_ink_bottom + getVerticalInlineEndPadding(enode, fmt);
+    return measured_box_w > 0;
+}
+
 // DrawBorderVertical: draw a block's CSS borders in vertical-rl/lr writing mode.
 //
 // Upstream DrawBorder() draws straight to the buffer from the doc-space
@@ -9665,11 +9843,28 @@ static void DrawBorderVertical(ldomNode *enode, LVDrawBuf & drawbuf,
     int anchor = (dei && dei->vert_column_clip_right) ? dei->vert_column_clip_right : clip.right;
 
     int box_w = fmt.getWidth();   // doc-X extent -> screen height
+    int measured_box_w = 0;
+    int measured_ink_bottom = 0;
+    if ( measureVerticalNodeInkBoxInlineSize(enode, fmt, measured_box_w, measured_ink_bottom)
+            && measured_box_w > box_w )
+        box_w = measured_box_w;
     int box_h = fmt.getHeight();  // doc-Y extent -> screen width
     int screen_top    = x0 + doc_x;
     int screen_bottom = screen_top + box_w;
     int screen_right  = anchor - (y0 + doc_y);
     int screen_left   = screen_right - box_h;
+
+    if ( shouldDebugForkVerticalBoxNode(enode) ) {
+        fprintf(stderr,
+            "KO_DEBUG_VERT_BG border path=%s class=%s fmt_width=%d fmt_height=%d "
+            "draw_width=%d measured_ink_bottom=%d measured_box_width=%d "
+            "doc=(%d,%d) screen=(%d,%d,%d,%d) borders=(%d,%d,%d,%d)\n",
+            LCSTR(ldomXPointer(enode, 0).toString()),
+            LCSTR(enode->getAttributeValue(attr_class)),
+            fmt.getWidth(), fmt.getHeight(), box_w, measured_ink_bottom, measured_box_w, doc_x, doc_y,
+            screen_left, screen_top, screen_right, screen_bottom,
+            twidth, rwidth, bwidth, lwidth);
+    }
 
     if (hasTop)    drawbuf.FillRect(screen_left,          screen_top,            screen_right,         screen_top + twidth, colTop);
     if (hasBottom) drawbuf.FillRect(screen_left,          screen_bottom - bwidth, screen_right,        screen_bottom,       colBottom);
@@ -9677,7 +9872,7 @@ static void DrawBorderVertical(ldomNode *enode, LVDrawBuf & drawbuf,
     if (hasLeft)   drawbuf.FillRect(screen_left,          screen_top,            screen_left + lwidth, screen_bottom,       colLeft);
 }
 
-static void DrawBackgroundColorVertical(LVDrawBuf & drawbuf,
+static void DrawBackgroundColorVertical(LVDrawBuf & drawbuf, ldomNode *enode,
                                int x0, int y0, int doc_x, int doc_y, RenderRectAccessor fmt, lUInt32 bg_color)
 {
     lvRect clip;
@@ -9686,6 +9881,30 @@ static void DrawBackgroundColorVertical(LVDrawBuf & drawbuf,
     int anchor = (dei && dei->vert_column_clip_right) ? dei->vert_column_clip_right : clip.right;
 
     int box_w = fmt.getWidth();   // doc-X extent -> screen height
+    int measured_ink_bottom = 0;
+    int measured_box_w = 0;
+    if ( RENDER_RECT_HAS_FLAG(fmt, VERTICAL_TEXT_BACKGROUND_SIZE_SET) ) {
+        int text_bg_w = fmt.getVerticalTextBackgroundInlineSize();
+        if ( text_bg_w > 0 )
+            box_w = text_bg_w;
+    }
+    if ( measureVerticalNodeInkBoxInlineSize(enode, fmt, measured_box_w, measured_ink_bottom)
+            && measured_box_w > box_w )
+        box_w = measured_box_w;
+    if ( shouldDebugForkVerticalBoxNode(enode) ) {
+        fprintf(stderr,
+            "KO_DEBUG_VERT_BG draw path=%s class=%s fmt_width=%d draw_width=%d fmt_height=%d "
+            "doc=(%d,%d) screen_top=%d screen_bottom=%d "
+            "measured_ink_bottom=%d measured_box_width=%d trailing_gap=%d "
+            "padding_inline_end=%d\n",
+            LCSTR(ldomXPointer(enode, 0).toString()),
+            LCSTR(enode->getAttributeValue(attr_class)),
+            fmt.getWidth(), box_w, fmt.getHeight(), doc_x, doc_y,
+            x0 + doc_x, x0 + doc_x + box_w,
+            measured_ink_bottom, measured_box_w,
+            x0 + doc_x + box_w - (x0 + doc_x + measured_ink_bottom),
+            getVerticalInlineEndPadding(enode, fmt));
+    }
     int box_h = fmt.getHeight();  // doc-Y extent -> screen width
     int screen_top    = x0 + doc_x;
     int screen_bottom = screen_top + box_w;
@@ -10750,8 +10969,8 @@ void DrawDocument( LVDrawBuf & drawbuf, ldomNode * enode, int x0, int y0, int dx
                 else {
                     // Regular element: draw bgcolor or image inside its border box
                     if ( draw_bg_color ) {
-                        if ( css_wm_is_vertical(style->writing_mode) )
-                            DrawBackgroundColorVertical(drawbuf, x0, y0, doc_x, doc_y, fmt, bg_color);
+                        if ( css_wm_is_vertical(resolveEffectiveWritingMode(enode)) )
+                            DrawBackgroundColorVertical(drawbuf, enode, x0, y0, doc_x, doc_y, fmt, bg_color);
                         else
                             drawbuf.FillRect( x0 + doc_x, y0 + doc_y, x0 + doc_x+fmt.getWidth(), y0+doc_y+fmt.getHeight(), bg_color );
                     }
@@ -11126,6 +11345,40 @@ void DrawDocument( LVDrawBuf & drawbuf, ldomNode * enode, int x0, int y0, int dx
                     }
                     int draw_x = doc_x+x0 + padding_left;
                     int draw_y = doc_y+y0 + padding_top;
+                    if ( shouldDebugForkVerticalBoxNode(enode)
+                            && css_wm_is_vertical(resolveEffectiveWritingMode(enode)) ) {
+                        LVInkMeasurementDrawBuf ink_buf(false, true, 1000000);
+                        txform->Draw(&ink_buf, 0, 0, NULL, NULL);
+                        lvRect ink_rect;
+                        int text_ink_end = 0;
+                        if ( ink_buf.getInkArea(ink_rect) )
+                            text_ink_end = ink_rect.bottom;
+                        int rect_width = fmt.getWidth();
+                        if ( RENDER_RECT_HAS_FLAG(fmt, VERTICAL_TEXT_BACKGROUND_SIZE_SET) ) {
+                            int text_bg_w = fmt.getVerticalTextBackgroundInlineSize();
+                            if ( text_bg_w > 0 )
+                                rect_width = text_bg_w;
+                        }
+                        int padding_right = width - padding_left - inner_width;
+                        int measured_rect_width = padding_left + text_ink_end + padding_right;
+                        if ( measured_rect_width > rect_width )
+                            rect_width = measured_rect_width;
+                        fprintf(stderr,
+                            "KO_DEBUG_VERT_BG content path=%s class=%s rect_top=%d rect_bottom=%d "
+                            "screen_right=%d draw_x=%d draw_y=%d doc=(%d,%d) origin=(%d,%d) "
+                            "text_ink_end=%d text_bottom=%d trailing_gap=%d "
+                            "padding_inline=(%d,%d) inner_width=%d fmt_width=%d draw_width=%d "
+                            "measured_draw_width=%d\n",
+                            LCSTR(ldomXPointer(enode, 0).toString()),
+                            LCSTR(enode->getAttributeValue(attr_class)),
+                            x0 + doc_x, x0 + doc_x + rect_width,
+                            drawbuf.GetWidth() - (y0 + doc_y),
+                            draw_x, draw_y, doc_x, doc_y, x0, y0,
+                            text_ink_end, draw_x + text_ink_end,
+                            x0 + doc_x + rect_width - (draw_x + text_ink_end),
+                            padding_left, padding_right, inner_width, fmt.getWidth(), rect_width,
+                            measured_rect_width);
+                    }
                     if ( marks && marks->length() ) { // "native highlighting" of a selection in progress
                         // Keep marks that are part of the top and bottom overflows
                         lvRect crop_rc = lvRect(rc);

@@ -133,7 +133,7 @@ void drawVerticalEmphasisMarks(
 // column axis with the left edge clamped to >= 0.
 void applyVerticalImageDraw(
     formatted_line_t * frmline, formatted_word_t * word,
-    int y, int line_x, VerticalDrawState & state,
+    int y, int line_x, int column_clip_right, VerticalDrawState & state,
     int & x0_out, int & y0_out);
 
 // Vertical-mode inline-box (ruby) draw positioning (defined in lvtextfm_vert.cpp).

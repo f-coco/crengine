@@ -618,6 +618,7 @@ private:
     bool has_ink;
     bool measure_hidden_content;
     bool ignore_decorations; // ignore borders and background
+    int clip_margin;
 public:
     /// get buffer bits per pixel
     virtual int  GetBitsPerPixel() const { return 8; }
@@ -702,16 +703,18 @@ public:
     // Drawing code might request a clip, but we don't want to impose any.
     // So, have a large dynamic one around the ink area met until then
     virtual void GetClipRect( lvRect * clipRect ) const {
-        clipRect->top = ink_top_y - 1000;
-        clipRect->bottom = ink_bottom_y + 1000;
-        clipRect->left = ink_left_x - 1000;
-        clipRect->right = ink_right_x + 1000;
+        clipRect->top = ink_top_y - clip_margin;
+        clipRect->bottom = ink_bottom_y + clip_margin;
+        clipRect->left = ink_left_x - clip_margin;
+        clipRect->right = ink_right_x + clip_margin;
     }
 
     /// create own draw buffer
-    explicit LVInkMeasurementDrawBuf( bool measurehiddencontent=false, bool ignoredecorations=false)
+    explicit LVInkMeasurementDrawBuf( bool measurehiddencontent=false, bool ignoredecorations=false,
+            int clipmargin=1000)
         : ink_top_y(0), ink_bottom_y(0), ink_left_x(0), ink_right_x(0) , has_ink(false)
         , measure_hidden_content(measurehiddencontent) , ignore_decorations(ignoredecorations)
+        , clip_margin(clipmargin)
         {}
     /// destructor
     virtual ~LVInkMeasurementDrawBuf() {}
@@ -859,4 +862,3 @@ public:
 };
 
 #endif
-
