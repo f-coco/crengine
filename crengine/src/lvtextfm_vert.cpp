@@ -1510,6 +1510,46 @@ int initVerticalDrawSetup(
 // Both rbox2 elements have nodeId el_rubyBox, so we distinguish them by
 // first child: rbox2_annot first child = el_rt/el_rtc → annotation row.
 // =============================================================================
+static bool isSyntheticRubyRtBox(ldomNode * node)
+{
+    return node
+        && node->isElement()
+        && node->getNodeId() == el_rubyBox
+        && node->hasAttribute(attr_T)
+        && node->getAttributeValue(attr_T) == U"rt";
+}
+
+static void collectVisibleRubyAnnotationMetrics(ldomNode * node,
+        int & char_count, int & font_size)
+{
+    if ( !node )
+        return;
+    if ( node->isText() ) {
+        lString32 t = node->getText();
+        for ( int k = 0; k < t.length(); k++ ) {
+            if ( t[k] > 0x20 )
+                char_count++;
+        }
+        return;
+    }
+    if ( !node->isElement() )
+        return;
+
+    lUInt16 id = node->getNodeId();
+    if ( id == el_rp || node->getRendMethod() == erm_invisible )
+        return;
+
+    if ( font_size == 0 && (id == el_rt || isSyntheticRubyRtBox(node)) ) {
+        LVFontRef f = node->getFont();
+        if ( !f.isNull() )
+            font_size = f->getSize();
+    }
+
+    int child_count = node->getChildCount();
+    for ( int i = 0; i < child_count; i++ )
+        collectVisibleRubyAnnotationMetrics(node->getChildNode(i), char_count, font_size);
+}
+
 VertRubyInlineBoxMetrics computeVertRubyInlineBoxMetrics(
     formatted_text_fragment_t * pbuffer, ldomNode * node, LVFont * lastFont)
 {
@@ -1539,17 +1579,8 @@ VertRubyInlineBoxMetrics computeVertRubyInlineBoxMetrics(
                     is_annot = isRubyAnnotId(fc->getNodeId());
             }
             if ( is_annot ) {
-                lString32 t = rbox2->getText();
-                for ( int k = 0; k < t.length(); k++ )
-                    if ( t[k] > 0x20 ) m.annot_char_count_pre++;
-                if ( m.annot_font_size_pre == 0 ) {
-                    ldomNode * rt = (cid == el_rt || cid == el_rtc) ? rbox2
-                                  : (rbox2->getChildCount() > 0 ? rbox2->getChildNode(0) : NULL);
-                    if ( rt ) {
-                        LVFontRef f = rt->getFont();
-                        if ( !f.isNull() ) m.annot_font_size_pre = f->getSize();
-                    }
-                }
+                collectVisibleRubyAnnotationMetrics(rbox2,
+                        m.annot_char_count_pre, m.annot_font_size_pre);
             } else {
                 lString32 t = rbox2->getText();
                 LVFontRef base_font = rbox2->getFont();
