@@ -140,6 +140,15 @@ static bool shouldStartForkVerticalImageLineOnFreshPage(bool is_vertical, LForma
         && forkFormattedWordContainsImage(txform, &line->words[0]);
 }
 
+static bool isForkVerticalSingleImageLine(bool is_vertical, LFormattedTextRef txform,
+                                          const formatted_line_t *line)
+{
+    return is_vertical
+        && line
+        && line->word_count == 1
+        && forkFormattedWordContainsImage(txform, &line->words[0]);
+}
+
 static int setSplitBeforeAlways(int flags)
 {
     flags &= ~(0x7 << RN_SPLIT_BEFORE);
@@ -5914,6 +5923,7 @@ private:
     bool avoid_pb_inside_just_toggled_on;  // for specific processing of boundaries
     bool avoid_pb_inside_just_toggled_off;
     bool seen_content_since_page_split; // to avoid consecutive page split when only empty or padding in between
+    bool force_next_content_split_before;
     int  last_split_after_flag; // in case we need to adjust upcoming line's flag vs previous line's
     bool in_non_linear_sequence;
     bool in_combining_non_linear_sequence;
@@ -5956,6 +5966,7 @@ public:
         avoid_pb_inside_just_toggled_on(false),
         avoid_pb_inside_just_toggled_off(false),
         seen_content_since_page_split(false),
+        force_next_content_split_before(false),
         last_split_after_flag(RN_SPLIT_AUTO),
         in_non_linear_sequence(false),
         in_combining_non_linear_sequence(false),
@@ -6084,6 +6095,12 @@ public:
     }
     bool getAvoidPbInside() {
         return avoid_pb_inside;
+    }
+    bool hasSeenContentSincePageSplit() {
+        return seen_content_since_page_split;
+    }
+    bool hasPendingForcedPageSplit() {
+        return vm_has_some && vm_active_pb_flag == RN_SPLIT_ALWAYS;
     }
     int getUsableLeftOverflow() {
         return x_min - usable_overflow_x_min;
@@ -6342,6 +6359,10 @@ public:
         else if ( BLOCK_RENDERING(rend_flags, DO_NOT_CLEAR_OWN_FLOATS) && _floats.length()>0 ) {
             // but this has to be done if not done by pushVerticalMargin()
             resetFloatsLevelToTopLevel();
+        }
+        if ( force_next_content_split_before ) {
+            flags = setSplitBeforeAlways(flags);
+            force_next_content_split_before = false;
         }
         // Most often for content lines, lvtextfm.cpp's LVFormatter will
         // have already checked for float (via BlockFloatFootprint), so
@@ -6641,7 +6662,10 @@ public:
                     // As top margin should be on the next page, split before the margin
                     // (Note that Prince does not do this: the top margin of an element
                     // with "page-break-before: always" is discarded.)
+                    margin = 0;
                     flags = RN_SPLIT_BEFORE_ALWAYS | RN_SPLIT_AFTER_AVOID;
+                    force_next_content_split_before = true;
+                    emit_empty = false;
                 }
                 else { // no target node: only bottom margin with some break-after
                     // If it does not fit on previous page, and is pushed on next page,
@@ -9412,9 +9436,25 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
                 // to prevent a ghost overflow page.
                 int vert_eph_cap = (flow->isVertical())
                     ? flow->getPageContext()->getEffectivePageHeight() : 0;
+                bool cap_vertical_single_image_block = false;
+                if ( vert_eph_cap > 0 && txform->GetLineCount() == 1 ) {
+                    const formatted_line_t * only_line = txform->GetLineInfo(0);
+                    cap_vertical_single_image_block =
+                            isForkVerticalSingleImageLine(flow->isVertical(), txform, only_line)
+                            && final_h > vert_eph_cap;
+                    if ( cap_vertical_single_image_block ) {
+                        final_h = vert_eph_cap;
+                    }
+                }
                 int h = padding_top + final_h + pad_style_h + padding_bottom;
                 final_min_y += padding_top;
                 final_max_y += padding_top;
+                if ( cap_vertical_single_image_block && final_max_y > h ) {
+                    // The excess is the horizontal image line's screen-Y extent,
+                    // not additional flow content. Keeping it as overflow creates
+                    // a tiny blank page after image-only fragments on Kindle.
+                    final_max_y = h;
+                }
                 int top_overflow = final_min_y < 0 ? -final_min_y : 0;
                 int bottom_overflow = final_max_y > h ? final_max_y - h : 0;
                 // if (top_overflow > 0) printf("final top_overflow=%d\n", top_overflow);
@@ -9510,8 +9550,13 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
                             line_flags |= RN_SPLIT_AFTER_AVOID;
                     }
 
+                    // If a publisher/DocFragment page break is already pending,
+                    // don't inject another zero-height split carrier: that can
+                    // become a real blank page before image-only fragments.
                     bool force_vertical_image_page =
-                            shouldStartForkVerticalImageLineOnFreshPage(flow->isVertical(), txform, line);
+                            shouldStartForkVerticalImageLineOnFreshPage(flow->isVertical(), txform, line)
+                            && flow->hasSeenContentSincePageSplit()
+                            && !flow->hasPendingForcedPageSplit();
                     if ( force_vertical_image_page && shouldDebugForkVerticalBoxNode(enode) ) {
                         fprintf(stderr,
                             "KO_DEBUG_VERT_BG page_line path=%s class=%s line_x=%d "
