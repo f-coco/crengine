@@ -4735,6 +4735,26 @@ void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fr
                             // lose any trailing space)
                             word->width = fmt->m_advance[i>1 ? i-2 : 0] - (wstart>0 ? fmt->m_advance[wstart-1] : 0);
                             word->min_width = word->width;
+                            if ( is_vertical_mode ) {
+                                // In vertical-rl, Latin words are rendered as a rotated
+                                // block. If a wrap happens after a Latin word's following
+                                // space, keeping that space in the string while removing
+                                // it from the width leaves a visible blank at the column
+                                // end (e.g. "blessing software" split after "blessing").
+                                int trimmed_spaces = 0;
+                                while ( word->t.len > 0 ) {
+                                    lChar32 ch = srcline->t.text[word->t.start + word->t.len - 1];
+                                    if ( !(lGetCharProps(ch) & CH_PROP_SPACE) )
+                                        break;
+                                    word->t.len--;
+                                    trimmed_spaces++;
+                                }
+                                if ( trimmed_spaces > 0 ) {
+                                    ltext_vert_trailing_space_trim_count++;
+                                    ltext_vert_trailing_space_trim_chars += trimmed_spaces;
+                                }
+                                word->flags &= ~LTEXT_WORD_CAN_ADD_SPACE_AFTER;
+                            }
                         }
                     }
                     else if ( !firstWord && fmt->m_flags[wstart] & LCHAR_IS_SPACE ) {

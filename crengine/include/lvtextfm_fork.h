@@ -198,6 +198,8 @@ extern int ltext_vert_ib_layout_gap_total;
 extern int ltext_vert_ib_layout_gap_max;
 extern int ltext_vert_char_overlap_count;
 extern int ltext_vert_char_overlap_max_px;
+extern int ltext_vert_trailing_space_trim_count;
+extern int ltext_vert_trailing_space_trim_chars;
 
 // True if every char in the word's text is in needsVerticalRotation90CW
 // (―, —, …, ‥, ー, 〜, ～, －).  Defined in lvtextfm_vert.cpp.  Used by

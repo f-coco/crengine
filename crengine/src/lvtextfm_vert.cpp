@@ -85,6 +85,22 @@ void ltext_get_vert_char_overlap(int *count_out, int *max_px_out) {
     *max_px_out = ltext_vert_char_overlap_max_px;
 }
 
+// Vertical-rl trailing-space trim counters.
+// Fires when a line-ending word had trailing spaces removed from its rendered
+// text, after its layout width had already discarded those spaces.
+int ltext_vert_trailing_space_trim_count = 0;
+int ltext_vert_trailing_space_trim_chars = 0;
+
+void ltext_reset_vert_trailing_space_trim() {
+    ltext_vert_trailing_space_trim_count = 0;
+    ltext_vert_trailing_space_trim_chars = 0;
+}
+
+void ltext_get_vert_trailing_space_trim(int *count_out, int *chars_out) {
+    *count_out = ltext_vert_trailing_space_trim_count;
+    *chars_out = ltext_vert_trailing_space_trim_chars;
+}
+
 void ltext_reset_vert_bleed() {
     ltext_vert_bleed_count = 0;
     ltext_vert_bleed_max_px = 0;
