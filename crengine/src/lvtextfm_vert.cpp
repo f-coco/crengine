@@ -25,11 +25,13 @@
 //
 // These counters are spec oracles: regression specs read them via cre.cpp to
 // assert vertical-rl layout invariants (ruby advance diff, column bleed, inline
-// box layout gap, character overlap).  They live here so lvtextfm.cpp stays
-// closer to upstream.  Their extern declarations are in lvtextfm_fork.h.
+// box layout gap, character overlap, inline image draw drift).  They live here
+// so lvtextfm.cpp stays closer to upstream.  Their extern declarations are in
+// lvtextfm_fork.h.
 // Increment sites are:
 //   - lvtextfm.cpp measureText (ruby_adv_diff)
 //   - lvtextfm.cpp LFormattedText::Draw (bleed, ib_layout_gap, char_overlap)
+//   - applyVerticalImageDraw below (inline image draw drift)
 // Reset/getter functions are called from cre.cpp via extern linkage.
 // =============================================================================
 
@@ -99,6 +101,27 @@ void ltext_reset_vert_trailing_space_trim() {
 void ltext_get_vert_trailing_space_trim(int *count_out, int *chars_out) {
     *count_out = ltext_vert_trailing_space_trim_count;
     *chars_out = ltext_vert_trailing_space_trim_chars;
+}
+
+// Vertical-rl inline-image draw drift counters.
+// Fires when an inline image is drawn at a different column-depth Y than the
+// position implied by its formatted word->x. This catches the regression where
+// a tiny gaiji image reserved space mid-column but was clamped back near the
+// column top.
+int ltext_vert_image_draw_count = 0;
+int ltext_vert_image_draw_drift_count = 0;
+int ltext_vert_image_draw_drift_max_px = 0;
+
+void ltext_reset_vert_image_draw_drift() {
+    ltext_vert_image_draw_count = 0;
+    ltext_vert_image_draw_drift_count = 0;
+    ltext_vert_image_draw_drift_max_px = 0;
+}
+
+void ltext_get_vert_image_draw_drift(int *draw_count_out, int *drift_count_out, int *max_px_out) {
+    *draw_count_out = ltext_vert_image_draw_count;
+    *drift_count_out = ltext_vert_image_draw_drift_count;
+    *max_px_out = ltext_vert_image_draw_drift_max_px;
 }
 
 void ltext_reset_vert_bleed() {
@@ -2010,15 +2033,16 @@ void applyVerticalImageDraw(
     // (plain CJK / Latin / inline-box) do, so an image after a wider preceding
     // glyph is not drawn back on top of it.
     int clamped_x = vertClampForward((int)word->x, state.vert_min_next_x);
-    int img_h = (int)word->o.height;
-    int line_top = y;
-    int line_bottom = line_top + (int)frmline->width;
-    y0_out = line_top + clamped_x;
-    if ( img_h <= line_bottom - line_top ) {
-        if ( y0_out + img_h > line_bottom )
-            y0_out = line_bottom - img_h;
-        if ( y0_out < line_top )
-            y0_out = line_top;
+    int expected_y = y + (int)frmline->x + clamped_x;
+    y0_out = expected_y;
+    ltext_vert_image_draw_count++;
+    int drift = y0_out - expected_y;
+    if ( drift < 0 )
+        drift = -drift;
+    if ( drift > 0 ) {
+        ltext_vert_image_draw_drift_count++;
+        if ( drift > ltext_vert_image_draw_drift_max_px )
+            ltext_vert_image_draw_drift_max_px = drift;
     }
     // Advance the per-column tracker past the image.  Plain CJK words derive
     // their draw position SOLELY from state.vert_min_next_x (see
