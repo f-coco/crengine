@@ -98,6 +98,13 @@ bool applyVerticalNNRubyCenterDistribution(
 bool isVerticalRubyInnerLine(LVFormatter * fmt, formatted_line_t * frmline);
 bool isVerticalRubyAnnotationLine(LVFormatter * fmt, formatted_line_t * frmline);
 
+// Resolve the physical inline-end edge for a vertical text decoration from
+// the inline box that establishes it. Descendant font-size changes must not
+// bend a decoration line established by an ancestor inline box.
+bool getVerticalDecorationInlineEnd(
+    formatted_text_fragment_t * pbuffer, formatted_line_t * frmline,
+    ldomNode * node, lUInt32 decoration_flags, int line_x, int & inline_end);
+
 // Vertical-mode PAD border drawing (defined in lvtextfm_vert.cpp).  Handles
 // both right-pad and left-pad cases.  Scans frmline->words[] for the paired
 // PAD to determine the border's inline-direction extent.
@@ -162,7 +169,7 @@ void applyVerticalWordDraw(
     formatted_text_fragment_t * pbuffer,
     formatted_line_t * frmline, src_text_fragment_t * srcline,
     formatted_word_t * word, LVFont * font,
-    int y, int line_x, const lvRect & clip,
+    int y, int line_x, const lvRect & clip, bool line_has_image,
     lUInt32 & drawFlags,
     VerticalDrawState & state,
     int & x0_out, int & y0_out, bool & vert_skip_draw_out,
@@ -200,11 +207,18 @@ extern int ltext_vert_char_overlap_count;
 extern int ltext_vert_char_overlap_max_px;
 extern int ltext_vert_trailing_space_trim_count;
 extern int ltext_vert_trailing_space_trim_chars;
+extern int ltext_vert_image_draw_count;
+extern int ltext_vert_image_draw_drift_count;
+extern int ltext_vert_image_draw_drift_max_px;
+extern int ltext_vert_image_cross_underreserve_count;
+extern int ltext_vert_image_cross_underreserve_max_px;
+extern int ltext_vert_mixed_image_axis_sample_count;
+extern int ltext_vert_mixed_image_axis_drift_count;
+extern int ltext_vert_mixed_image_axis_drift_max_px;
 
-// True if every char in the word's text is in needsVerticalRotation90CW
-// (―, —, …, ‥, ー, 〜, ～, －).  Defined in lvtextfm_vert.cpp.  Used by
-// LFormattedText::Draw to route such words through the CJK +vert path.
-bool isWordAllVertRotationChars(const lChar32 * text, int len);
+// True if every char in the word belongs on the upright CJK vertical path
+// (Japanese horizontal marks or fullwidth fixed-pitch Latin/numerals).
+bool isWordAllVerticalUprightChars(const lChar32 * text, int len);
 
 // True if node is a vertical-ruby inline box: the boxing algorithm wraps
 // the ruby table in an el_inlineBox whose parent has display:ruby.

@@ -96,6 +96,7 @@ extern "C" {
 
 #define LTEXT_OBJECT_IS_PAD               0x0100  // inline pad (accounting for margin/border/padding of inline element)
 #define LTEXT_OBJECT_IS_PAD_RIGHT         0x0200  // inline pad is right pad (otherwise, left pad)
+#define LTEXT_OBJECT_IS_ORTHOGONAL_SPACER 0x0400  // empty, width-specified inline in the opposite writing mode
 
 // Extra LTEXT properties we can request (via these values) and fetch from the node style,
 // mostly used for rare inherited CSS properties that don't need us to waste a bit for
@@ -105,6 +106,7 @@ enum ltext_extra_t {
     LTEXT_EXTRA_CSS_LINE_BREAK,         // line-break: anywhere, or loose/normal/strict (for lang=ja/zh)
     LTEXT_EXTRA_CSS_WORD_BREAK,         // word-break: break-all or keep-all
     LTEXT_EXTRA_CSS_TEXT_EMPHASIS,      // text-emphasis-style: kenten/bouten emphasis marks (value = css_text_emphasis_style_t)
+    LTEXT_EXTRA_CSS_TEXT_COMBINE_UPRIGHT, // text-combine-upright (value = css_text_combine_upright_t)
 };
 
 // Text color reserved values
@@ -239,6 +241,7 @@ typedef struct
    lInt16             x;           /**< start x position */
    lUInt16            width;       /**< width */
    lUInt16            height;      /**< height */
+   lInt32             inline_end;   /**< vertical inline-axis used end, before width is remapped to column width */
    lUInt16            baseline;    /**< baseline y offset */
    lUInt16            width_overflow; /**< right edge glyph overflow over width (when hanging punctuation) */
    lUInt8             flags;       /**< flags */
@@ -300,6 +303,13 @@ typedef struct
    lUInt16               width;         /**< width of text fragment */
    lUInt16               page_height;   /**< max page height */
    LVHashTable<lUInt32, lString32Collection*> * inlineboxes_links;
+
+   // text-indent is a paragraph property.  Keep its numeric value separate
+   // from the CSS `hanging` modifier: a negative length is a valid first-line
+   // outdent and must not be used as an internal hanging-indent sentinel.
+   lInt16                text_indent;
+   bool                  text_indent_hanging;
+   bool                  text_indent_set;
 
     // Each line box starts with a zero-width inline box (called "strut") with
     // the element's font and line height properties:
@@ -422,6 +432,13 @@ public:
         m_pbuffer->strut_baseline = baseline;
     }
 
+    /// set the paragraph text-indent value and its independent CSS modifier
+    void setTextIndent(lInt16 indent, bool hanging) {
+        m_pbuffer->text_indent = indent;
+        m_pbuffer->text_indent_hanging = hanging;
+        m_pbuffer->text_indent_set = true;
+    }
+
     /// set image scaling options
     void setImageScalingOptions( img_scaling_options_t * options );
 
@@ -458,7 +475,7 @@ public:
                 lUInt16         objflags,  /* object flags */
                 lInt16          interval,  /* line height in screen pixels */
                 lInt16          valign_dy, /* drift y from baseline */
-                lInt16          indent,    /* first line indent (or all but first, when negative) */
+                lInt16          indent,    /* legacy per-source line indent */
                 void *          object,    /* pointer to custom object */
                 TextLangCfg *   lang_cfg,
                 lInt16          letter_spacing=0
@@ -474,7 +491,7 @@ public:
            lUInt32         flags,       /* (had default =LTEXT_ALIGN_LEFT|LTEXT_FLAG_OWNTEXT) */
            lInt16          interval,    /* line height in screen pixels */
            lInt16          valign_dy=0, /* drift y from baseline */
-           lInt16          indent=0,    /* first line indent (or all but first, when negative) */
+           lInt16          indent=0,    /* legacy per-source line indent */
            void *          object=NULL,
            lUInt32         offset=0,
            lInt16          letter_spacing=0,

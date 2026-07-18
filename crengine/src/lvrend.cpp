@@ -3713,7 +3713,21 @@ void renderFinalBlock( ldomNode * enode, LFormattedText * txform, RenderRectAcce
             // So, sadly, let's keep it that way to not break legacy rendering.
             // todo: pass indent via txform->setTextIndent() (like we do for the strut
             // below, and get rid of it in AddSourceLine())
-            indent = lengthToPx(enode, style->text_indent, width);
+            css_length_t paragraph_text_indent = style->text_indent;
+            if ( rm == erm_final && STYLE_HAS_CR_HINT(style, DEFAULT_TEXT_INDENT) ) {
+                // A reading default is not authored document geometry. Keep it
+                // for unstyled prose, but let an authored non-initial value on
+                // a containing block inherit into this paragraph.
+                for ( ldomNode * ancestor = enode->getParentNode(); ancestor;
+                        ancestor = ancestor->getParentNode() ) {
+                    css_length_t inherited_indent = ancestor->getStyle()->text_indent;
+                    if ( inherited_indent.value != 0 ) {
+                        paragraph_text_indent = inherited_indent;
+                        break;
+                    }
+                }
+            }
+            indent = lengthToPx(enode, paragraph_text_indent, width);
             if ( STYLE_HAS_CR_HINT(style, CJK_TAILORED) && indent != 0 ) {
                 // We want the text-indent to be an integer multiple of the font size,
                 // so that we may get CJK squared glyphs vertically aligned ensuring
@@ -3724,7 +3738,7 @@ void renderFinalBlock( ldomNode * enode, LFormattedText * txform, RenderRectAcce
                 if ( cjk_width_scale_percent != 100 ) {
                     unit = unit * cjk_width_scale_percent / 100;
                     // Recompute indent base on this scaled em
-                    indent = lengthToPx(enode, style->text_indent, width, unit);
+                    indent = lengthToPx(enode, paragraph_text_indent, width, unit);
                 }
                 bool is_negative = false;
                 if ( indent < 0 ) {
@@ -3762,15 +3776,14 @@ void renderFinalBlock( ldomNode * enode, LFormattedText * txform, RenderRectAcce
                     indent = -indent; // (restore it)
                 }
             }
-            // lvstsheet sets the lowest bit to 1 when text-indent has the "hanging" keyword:
-            if ( style->text_indent.value & 0x00000001 ) {
-                // lvtextfm handles negative indent as "indent by the negated (so, then
-                // positive) value all lines but the first"
-                indent = -indent;
-                // We keep real negative values as negative here. They are also handled
-                // in renderBlockElementEnhanced() to possibly have the text block shifted
-                // to the left to properly apply the negative effect ("hanging" text-indent
-                // does not need that).
+            // lvstsheet stores the `hanging` keyword in the low bit.  It changes
+            // which lines the indent applies to; it does not change the sign of
+            // the CSS length.  Keep these two facts separate in LFormattedText,
+            // otherwise an ordinary negative text-indent is indistinguishable
+            // from a positive hanging indent.
+            bool text_indent_hanging = paragraph_text_indent.value & 0x00000001;
+            if ( rm == erm_final && !legacy_rendering ) {
+                txform->setTextIndent((lInt16)indent, text_indent_hanging);
             }
 
             if (rm == erm_final) {
@@ -3815,7 +3828,7 @@ void renderFinalBlock( ldomNode * enode, LFormattedText * txform, RenderRectAcce
             flags |= LTEXT_HAS_EXTRA;
         }
         if ( style->text_combine_upright != css_tcu_none ) { // tate-chu-yoko
-            flags |= LTEXT_IS_TCY;
+            flags |= LTEXT_IS_TCY | LTEXT_HAS_EXTRA;
         }
         if ( style->text_emphasis_style != css_tes_none
                 && style->text_emphasis_style != css_tes_inherit ) { // kenten/bouten
@@ -4136,6 +4149,31 @@ void renderFinalBlock( ldomNode * enode, LFormattedText * txform, RenderRectAcce
                     flags &= ~LTEXT_FLAG_NEWLINE & ~LTEXT_SRC_IS_CLEAR_BOTH;
                 }
             }
+        }
+
+        // An empty inline with an explicit physical width is not a no-op when
+        // it has the opposite writing mode to its containing inline flow. It
+        // contributes a zero inline advance but reserves that width on the
+        // cross axis. This is commonly used by EPUB title pages to centre a
+        // vertical inline-block with a preceding horizontal 100%-wide span.
+        // Keep it as a source object so the formatter can carry both axes;
+        // dropping the empty node loses CSS layout information altogether.
+        bool is_orthogonal_spacer = false;
+        int orthogonal_own_wm = css_wm_inherit;
+        int orthogonal_parent_wm = css_wm_inherit;
+        if ( rm == erm_inline && style->display == css_d_inline
+                && enode->getChildCount() == 0
+                && style->width.type != css_val_unspecified
+                && parent && parent->isElement() ) {
+            orthogonal_own_wm = resolveEffectiveWritingMode(enode);
+            orthogonal_parent_wm = resolveEffectiveWritingMode(parent);
+            is_orthogonal_spacer = css_wm_is_vertical(orthogonal_own_wm) != css_wm_is_vertical(orthogonal_parent_wm);
+        }
+        if ( is_orthogonal_spacer ) {
+            txform->AddSourceObject(flags, LTEXT_OBJECT_IS_PAD|LTEXT_OBJECT_IS_ORTHOGONAL_SPACER,
+                                    line_h, valign_dy, indent, enode, lang_cfg );
+            baseflags &= ~LTEXT_FLAG_NEWLINE & ~LTEXT_SRC_IS_CLEAR_BOTH;
+            return;
         }
 
         bool add_right_pad = false;
@@ -8944,6 +8982,7 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
 
                 // recurse all sub-blocks for blocks
                 int cnt = enode->getChildCount();
+                int vertical_children_inline_end = 0;
                 for (int i=0; i<cnt; i++) {
                     ldomNode * child = enode->getChildNode( i );
                     if ( child->isText() ) {
@@ -9009,6 +9048,18 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
                         renderBlockElementEnhanced( flow, child, padding_left, width - padding_left - padding_right, flags );
                         if ( flow->getWritingMode() != fork_wm_before )
                             flow->switchWritingMode( fork_wm_before );
+                        if ( flow->isVertical() ) {
+                            RenderRectAccessor child_fmt(child);
+                            int child_inline_size = child_fmt.getWidth();
+                            if ( RENDER_RECT_HAS_FLAG(child_fmt, VERTICAL_USED_INLINE_SIZE_SET) ) {
+                                int used_inline_size = child_fmt.getVerticalUsedInlineSize();
+                                if ( used_inline_size > child_inline_size )
+                                    child_inline_size = used_inline_size;
+                            }
+                            int child_inline_end = child_fmt.getX() + child_inline_size;
+                            if ( child_inline_end > vertical_children_inline_end )
+                                vertical_children_inline_end = child_inline_end;
+                        }
                         // Vertical margins collapsing is mostly ensured in flow->pushVerticalMargin()
                         //
                         // Various notes about it:
@@ -9160,6 +9211,17 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
                 fmt.setHeight( h );
                 fmt.setTopOverflow( top_overflow );
                 fmt.setBottomOverflow( bottom_overflow );
+                if ( flow->isVertical() && auto_width ) {
+                    int used_inline_size = vertical_children_inline_end + padding_right;
+                    if ( used_inline_size > fmt.getWidth() ) {
+                        RENDER_RECT_SET_FLAG(fmt, VERTICAL_USED_INLINE_SIZE_SET);
+                        fmt.setVerticalUsedInlineSize(used_inline_size);
+                    }
+                    else {
+                        RENDER_RECT_UNSET_FLAG(fmt, VERTICAL_USED_INLINE_SIZE_SET);
+                        fmt.setVerticalUsedInlineSize(0);
+                    }
+                }
                 fmt.push();
                 // if (top_overflow > 0) printf("block top_overflow=%d\n", top_overflow);
                 // if (bottom_overflow > 0) printf("block bottom_overflow=%d\n", bottom_overflow);
@@ -9197,52 +9259,12 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
                 // (We used to extend the padding with the widest marker width,
                 // but this was not per-CSS-specs).
 
-                // Deal with negative text-indent
-                if ( style->text_indent.value < 0 ) {
-                    int indent = - lengthToPx(enode, style->text_indent, container_width);
-                    // We'll need to have text written this positive distance outside
-                    // the nominal text inner_width.
-                    // We can remove it from left padding if indent is smaller than padding.
-                    // If it is larger, we can't remove the excess from left margin, as
-                    // these margin should stay fixed for proper background drawing in their
-                    // limits (the text with negative text-indent should overflow the
-                    // margin and background color).
-                    // But, even if CSS forbids negative padding, the followup code might
-                    // be just fine with negative values for padding_left/_right !
-                    // (Not super sure of that, but it looks like it works, so let's
-                    // go with it - if issues, one can switch to a rendering mode
-                    // without the ALLOW_HORIZONTAL_BLOCK_OVERFLOW flag).
-                    // (Text selection on the overflowing text may not work, but it's
-                    // the same for negative margins.)
-                    if ( !is_rtl ) {
-                        padding_left -= indent;
-                        if ( padding_left < 0 ) {
-                            if ( !BLOCK_RENDERING(flags, ALLOW_HORIZONTAL_BLOCK_OVERFLOW) ) {
-                                padding_left = 0; // be safe, drop excessive part of indent
-                            }
-                            else if ( !BLOCK_RENDERING(flags, ALLOW_HORIZONTAL_PAGE_OVERFLOW) ) {
-                                // Limit to top node (page, float) left margin
-                                int abs_x = flow->getCurrentAbsoluteX();
-                                if ( abs_x + padding_left < 0 )
-                                    padding_left = -abs_x;
-                            }
-                        }
-                    }
-                    else {
-                        padding_right -= indent;
-                        if ( padding_right < 0 ) {
-                            if ( !BLOCK_RENDERING(flags, ALLOW_HORIZONTAL_BLOCK_OVERFLOW) ) {
-                                padding_right = 0;
-                            }
-                            else if ( !BLOCK_RENDERING(flags, ALLOW_HORIZONTAL_PAGE_OVERFLOW) ) {
-                                int o_width = flow->getOriginalContainerWidth();
-                                int abs_x = flow->getCurrentAbsoluteX();
-                                if ( abs_x + width + padding_right < o_width )
-                                    padding_right = o_width - width - abs_x;
-                            }
-                        }
-                    }
-                }
+                // Keep padding intact for negative text-indent.  The formatter
+                // applies the signed indent to the first line, allowing it to
+                // occupy inline-start padding or overflow the content box as
+                // CSS specifies.  The former padding rewrite was coupled to
+                // the old sign-as-hanging convention and applied the outdent
+                // twice once negative lengths gained their proper semantics.
 
                 // To get an accurate BlockFloatFootprint, we need to push vertical
                 // margin now (and not delay it to the first addContentLine()).
@@ -9359,18 +9381,16 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
                     // just above if there were floats.)
 
                 int final_h = enode->renderFinalBlock( txform, &fmt, inner_width, &float_footprint );
-                int vertical_text_background_inline_size = 0;
-                if ( flow->isVertical() && auto_width && !IS_COLOR_FULLY_TRANSPARENT(background_color) ) {
+                int vertical_used_inline_size = 0;
+                if ( flow->isVertical() && auto_width ) {
                     int used_end = 0;
-                    int measured_draw_ink_end = 0;
-                    int used_line_width_end = 0;
                     int text_line_count = 0;
                     bool debug_vert_bg = shouldDebugForkVerticalBoxNode(enode);
                     int line_count = txform->GetLineCount();
                     for (int li = 0; li < line_count; li++) {
                         const formatted_line_t * line = txform->GetLineInfo(li);
-                        if ( (int)line->width > used_line_width_end )
-                            used_line_width_end = (int)line->width;
+                        if ( line->inline_end > used_end )
+                            used_end = line->inline_end;
                         bool line_has_text = false;
                         for (int wi = 0; wi < line->word_count; wi++) {
                             const formatted_word_t * word = &line->words[wi];
@@ -9381,33 +9401,22 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
                         if ( line_has_text )
                             text_line_count++;
                     }
-                    {
-                        LVInkMeasurementDrawBuf ink_buf(false, true, 1000000);
-                        txform->Draw(&ink_buf, 0, 0, NULL, NULL);
-                        lvRect ink_rect;
-                        if ( ink_buf.getInkArea(ink_rect) )
-                            measured_draw_ink_end = ink_rect.bottom;
-                        if ( measured_draw_ink_end > used_end )
-                            used_end = measured_draw_ink_end;
-                    }
                     bool wrapped_full_end = text_line_count > 1;
                     if ( wrapped_full_end ) {
                         if ( inner_width > used_end )
                             used_end = inner_width;
                     }
                     if ( used_end > 0 ) {
-                        vertical_text_background_inline_size = used_end + padding_left + padding_right;
+                        vertical_used_inline_size = used_end + padding_left + padding_right;
                     }
                     if ( debug_vert_bg ) {
                         fprintf(stderr,
                             "KO_DEBUG_VERT_BG format path=%s block_width=%d inner_width=%d "
-                            "used_text_end=%d draw_ink_end=%d text_line_count=%d wrapped_full_end=%d "
-                            "used_line_width_end=%d missing_from_line=%d "
-                            "text_bg_width=%d padding_inline=(%d,%d) final_h=%d\n",
+                            "used_inline_end=%d text_line_count=%d wrapped_full_end=%d "
+                            "used_inline_size=%d padding_inline=(%d,%d) final_h=%d\n",
                             LCSTR(ldomXPointer(enode, 0).toString()), width, inner_width,
-                            used_end, measured_draw_ink_end, text_line_count, wrapped_full_end ? 1 : 0,
-                            used_line_width_end, used_line_width_end - used_end,
-                            vertical_text_background_inline_size,
+                            used_end, text_line_count, wrapped_full_end ? 1 : 0,
+                            vertical_used_inline_size,
                             padding_left, padding_right, final_h);
                     }
                 }
@@ -9474,14 +9483,14 @@ void renderBlockElementEnhanced( FlowState * flow, ldomNode * enode, int x, int 
                 fmt.setHeight( h );
                 fmt.setTopOverflow( top_overflow );
                 fmt.setBottomOverflow( bottom_overflow );
-                if ( vertical_text_background_inline_size > 0
-                        && vertical_text_background_inline_size != fmt.getWidth() ) {
-                    RENDER_RECT_SET_FLAG(fmt, VERTICAL_TEXT_BACKGROUND_SIZE_SET);
-                    fmt.setVerticalTextBackgroundInlineSize( vertical_text_background_inline_size );
+                if ( vertical_used_inline_size > 0
+                        && vertical_used_inline_size != fmt.getWidth() ) {
+                    RENDER_RECT_SET_FLAG(fmt, VERTICAL_USED_INLINE_SIZE_SET);
+                    fmt.setVerticalUsedInlineSize( vertical_used_inline_size );
                 }
                 else {
-                    RENDER_RECT_UNSET_FLAG(fmt, VERTICAL_TEXT_BACKGROUND_SIZE_SET);
-                    fmt.setVerticalTextBackgroundInlineSize( 0 );
+                    RENDER_RECT_UNSET_FLAG(fmt, VERTICAL_USED_INLINE_SIZE_SET);
+                    fmt.setVerticalUsedInlineSize( 0 );
                 }
                 fmt.push();
                 // (We set the height now because we know it, but it should be
@@ -9816,21 +9825,6 @@ static int getVerticalInlineEndPadding(ldomNode *enode, RenderRectAccessor fmt)
     return padding_end > 0 ? padding_end : 0;
 }
 
-static bool measureVerticalNodeInkBoxInlineSize(ldomNode *enode, RenderRectAccessor fmt,
-                                                int & measured_box_w, int & measured_ink_bottom)
-{
-    LVInkMeasurementDrawBuf ink_buf(false, true, 1000000);
-    DrawDocument( ink_buf, enode, 0, 0, fmt.getWidth(), fmt.getHeight(),
-            -fmt.getX(), -fmt.getY(), enode->getDocument()->getPageHeight(),
-            NULL, NULL, true, false, true );
-    lvRect ink_rect;
-    if ( !ink_buf.getInkArea(ink_rect) )
-        return false;
-    measured_ink_bottom = ink_rect.bottom;
-    measured_box_w = measured_ink_bottom + getVerticalInlineEndPadding(enode, fmt);
-    return measured_box_w > 0;
-}
-
 // DrawBorderVertical: draw a block's CSS borders in vertical-rl/lr writing mode.
 //
 // Upstream DrawBorder() draws straight to the buffer from the doc-space
@@ -9887,12 +9881,9 @@ static void DrawBorderVertical(ldomNode *enode, LVDrawBuf & drawbuf,
     draw_extra_info_t * dei = (draw_extra_info_t*)drawbuf.GetDrawExtraInfo();
     int anchor = (dei && dei->vert_column_clip_right) ? dei->vert_column_clip_right : clip.right;
 
+    // The formatted box is the CSS box.  Descendant ink can overflow it, but
+    // must not change its used dimensions while painting.
     int box_w = fmt.getWidth();   // doc-X extent -> screen height
-    int measured_box_w = 0;
-    int measured_ink_bottom = 0;
-    if ( measureVerticalNodeInkBoxInlineSize(enode, fmt, measured_box_w, measured_ink_bottom)
-            && measured_box_w > box_w )
-        box_w = measured_box_w;
     int box_h = fmt.getHeight();  // doc-Y extent -> screen width
     int screen_top    = x0 + doc_x;
     int screen_bottom = screen_top + box_w;
@@ -9902,11 +9893,11 @@ static void DrawBorderVertical(ldomNode *enode, LVDrawBuf & drawbuf,
     if ( shouldDebugForkVerticalBoxNode(enode) ) {
         fprintf(stderr,
             "KO_DEBUG_VERT_BG border path=%s class=%s fmt_width=%d fmt_height=%d "
-            "draw_width=%d measured_ink_bottom=%d measured_box_width=%d "
+            "draw_width=%d "
             "doc=(%d,%d) screen=(%d,%d,%d,%d) borders=(%d,%d,%d,%d)\n",
             LCSTR(ldomXPointer(enode, 0).toString()),
             LCSTR(enode->getAttributeValue(attr_class)),
-            fmt.getWidth(), fmt.getHeight(), box_w, measured_ink_bottom, measured_box_w, doc_x, doc_y,
+            fmt.getWidth(), fmt.getHeight(), box_w, doc_x, doc_y,
             screen_left, screen_top, screen_right, screen_bottom,
             twidth, rwidth, bwidth, lwidth);
     }
@@ -9926,28 +9917,20 @@ static void DrawBackgroundColorVertical(LVDrawBuf & drawbuf, ldomNode *enode,
     int anchor = (dei && dei->vert_column_clip_right) ? dei->vert_column_clip_right : clip.right;
 
     int box_w = fmt.getWidth();   // doc-X extent -> screen height
-    int measured_ink_bottom = 0;
-    int measured_box_w = 0;
-    if ( RENDER_RECT_HAS_FLAG(fmt, VERTICAL_TEXT_BACKGROUND_SIZE_SET) ) {
-        int text_bg_w = fmt.getVerticalTextBackgroundInlineSize();
+    if ( RENDER_RECT_HAS_FLAG(fmt, VERTICAL_USED_INLINE_SIZE_SET) ) {
+        int text_bg_w = fmt.getVerticalUsedInlineSize();
         if ( text_bg_w > 0 )
             box_w = text_bg_w;
     }
-    if ( measureVerticalNodeInkBoxInlineSize(enode, fmt, measured_box_w, measured_ink_bottom)
-            && measured_box_w > box_w )
-        box_w = measured_box_w;
     if ( shouldDebugForkVerticalBoxNode(enode) ) {
         fprintf(stderr,
             "KO_DEBUG_VERT_BG draw path=%s class=%s fmt_width=%d draw_width=%d fmt_height=%d "
             "doc=(%d,%d) screen_top=%d screen_bottom=%d "
-            "measured_ink_bottom=%d measured_box_width=%d trailing_gap=%d "
             "padding_inline_end=%d\n",
             LCSTR(ldomXPointer(enode, 0).toString()),
             LCSTR(enode->getAttributeValue(attr_class)),
             fmt.getWidth(), box_w, fmt.getHeight(), doc_x, doc_y,
             x0 + doc_x, x0 + doc_x + box_w,
-            measured_ink_bottom, measured_box_w,
-            x0 + doc_x + box_w - (x0 + doc_x + measured_ink_bottom),
             getVerticalInlineEndPadding(enode, fmt));
     }
     int box_h = fmt.getHeight();  // doc-Y extent -> screen width
@@ -11399,8 +11382,8 @@ void DrawDocument( LVDrawBuf & drawbuf, ldomNode * enode, int x0, int y0, int dx
                         if ( ink_buf.getInkArea(ink_rect) )
                             text_ink_end = ink_rect.bottom;
                         int rect_width = fmt.getWidth();
-                        if ( RENDER_RECT_HAS_FLAG(fmt, VERTICAL_TEXT_BACKGROUND_SIZE_SET) ) {
-                            int text_bg_w = fmt.getVerticalTextBackgroundInlineSize();
+                        if ( RENDER_RECT_HAS_FLAG(fmt, VERTICAL_USED_INLINE_SIZE_SET) ) {
+                            int text_bg_w = fmt.getVerticalUsedInlineSize();
                             if ( text_bg_w > 0 )
                                 rect_width = text_bg_w;
                         }
