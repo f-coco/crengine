@@ -3146,7 +3146,7 @@ static const char * css_tcu_names[] =
 {
     "none",     // css_tcu_none
     "all",      // css_tcu_all
-    "digits",   // css_tcu_digits
+    "digits",   // parsed as css_tcu_digits_2 unless an explicit 3 or 4 follows
     NULL
 };
 
@@ -3648,6 +3648,7 @@ bool LVCssDeclaration::parse( const char * &decl, bool higher_importance, lxmlDo
                         else if ( substr_icompare("footnote", decl) )               hints |= CSS_CR_HINT_FOOTNOTE;
                         else if ( substr_icompare("footnote-ignore", decl) )        hints |= CSS_CR_HINT_FOOTNOTE_IGNORE;
                         else if ( substr_icompare("no-cap-image-size", decl) )      hints |= CSS_CR_HINT_NO_CAP_IMAGE_SIZE;
+                        else if ( substr_icompare("default-text-indent", decl) )    hints |= CSS_CR_HINT_DEFAULT_TEXT_INDENT;
                         else if ( substr_icompare("no-presentational", decl) ) {
                             // "-cr-hint: no-presentational" can be explicitely set on a node so any presentational-hint
                             // later selector is not matching, to avoid (some) presentational hints. For this to be
@@ -4892,11 +4893,17 @@ bool LVCssDeclaration::parse( const char * &decl, bool higher_importance, lxmlDo
                     n = css_tcu_all;
                 } else {
                     n = parse_name( decl, css_tcu_names, -1 );
-                    // "digits N" — skip optional count (2-4), treat same as "digits"
-                    if ( n == css_tcu_digits ) {
+                    // Preserve the digit-run limit required by CSS Writing
+                    // Modes instead of treating every `digits N` as `all`.
+                    if ( n == css_tcu_digits_2 ) {
                         skip_spaces( decl );
-                        unsigned digits_count;
-                        parse_integer( decl, digits_count );
+                        unsigned digits_count = 2;
+                        if ( parse_integer( decl, digits_count ) ) {
+                            if ( digits_count == 3 )
+                                n = css_tcu_digits_3;
+                            else if ( digits_count == 4 )
+                                n = css_tcu_digits_4;
+                        }
                     }
                 }
                 break;
@@ -5509,7 +5516,17 @@ void LVCssDeclaration::apply( css_style_rec_t * style, const ldomNode * node ) c
             }
             break;
         case cssd_text_indent:
-            style->Apply( read_length(p), &style->text_indent, imp_bit_text_indent, is_important );
+            {
+                css_length_t text_indent = read_length(p);
+                style->Apply( text_indent, &style->text_indent, imp_bit_text_indent, is_important );
+                // epub.css places DEFAULT_TEXT_INDENT after its own declaration.
+                // Any later authored declaration targeting this node turns the
+                // value back into ordinary authored CSS, even when numerically
+                // equal to the reading default.
+                if ( style->text_indent.type == text_indent.type
+                        && style->text_indent.value == text_indent.value )
+                    style->cr_hint.value &= ~CSS_CR_HINT_DEFAULT_TEXT_INDENT;
+            }
             style->flags |= STYLE_REC_FLAG_INHERITABLE_APPLIED;
             break;
         case cssd_initial_letter:

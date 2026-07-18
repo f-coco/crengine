@@ -63,6 +63,24 @@ static bool isVerticalInlineBorderDebugClass(const lString32 &cls)
     return cls == "marker" || cls == "marginalia1" || cls == "line";
 }
 
+// `text-combine-upright: digits [2|3|4]` applies only to an ASCII digit run
+// no longer than its declared limit.  Keeping this decision beside word
+// formation ensures layout, draw, selection and hit testing share one TCY
+// word model.
+static bool isTcyDigitRun(const src_text_fragment_t * srcline,
+                          const formatted_word_t * word, int digit_limit)
+{
+    if ( !srcline || !srcline->t.text || word->t.len == 0
+            || word->t.len > digit_limit )
+        return false;
+    for ( int i = 0; i < (int)word->t.len; i++ ) {
+        lChar32 ch = srcline->t.text[word->t.start + i];
+        if ( ch < U'0' || ch > U'9' )
+            return false;
+    }
+    return true;
+}
+
 // to debug formatter
 
 #if defined(_DEBUG) && 0
@@ -389,6 +407,9 @@ int getLTextExtraProperty( src_text_fragment_t * srcline, ltext_extra_t extra_pr
     }
     if ( extra_property == LTEXT_EXTRA_CSS_TEXT_EMPHASIS ) {
         return (int)style->text_emphasis_style; // css_text_emphasis_style_t value
+    }
+    if ( extra_property == LTEXT_EXTRA_CSS_TEXT_COMBINE_UPRIGHT ) {
+        return (int)style->text_combine_upright; // css_text_combine_upright_t value
     }
     return 0;
 }
@@ -2640,6 +2661,7 @@ public:
                     else if ( m_charindex[start] == PAD_CHAR_INDEX ) {
                         // measure pad
                         src_text_fragment_t * src = m_srcs[start];
+                        bool is_orthogonal_spacer = src->o.objflags & LTEXT_OBJECT_IS_ORTHOGONAL_SPACER;
                         bool is_right_pad = src->o.objflags & LTEXT_OBJECT_IS_PAD_RIGHT;
                         ldomNode * node = (ldomNode *) src->object;
                         css_style_ref_t style = node->getStyle();
@@ -2675,9 +2697,21 @@ public:
                         if ( padding < 0 ) padding = 0;
                         // We store these computed values in the available fields
                         int width = margin + border + padding;
+                        int height = padding + border;
+                        int baseline = border;
+                        if ( is_orthogonal_spacer ) {
+                            // An orthogonal empty inline occupies no distance
+                            // along this paragraph's inline axis. Its explicit
+                            // CSS width is consumed as cross-axis extent by the
+                            // vertical line layout below.
+                            width = 0;
+                            height = lengthToPx(node, style->width, m_pbuffer->width);
+                            if ( height < 0 ) height = 0;
+                            baseline = 0;
+                        }
                         m_srcs[start]->o.width = width;             // the full width taken by this pad
-                        m_srcs[start]->o.height = padding + border; // padding + border (background-color extends into this)
-                        m_srcs[start]->o.baseline = border;         // border thickness (for drawing it)
+                        m_srcs[start]->o.height = height;           // padding + border (background-color extends into this)
+                        m_srcs[start]->o.baseline = baseline;       // border thickness (for drawing it)
                         lastWidth += width;
                         m_advance[start] = lastWidth;
                         // Update ALLOW_WRAP_AFTER flags (that we didn't do in copyText())
@@ -3322,7 +3356,8 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
                 // we will also not apply any added letter spacing to CJK glyphs, as each already
                 // got the extra space added - and if using this option with CJK, we'd rather have
                 // them get less space added, and western/numbers get the expansion).
-                if ( word->distinct_glyphs <= 0 || word->flags & LTEXT_WORD_IS_CJK )
+                if ( word->distinct_glyphs <= 0
+                        || word->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_TCY) )
                     continue;
                 min_extra_width += word->min_width - word->width;
                 src_text_fragment_t * srcline = &fmt->m_pbuffer->srctext[word->src_text_index];
@@ -3341,7 +3376,8 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
                 bool can_try_larger = false;
                 for ( int i=0; i<(int)frmline->word_count; i++ ) {
                     formatted_word_t * word = &frmline->words[i];
-                    if ( word->distinct_glyphs <= 0 || word->flags & LTEXT_WORD_IS_CJK )
+                    if ( word->distinct_glyphs <= 0
+                            || word->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_TCY) )
                         continue;
                     // Store previous value in _baseline_to_bottom (also not used anymore) in case of
                     // excess and the need to use previous value (so we don't have to recompute it)
@@ -3363,7 +3399,8 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
                     added_spacing = 0;
                     for ( int i=0; i<(int)frmline->word_count; i++ ) {
                         formatted_word_t * word = &frmline->words[i];
-                        if ( word->distinct_glyphs <= 0 || word->flags & LTEXT_WORD_IS_CJK )
+                        if ( word->distinct_glyphs <= 0
+                                || word->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_TCY) )
                             continue;
                         word->added_letter_spacing = word->_baseline_to_bottom;
                         added_spacing += word->distinct_glyphs * word->added_letter_spacing;
@@ -3382,7 +3419,8 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
                 int shift_x = 0;
                 for ( int i=0; i<(int)frmline->word_count; i++ ) {
                     formatted_word_t * word = &frmline->words[i];
-                    if ( word->distinct_glyphs > 0 && !(word->flags & LTEXT_WORD_IS_CJK) ) {
+                    if ( word->distinct_glyphs > 0
+                            && !(word->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_TCY)) ) {
                         int added_width = word->distinct_glyphs * word->added_letter_spacing;
                         if ( i == frmline->word_count-1 ) {
                             // For the last word on a justified line, we want to not see
@@ -4672,8 +4710,17 @@ void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fr
                     word->min_width = word->width;
                     TR("addLine - word(%d, %d) x=%d (%d..%d)[%d] |%s|", wstart, i, frmline->width, wstart>0 ? fmt->m_advance[wstart-1] : 0, fmt->m_advance[i-1], word->width, LCSTR(lString32(fmt->m_text+wstart, i-wstart)));
                     // TCY (tate-chu-yoko): in vertical mode, each TCY span occupies exactly 1em
-                    if ( (srcline->flags & LTEXT_IS_TCY)
-                         && (css_wm_is_vertical(fmt->m_writing_mode)) ) {
+                    bool is_tcy_word = (srcline->flags & LTEXT_IS_TCY)
+                            && css_wm_is_vertical(fmt->m_writing_mode);
+                    if ( is_tcy_word ) {
+                        int tcu = getLTextExtraProperty(srcline,
+                                LTEXT_EXTRA_CSS_TEXT_COMBINE_UPRIGHT);
+                        if ( tcu >= css_tcu_digits_2 && tcu <= css_tcu_digits_4 ) {
+                            int limit = 2 + (tcu - css_tcu_digits_2);
+                            is_tcy_word = isTcyDigitRun(srcline, word, limit);
+                        }
+                    }
+                    if ( is_tcy_word ) {
                         int em = font->getSize();
                         word->width = em;
                         word->min_width = em;
@@ -6210,20 +6257,25 @@ lUInt32 LFormattedText::Format(lUInt16 width, lUInt16 page_height, int para_dire
     // format text
     LVFormatter formatter( m_pbuffer );
 
-    // Set (as properties of the whole final block) the text-indent computed
-    // values for the first line and for the next lines, by taking it
-    // from the first src_text_fragment_t added (see comment in lvrend.cpp
-    // renderFinalBlock() why we do it that way - while it might be better
-    // if it were provided as a parameter to LFormattedText::Format()).
-    int indent = m_pbuffer->srctextlen > 0 ? m_pbuffer->srctext[0].indent : 0;
+    // text-indent belongs to the paragraph, not to its first text fragment.
+    // Enhanced rendering sets it explicitly, including the independent CSS
+    // `hanging` modifier.  Keep the old source-fragment convention only as a
+    // compatibility fallback for legacy rendering and direct formatter users.
+    int indent = m_pbuffer->text_indent_set
+            ? m_pbuffer->text_indent
+            : (m_pbuffer->srctextlen > 0 ? m_pbuffer->srctext[0].indent : 0);
+    bool indent_hanging = m_pbuffer->text_indent_set
+            ? m_pbuffer->text_indent_hanging
+            : indent < 0;
     formatter.m_indent_first_line_done = false;
-    if ( indent >= 0 ) { // positive indent affects only first line
+    if ( indent_hanging ) {
+        formatter.m_indent_current = 0;
+        formatter.m_indent_after_first_line = m_pbuffer->text_indent_set ? indent : -indent;
+    }
+    else {
+        // Positive and negative lengths both affect the first formatted line.
         formatter.m_indent_current = indent;
         formatter.m_indent_after_first_line = 0;
-    }
-    else { // negative indent affects all but first lines
-        formatter.m_indent_current = 0;
-        formatter.m_indent_after_first_line = -indent;
     }
 
     // Set specified para direction (can be REND_DIRECTION_UNSET, in which case
@@ -6629,6 +6681,15 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
             // Fork: reset per-column vertical state.  See VerticalDrawState
             // in include/lvtextfm_fork.h for member documentation.
             vstate.resetForNewFrmline();
+            bool vertical_line_has_image = false;
+            if ( is_vertical ) {
+                for ( int wi = 0; wi < frmline->word_count; wi++ ) {
+                    if ( frmline->words[wi].flags & LTEXT_WORD_IS_IMAGE ) {
+                        vertical_line_has_image = true;
+                        break;
+                    }
+                }
+            }
             // The extended (overflow) clip may only be granted to a line box
             // that is FULLY inside the regular clip — otherwise a line partly
             // outside the clip could be drawn on both adjacent pages.  In
@@ -6785,6 +6846,32 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
             // sides (ie. if an image sits at the baseline, the border will be drawn under the strut,
             // leaving some gap below the image)...
             if ( has_inline_borders ) {
+                // CSS inline boxes may span several formatted vertical columns.
+                // A physical border-top belongs to the box's first fragment;
+                // drawing it again at every wrapped column creates stray
+                // horizontal rules before later text fragments.  This must be
+                // based on the formatted paragraph (not only visible lines),
+                // otherwise the rule would reappear after a page split.
+                auto isFirstVerticalInlineBorderFragment = [&](ldomNode * borderNode) {
+                    if ( !is_vertical || !borderNode )
+                        return true;
+                    for ( int previous_line = 0; previous_line < i; previous_line++ ) {
+                        formatted_line_t * previous = m_pbuffer->frmlines[previous_line];
+                        for ( int previous_word = 0; previous_word < previous->word_count; previous_word++ ) {
+                            src_text_fragment_t * previous_src =
+                                &m_pbuffer->srctext[previous->words[previous_word].src_text_index];
+                            ldomNode * previous_node = (ldomNode *)previous_src->object;
+                            if ( previous_node && previous_node->isEffectiveText() )
+                                previous_node = previous_node->getParentNode();
+                            while ( previous_node && previous_node->getRendMethod() != erm_final ) {
+                                if ( previous_node == borderNode )
+                                    return false;
+                                previous_node = previous_node->getParentNode();
+                            }
+                        }
+                    }
+                    return true;
+                };
                 auto logInlineBorder = [&](ldomNode * borderNode, int side, int x0, int x1, int y0, int h) {
                     if ( !verticalTextDebugEnabled() || !borderNode )
                         return;
@@ -6828,14 +6915,16 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         if ( thisBorderNode != lastBorderNode && lastBorderWordStart != -1 ) {
                             // The previous border over previous words ends: draw it
                             if ( is_vertical ) {
-                                logInlineBorder(lastBorderNode, side,
-                                            line_x - (int)frmline->height, line_x,
-                                            lastBorderWordStart,
-                                            lastBorderWordEnd - lastBorderWordStart);
-                                drawBorder(buf, line_x - (int)frmline->height, line_x,
-                                            lastBorderWordStart,
-                                            lastBorderWordEnd - lastBorderWordStart,
-                                            lastBorderNode, side);
+                                if ( side != 0 || isFirstVerticalInlineBorderFragment(lastBorderNode) ) {
+                                    logInlineBorder(lastBorderNode, side,
+                                                line_x - (int)frmline->height, line_x,
+                                                lastBorderWordStart,
+                                                lastBorderWordEnd - lastBorderWordStart);
+                                    drawBorder(buf, line_x - (int)frmline->height, line_x,
+                                                lastBorderWordStart,
+                                                lastBorderWordEnd - lastBorderWordStart,
+                                                lastBorderNode, side);
+                                }
                             }
                             else {
                                 logInlineBorder(lastBorderNode, side,
@@ -6877,14 +6966,16 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                     // Done with this line, any previous border ends: draw it
                     if ( lastBorderNode && lastBorderWordStart != -1 ) {
                         if ( is_vertical ) {
-                            logInlineBorder(lastBorderNode, side,
-                                        line_x - (int)frmline->height, line_x,
-                                        lastBorderWordStart,
-                                        lastBorderWordEnd - lastBorderWordStart);
-                            drawBorder(buf, line_x - (int)frmline->height, line_x,
-                                        lastBorderWordStart,
-                                        lastBorderWordEnd - lastBorderWordStart,
-                                        lastBorderNode, side);
+                            if ( side != 0 || isFirstVerticalInlineBorderFragment(lastBorderNode) ) {
+                                logInlineBorder(lastBorderNode, side,
+                                                line_x - (int)frmline->height, line_x,
+                                                lastBorderWordStart,
+                                                lastBorderWordEnd - lastBorderWordStart);
+                                drawBorder(buf, line_x - (int)frmline->height, line_x,
+                                                lastBorderWordStart,
+                                                lastBorderWordEnd - lastBorderWordStart,
+                                                lastBorderNode, side);
+                            }
                         }
                         else {
                             logInlineBorder(lastBorderNode, side,
@@ -7194,7 +7285,7 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             // vert_skip_draw + drawFlags vertical bits + word_is_*
                             // flags, and updates vstate (vert_min_next_x etc.).
                             applyVerticalWordDraw(m_pbuffer, frmline, srcline, word, font,
-                                y, line_x, clip, drawFlags, vstate,
+                                y, line_x, clip, vertical_line_has_image, drawFlags, vstate,
                                 x0, y0, vert_skip_draw,
                                 word_is_latin_in_vertical, word_is_vert_mark);
                         } else {
@@ -7234,6 +7325,20 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             }
                             */
                         }
+                    }
+                    // CSS text-decoration and inline borders share the same
+                    // logical inline-end edge.  Supply that edge explicitly
+                    // for vertically laid out text so rotated Latin runs do
+                    // not derive it from their different font-height box.
+                    if ( is_vertical && !(drawFlags & LFNT_HINT_TRANSFORM_STRETCH) ) {
+                        int em = font->getSize();
+                        int decoration_offset = 0;
+                        if ( (int)frmline->height <= m_pbuffer->strut_height && em < m_pbuffer->strut_height )
+                            decoration_offset = (m_pbuffer->strut_height - em) / 2;
+                        h = line_x - (int)frmline->height + decoration_offset + em;
+                        getVerticalDecorationInlineEnd(m_pbuffer, frmline,
+                                (ldomNode *)srcline->object, drawFlags, line_x, h);
+                        drawFlags |= LFNT_HINT_VERTICAL_DECORATION_EDGE;
                     }
                     {
                         int _adv = !vert_skip_draw ? font->DrawTextString(

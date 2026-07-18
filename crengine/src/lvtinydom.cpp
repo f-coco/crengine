@@ -121,7 +121,13 @@ extern const int gDOMVersionCurrent = DOM_VERSION_CURRENT;
 //         word->width.  An old cache's word->x disagrees with the recomputed
 //         Draw-side vert_min_next_x, shifting ruby groups and the chars after
 //         them; force a re-render.
-#define FORMATTING_VERSION_ID 0x004F
+// 0x0050: vertical layout now keeps signed text-indent separate from `hanging`,
+//         honours text-combine-upright digit limits, routes fullwidth Latin and
+//         numerals through the upright CJK path, and records used inline/cross
+//         extents for orthogonal spacers and images in mixed-content lines.
+//         These alter word positions, line dimensions and parent auto sizing;
+//         old cached formatted geometry must be discarded.
+#define FORMATTING_VERSION_ID 0x0050
 
 #ifndef DOC_DATA_COMPRESSION_LEVEL
 /// data compression level (0=no compression, 1=fast compressions, 3=normal compression)
@@ -2332,7 +2338,7 @@ void RenderRectAccessor::setInvolvedFloatIds( int float_count, lUInt32 * float_i
     _modified = true;
 }
 
-int RenderRectAccessor::getVerticalTextBackgroundInlineSize()
+int RenderRectAccessor::getVerticalUsedInlineSize()
 {
     if ( _dirty ) {
         _dirty = false;
@@ -2344,7 +2350,7 @@ int RenderRectAccessor::getVerticalTextBackgroundInlineSize()
     return _extra0;
 }
 
-void RenderRectAccessor::setVerticalTextBackgroundInlineSize( int size )
+void RenderRectAccessor::setVerticalUsedInlineSize( int size )
 {
     if ( _dirty ) {
         _dirty = false;
@@ -22318,7 +22324,23 @@ int ldomNode::renderFinalBlock(  LFormattedTextRef & frmtext, RenderRectAccessor
         float_footprint = &restored_float_footprint;
         float_footprint->restore( this, (lUInt16)width );
     }
-    if ( !getDocument()->isRendered() ) {
+    // Resolve writing_mode before deciding whether light formatting is safe.
+    // In vertical text, alignLineHorizontalVerticalPostPass() establishes JFM
+    // positions and the used inline extent. Skipping it during initial layout
+    // and running it only before paint gives layout and paint two different
+    // geometries, so vertical final blocks must be fully formatted once and
+    // kept reusable.
+    int effective_writing_mode = getStyle()->writing_mode;
+    if ( effective_writing_mode == 0 ) { // css_wm_inherit
+        for (ldomNode * p = getParentNode(); p && p->isElement(); p = p->getParentNode()) {
+            css_style_ref_t ps = p->getStyle();
+            if ( !ps.isNull() && ps->writing_mode != 0 ) {
+                effective_writing_mode = ps->writing_mode;
+                break;
+            }
+        }
+    }
+    if ( !getDocument()->isRendered() && !css_wm_is_vertical(effective_writing_mode) ) {
         // Full rendering in progress: avoid some uneeded work that
         // is only needed when we'll be drawing the formatted text
         // (like alignLign()): this will mark it as not reusable, and
@@ -22339,20 +22361,6 @@ int ldomNode::renderFinalBlock(  LFormattedTextRef & frmtext, RenderRectAccessor
     // Format/render inner content: this makes lines and words, which are
     // cached into the LFormattedText and ready to be used for drawing
     // and text selection.
-    // Resolve writing_mode: if this element's own style has css_wm_inherit (= 0),
-    // walk the parent chain to find the effective value.  This ensures that
-    // block-level images (<img>) whose writing_mode is not explicitly set in CSS
-    // are formatted in the correct vertical or horizontal mode.
-    int effective_writing_mode = getStyle()->writing_mode;
-    if ( effective_writing_mode == 0 ) { // css_wm_inherit
-        for (ldomNode * p = getParentNode(); p && p->isElement(); p = p->getParentNode()) {
-            css_style_ref_t ps = p->getStyle();
-            if ( !ps.isNull() && ps->writing_mode != 0 ) {
-                effective_writing_mode = ps->writing_mode;
-                break;
-            }
-        }
-    }
     int h = f->Format((lUInt16)width, (lUInt16)page_h, direction,
                             effective_writing_mode, usable_left_overflow, usable_right_overflow,
                             getDocument()->getHangingPunctiationEnabled(), float_footprint);

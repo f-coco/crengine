@@ -860,8 +860,8 @@ public:
     void setNextFloatMinYs( int left, int right );
     void getInvolvedFloatIds( int & float_count, lUInt32 * float_ids );
     void setInvolvedFloatIds( int float_count, lUInt32 * float_ids );
-    int  getVerticalTextBackgroundInlineSize();
-    void setVerticalTextBackgroundInlineSize( int size );
+    int  getVerticalUsedInlineSize();
+    void setVerticalUsedInlineSize( int size );
 
     void push();
     void clear();

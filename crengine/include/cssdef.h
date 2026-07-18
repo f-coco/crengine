@@ -369,7 +369,9 @@ enum css_text_orientation_t {
 enum css_text_combine_upright_t {
     css_tcu_none,       // default: no combining
     css_tcu_all,        // combine all characters
-    css_tcu_digits,     // combine digit runs
+    css_tcu_digits_2,   // combine ASCII digit runs of up to 2 characters
+    css_tcu_digits_3,   // combine ASCII digit runs of up to 3 characters
+    css_tcu_digits_4,   // combine ASCII digit runs of up to 4 characters
 };
 
 /// text-emphasis-style property values (kenten/bouten emphasis marks)
@@ -486,6 +488,12 @@ enum css_generic_value_t {
 // One can use this hint on IMG to avoid any such resize, trusting the publisher's CSS to do
 // the right things to avoid any overflow.
 #define CSS_CR_HINT_NO_CAP_IMAGE_SIZE       0x00000020 // -cr-hint: no-cap-image-size
+
+// Marks a user-agent paragraph text-indent as a reading default rather than
+// authored document geometry. It remains available for unstyled prose, but
+// yields to a non-initial text-indent authored on an ancestor and intended to
+// inherit into the paragraph. This hint itself is not inherited.
+#define CSS_CR_HINT_DEFAULT_TEXT_INDENT      0x00000080 // -cr-hint: default-text-indent
 
 // A node with these should be considered as TOC item of level N when building alternate TOC
 #define CSS_CR_HINT_TOC_LEVEL1              0x00000100 // -cr-hint: toc-level1

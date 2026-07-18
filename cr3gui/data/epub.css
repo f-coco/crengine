@@ -32,6 +32,7 @@ h6 { font-size: 100%; }
 /* Paragraphs: no spacing between them, and text-indentation */
 p {
   text-indent: 1.2em;
+  -cr-hint: default-text-indent;
   margin-top: 0;
   margin-bottom: 0;
 }

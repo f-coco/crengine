@@ -111,6 +111,11 @@ void ltext_get_vert_trailing_space_trim(int *count_out, int *chars_out) {
 int ltext_vert_image_draw_count = 0;
 int ltext_vert_image_draw_drift_count = 0;
 int ltext_vert_image_draw_drift_max_px = 0;
+int ltext_vert_image_cross_underreserve_count = 0;
+int ltext_vert_image_cross_underreserve_max_px = 0;
+int ltext_vert_mixed_image_axis_sample_count = 0;
+int ltext_vert_mixed_image_axis_drift_count = 0;
+int ltext_vert_mixed_image_axis_drift_max_px = 0;
 
 void ltext_reset_vert_image_draw_drift() {
     ltext_vert_image_draw_count = 0;
@@ -122,6 +127,28 @@ void ltext_get_vert_image_draw_drift(int *draw_count_out, int *drift_count_out, 
     *draw_count_out = ltext_vert_image_draw_count;
     *drift_count_out = ltext_vert_image_draw_drift_count;
     *max_px_out = ltext_vert_image_draw_drift_max_px;
+}
+
+void ltext_reset_vert_image_cross_underreserve() {
+    ltext_vert_image_cross_underreserve_count = 0;
+    ltext_vert_image_cross_underreserve_max_px = 0;
+}
+
+void ltext_get_vert_image_cross_underreserve(int *count_out, int *max_px_out) {
+    *count_out = ltext_vert_image_cross_underreserve_count;
+    *max_px_out = ltext_vert_image_cross_underreserve_max_px;
+}
+
+void ltext_reset_vert_mixed_image_axis() {
+    ltext_vert_mixed_image_axis_sample_count = 0;
+    ltext_vert_mixed_image_axis_drift_count = 0;
+    ltext_vert_mixed_image_axis_drift_max_px = 0;
+}
+
+void ltext_get_vert_mixed_image_axis(int *sample_count_out, int *drift_count_out, int *max_px_out) {
+    *sample_count_out = ltext_vert_mixed_image_axis_sample_count;
+    *drift_count_out = ltext_vert_mixed_image_axis_drift_count;
+    *max_px_out = ltext_vert_mixed_image_axis_drift_max_px;
 }
 
 void ltext_reset_vert_bleed() {
@@ -240,7 +267,7 @@ static VertWordLayoutInfo getVerticalWordLayoutInfo( LVFormatter* fmt, formatted
     if ( !info.text )
         return info;
 
-    bool word_acts_as_cjk = isWordAllVertRotationChars(src->t.text + word->t.start, (int)word->t.len);
+    bool word_acts_as_cjk = isWordAllVerticalUprightChars(src->t.text + word->t.start, (int)word->t.len);
     info.cjk = ((word->flags & (LTEXT_WORD_IS_CJK | LTEXT_WORD_IS_FLEXIBLE_WIDTH_CJK)) != 0)
                || word_acts_as_cjk;
     lChar32 first_char = src->t.text[word->t.start];
@@ -538,6 +565,19 @@ void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * f
     // glyph by clamp_delta (≈ 1/5 em when the ruby group nearly touches
     // the preceding character).
     bool is_vert_frmline = css_wm_is_vertical(fmt->m_pbuffer->writing_mode);
+    int orthogonal_cross_extent = 0;
+    if ( is_vert_frmline ) {
+        for ( int i=0; i<frmline->word_count; i++ ) {
+            formatted_word_t * word = &frmline->words[i];
+            if ( (int)word->src_text_index >= fmt->m_pbuffer->srctextlen )
+                continue;
+            src_text_fragment_t * src = &fmt->m_pbuffer->srctext[word->src_text_index];
+            if ( (src->flags & LTEXT_SRC_IS_OBJECT)
+                    && (src->o.objflags & LTEXT_OBJECT_IS_ORTHOGONAL_SPACER)
+                    && (int)word->o.height > orthogonal_cross_extent )
+                orthogonal_cross_extent = word->o.height;
+        }
+    }
     int vert_layout_min_x = 0;  // mirrors vert_min_next_x in Draw()
     std::vector<VertJustifyGap> vert_justify_gaps;
     VertWordLayoutInfo prev_info;
@@ -689,6 +729,8 @@ void alignLineHorizontalVerticalPostPass( LVFormatter* fmt, formatted_line_t * f
             if ( is_vert ) {
                 int box_h = word->o.height;
                 int col_w = fmt->m_pbuffer->strut_height;
+                if ( orthogonal_cross_extent > col_w )
+                    col_w = orthogonal_cross_extent;
                 bool is_ruby_box = isRubyInlineBox(node);
                 if ( is_ruby_box ) {
                     LVFontRef fnt = node->getFont();
@@ -824,17 +866,29 @@ static inline bool isJapaneseHorizontalMark(lChar32 c) {
     }
 }
 
-// Returns true if every character in [text, text+len) is a Japanese
-// horizontal-mark character (―, —, …, ‥, ー, 〜, ～, －).
+// JLReq 3.2.4 handles full-width fixed-pitch Latin letters and European
+// numerals as ideographic characters in vertical composition: one em per
+// character, upright, and with CJK spacing.  The generic classifier does not
+// set the CJK word flag for these code points, so encode that rule here.
+static inline bool isFullwidthLatinOrEuropeanNumeral(lChar32 c) {
+    return (c >= 0xFF10 && c <= 0xFF19) // ０-９
+        || (c >= 0xFF21 && c <= 0xFF3A) // Ａ-Ｚ
+        || (c >= 0xFF41 && c <= 0xFF5A); // ａ-ｚ
+}
+
+// Returns true if every character in [text, text+len) must use the CJK
+// vertical path: Japanese horizontal marks, or JLReq 3.2.4 full-width Latin
+// letters/numerals.
 //
 // Used by LFormattedText::Draw's classification step to route such words
 // through the CJK +vert glyph path instead of the Latin-in-vertical
 // render+rotate-as-block path.
-bool isWordAllVertRotationChars(const lChar32 * text, int len) {
+bool isWordAllVerticalUprightChars(const lChar32 * text, int len) {
     if (!text || len <= 0)
         return false;
     for (int i = 0; i < len; i++) {
-        if (!isJapaneseHorizontalMark(text[i]))
+        if (!isJapaneseHorizontalMark(text[i])
+                && !isFullwidthLatinOrEuropeanNumeral(text[i]))
             return false;
     }
     return true;
@@ -1667,11 +1721,43 @@ void applyVerticalFrmlineDimensions(LVFormatter * fmt, formatted_line_t * frmlin
 {
     if ( !css_wm_is_vertical(fmt->m_writing_mode) )
         return;
+    // Preserve the formatted inline-axis extent before frmline->width is
+    // repurposed below as the physical column width. Parent vertical boxes
+    // need this layout quantity for auto inline sizing; deriving it later by
+    // painting into a measurement buffer is both circular and font-cache
+    // dependent.
+    frmline->inline_end = frmline->x;
     int col_width = fmt->m_pbuffer->strut_height;
+    for ( int i=0; i<frmline->word_count; i++ ) {
+        formatted_word_t * word = &frmline->words[i];
+        int advance = (int)word->width;
+        if ( word->flags & (LTEXT_WORD_IS_IMAGE | LTEXT_WORD_IS_INLINE_BOX) )
+            advance = (int)word->o.height;
+        int end = (int)frmline->x + (int)word->x + advance;
+        if ( end > frmline->inline_end )
+            frmline->inline_end = end;
+
+        // Every replaced inline establishes cross-axis space. In particular,
+        // a decorative image mixed with text may be wider than the strut.
+        // word->width is its physical screen-X extent; o.height is its
+        // inline screen-Y advance.
+        if ( (word->flags & LTEXT_WORD_IS_IMAGE) && (int)word->width > col_width )
+            col_width = (int)word->width;
+
+        // A width-specified orthogonal inline similarly reserves cross-axis
+        // space while remaining transparent to inline-axis wrapping.
+        if ( (int)word->src_text_index >= fmt->m_pbuffer->srctextlen )
+            continue;
+        src_text_fragment_t * src = &fmt->m_pbuffer->srctext[word->src_text_index];
+        if ( (src->flags & LTEXT_SRC_IS_OBJECT)
+                && (src->o.objflags & LTEXT_OBJECT_IS_ORTHOGONAL_SPACER)
+                && (int)word->o.height > col_width )
+            col_width = word->o.height;
+    }
     if ( frmline->word_count == 1 ) {
         formatted_word_t * w0 = &frmline->words[0];
         if ( w0->flags & LTEXT_WORD_IS_IMAGE ) {
-            frmline->height = (int)w0->width;
+            frmline->height = col_width;
             frmline->width = getVerticalImageInlineAdvance(w0);
             frmline->flags |= LTEXT_LINE_SPLIT_AVOID_BEFORE | LTEXT_LINE_SPLIT_AVOID_AFTER;
             return;
@@ -1845,6 +1931,45 @@ static void drawBorderVertical(LVDrawBuf * buf, int line_x, int col_width,
     drawBorder(buf, x0, x1, y_start, y_end - y_start, borderNode, bdidx);
 }
 
+// CSS text decorations are established by an inline box and propagated
+// through its descendants. A child span with a different font-size therefore
+// changes glyph geometry, but not the decoration line's cross-axis position.
+// Resolve that position from the establishing box so underline painting and
+// a coincident inline border use the same coordinate model.
+bool getVerticalDecorationInlineEnd(formatted_text_fragment_t * pbuffer,
+                                    formatted_line_t * frmline,
+                                    ldomNode * node, lUInt32 decoration_flags,
+                                    int line_x, int & inline_end)
+{
+    if ( !node )
+        return false;
+    if ( node->isEffectiveText() )
+        node = node->getParentNode();
+    ldomNode * decoration_node = NULL;
+    for ( ldomNode * current = node; current; current = current->getParentNode() ) {
+        css_text_decoration_t decoration = current->getStyle()->text_decoration;
+        if ( ((decoration_flags & LTEXT_TD_UNDERLINE)
+                    && (decoration == css_td_underline || decoration == css_td_blink))
+                || ((decoration_flags & LTEXT_TD_OVERLINE) && decoration == css_td_overline)
+                || ((decoration_flags & LTEXT_TD_LINE_THROUGH)
+                    && decoration == css_td_line_through) ) {
+            decoration_node = current;
+            break;
+        }
+        if ( current->getRendMethod() == erm_final )
+            break;
+    }
+    if ( !decoration_node || decoration_node->getFont().isNull() )
+        return false;
+    int em = decoration_node->getFont()->getSize();
+    int col_left = line_x - (int)frmline->height;
+    int centering = 0;
+    if ( (int)frmline->height <= pbuffer->strut_height && em < pbuffer->strut_height )
+        centering = (pbuffer->strut_height - em) / 2;
+    inline_end = col_left + centering + em;
+    return true;
+}
+
 // =============================================================================
 // drawVerticalPadBorders
 //
@@ -1875,7 +2000,10 @@ void drawVerticalPadBorders(
                 break;
             }
         }
-        drawBorderVertical(buf, line_x, (int)frmline->height, y_start, y_end, node, 1);
+        int border_inline_end = line_x;
+        getVerticalDecorationInlineEnd(pbuffer, frmline, node,
+                LTEXT_TD_UNDERLINE, line_x, border_inline_end);
+        drawBorderVertical(buf, border_inline_end, (int)frmline->height, y_start, y_end, node, 1);
     }
     else {
         // Left PAD marks element start; scan forward for the right PAD.
@@ -2015,6 +2143,12 @@ void applyVerticalImageDraw(
     // colliding with the text.  Clamp left to 0.
     int strut = (int)frmline->height;
     int img_w = (int)word->width;
+    if ( img_w > strut ) {
+        int underreserve = img_w - strut;
+        ltext_vert_image_cross_underreserve_count++;
+        if ( underreserve > ltext_vert_image_cross_underreserve_max_px )
+            ltext_vert_image_cross_underreserve_max_px = underreserve;
+    }
     int line_right = line_x;
     if ( column_clip_right > 0 && line_right > column_clip_right )
         line_right = column_clip_right;
@@ -2169,7 +2303,7 @@ void applyVerticalWordDraw(
     formatted_text_fragment_t * pbuffer,
     formatted_line_t * frmline, src_text_fragment_t * srcline,
     formatted_word_t * word, LVFont * font,
-    int y, int line_x, const lvRect & clip,
+    int y, int line_x, const lvRect & clip, bool line_has_image,
     lUInt32 & drawFlags,
     VerticalDrawState & state,
     int & x0_out, int & y0_out, bool & vert_skip_draw_out,
@@ -2182,7 +2316,7 @@ void applyVerticalWordDraw(
     // default to the Latin-rotated path; route them through the CJK +vert path.
     bool word_is_vert_mark =
         !(word->flags & LTEXT_WORD_IS_TCY)
-        && isWordAllVertRotationChars(srcline->t.text + word->t.start, (int)word->t.len);
+        && isWordAllVerticalUprightChars(srcline->t.text + word->t.start, (int)word->t.len);
     bool word_is_latin_in_vertical =
            !(word->flags & LTEXT_WORD_IS_TCY)
         && !(word->flags & LTEXT_WORD_IS_CJK)
@@ -2203,7 +2337,10 @@ void applyVerticalWordDraw(
 
     if ( word->flags & LTEXT_WORD_IS_TCY ) {
         // TCY (tate-chu-yoko): draw text horizontally within vertical column.
-        // The span occupies 1 em of column depth; text is centred in the column.
+        // The span occupies 1 em of column depth; set its glyphs left-to-right
+        // and centre the run in the column.  Do not stretch glyph bitmaps to
+        // force them into the slot: that distorts half-width numerals both
+        // horizontally and vertically.
         int em = font->getSize();
         int clamped_x = vertClampForward((int)word->x, state.vert_min_next_x);
         x0_out = line_x - frmline->height + (frmline->height - em) / 2;
@@ -2267,8 +2404,28 @@ void applyVerticalWordDraw(
     {
         int em    = font->getSize();
         int strut = pbuffer->strut_height;
-        if ( (int)frmline->height <= strut && em < strut )
+        // A replaced inline can widen a mixed line beyond the text strut.
+        // Keep ordinary CJK on the same central column axis as the image,
+        // TCY and rotated Latin branches. Ruby-only inflation is different:
+        // its annotation deliberately occupies one side of the base column.
+        if ( line_has_image && (int)frmline->height > em )
+            x0_out += ((int)frmline->height - em) / 2;
+        else if ( (int)frmline->height <= strut && em < strut )
             x0_out += (strut - em) / 2;
+
+        if ( line_has_image ) {
+            int expected_x0 = line_x - (int)frmline->height
+                    + ((int)frmline->height - em) / 2;
+            int drift = x0_out - expected_x0;
+            if ( drift < 0 )
+                drift = -drift;
+            ltext_vert_mixed_image_axis_sample_count++;
+            if ( drift > 0 ) {
+                ltext_vert_mixed_image_axis_drift_count++;
+                if ( drift > ltext_vert_mixed_image_axis_drift_max_px )
+                    ltext_vert_mixed_image_axis_drift_max_px = drift;
+            }
+        }
     }
     JLReqVertClass curr_cjk_class = JLREQ_VERT_OTHER;
     if ( srcline->t.text && word->t.len > 0 ) {
