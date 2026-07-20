@@ -239,6 +239,8 @@ enum kerning_mode_t {
 #define LFNT_HINT_CJK_SCALED_WIDTH       0x0400 /// CJK full width glyph has been scaled by cjk_width_scale_percent
 #define LFNT_HINT_RENDER_ROTATE_FOR_VERTICAL 0x0800 /// render text horizontally into temp buffer then rotate 90° CW for vertical column
 #define LFNT_HINT_VERTICAL_DECORATION_EDGE 0x8000 /// target_h carries the screen-X inline-end for vertical decoration
+#define LFNT_HINT_VERTICAL_DECORATION_THICKNESS_SHIFT 16
+#define LFNT_HINT_VERTICAL_DECORATION_THICKNESS_MASK  0x00FF0000 /// decoration owner's line thickness, in px
 
 // These 4 translate from LTEXT_TD_* equivalents (see lvtextfm.h). Keep them in sync.
 #define LFNT_DRAW_UNDERLINE              0x1000 /// underlined text

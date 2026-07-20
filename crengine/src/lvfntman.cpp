@@ -40,6 +40,10 @@ static bool drawVerticalTextDecorations(
     if ( !(flags & LFNT_DRAW_DECORATION_MASK) || (!rotated && !upright) )
         return false;
 
+    int owner_thickness = (flags & LFNT_HINT_VERTICAL_DECORATION_THICKNESS_MASK)
+            >> LFNT_HINT_VERTICAL_DECORATION_THICKNESS_SHIFT;
+    if ( owner_thickness > 0 )
+        thickness = owner_thickness;
     int cross_extent = rotated ? font_height : font_size;
     int extent = width >= 0 ? width : (rotated ? advance : font_size);
     int y0 = y - text_decoration_back_gap;
@@ -48,7 +52,10 @@ static bool drawVerticalTextDecorations(
     if ( flags & LFNT_DRAW_UNDERLINE ) {
         int inline_end = (flags & LFNT_HINT_VERTICAL_DECORATION_EDGE)
                 ? target_h : x + cross_extent;
-        buf->FillRect(inline_end - thickness, y0, inline_end, y1, color);
+        // In vertical-rl, an underline is painted on the right (under) side.
+        // The caller resolves this start coordinate from the decoration owner
+        // (including overlap with a coincident inline-end border).
+        buf->FillRect(inline_end, y0, inline_end + thickness, y1, color);
     }
     if ( flags & LFNT_DRAW_OVERLINE )
         buf->FillRect(x, y0, x + thickness, y1, color);
@@ -4296,6 +4303,11 @@ public:
         // measure character widths
         bool isHyphen = false;
         int x0 = x;
+        // Vertical shaping advances the mutable y pen after each glyph.
+        // Text decorations belong to the run's original inline position,
+        // not to that post-glyph pen position (whose offset also varies with
+        // descendant font-size). Preserve the run origin before shaping.
+        int text_origin_y = y;
 
     #if USE_HARFBUZZ==1
         if (_kerningMode == KERNING_MODE_HARFBUZZ) {
@@ -5161,7 +5173,7 @@ public:
 
         int advance = x - x0;
         if ( flags & LFNT_DRAW_DECORATION_MASK ) {
-            if ( drawVerticalTextDecorations(buf, x0, y, width, advance,
+            if ( drawVerticalTextDecorations(buf, x0, text_origin_y, width, advance,
                     _size, _height, _underline_thickness,
                     text_decoration_back_gap, target_h, flags) )
                 return advance;

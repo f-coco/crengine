@@ -1936,10 +1936,11 @@ static void drawBorderVertical(LVDrawBuf * buf, int line_x, int col_width,
 // changes glyph geometry, but not the decoration line's cross-axis position.
 // Resolve that position from the establishing box so underline painting and
 // a coincident inline border use the same coordinate model.
-bool getVerticalDecorationInlineEnd(formatted_text_fragment_t * pbuffer,
-                                    formatted_line_t * frmline,
-                                    ldomNode * node, lUInt32 decoration_flags,
-                                    int line_x, int & inline_end)
+bool getVerticalDecorationMetrics(formatted_text_fragment_t * pbuffer,
+                                  formatted_line_t * frmline,
+                                  ldomNode * node, lUInt32 decoration_flags,
+                                  int line_x,
+                                  VerticalDecorationMetrics & metrics)
 {
     if ( !node )
         return false;
@@ -1953,20 +1954,25 @@ bool getVerticalDecorationInlineEnd(formatted_text_fragment_t * pbuffer,
                 || ((decoration_flags & LTEXT_TD_OVERLINE) && decoration == css_td_overline)
                 || ((decoration_flags & LTEXT_TD_LINE_THROUGH)
                     && decoration == css_td_line_through) ) {
+            // The computed style carried by descendant inline nodes includes
+            // propagated text decorations. Keep walking through ancestors so
+            // we retain the box that established the decoration instead of
+            // mistaking a differently-sized descendant for a new owner.
             decoration_node = current;
-            break;
         }
-        if ( current->getRendMethod() == erm_final )
-            break;
     }
     if ( !decoration_node || decoration_node->getFont().isNull() )
         return false;
     int em = decoration_node->getFont()->getSize();
+    metrics.thickness = decoration_node->getFont()->getUnderlineThickness();
+    metrics.inline_end_border_width = (decoration_flags & LTEXT_TD_UNDERLINE)
+            ? measureBorder(decoration_node, 1) : 0;
+    metrics.owner = decoration_node;
     int col_left = line_x - (int)frmline->height;
     int centering = 0;
     if ( (int)frmline->height <= pbuffer->strut_height && em < pbuffer->strut_height )
         centering = (pbuffer->strut_height - em) / 2;
-    inline_end = col_left + centering + em;
+    metrics.inline_end = col_left + centering + em;
     return true;
 }
 
@@ -2000,10 +2006,11 @@ void drawVerticalPadBorders(
                 break;
             }
         }
-        int border_inline_end = line_x;
-        getVerticalDecorationInlineEnd(pbuffer, frmline, node,
-                LTEXT_TD_UNDERLINE, line_x, border_inline_end);
-        drawBorderVertical(buf, border_inline_end, (int)frmline->height, y_start, y_end, node, 1);
+        VerticalDecorationMetrics metrics = { line_x, 0, 0, NULL };
+        getVerticalDecorationMetrics(pbuffer, frmline, node,
+                LTEXT_TD_UNDERLINE, line_x, metrics);
+        drawBorderVertical(buf, metrics.inline_end, (int)frmline->height,
+                y_start, y_end, node, 1);
     }
     else {
         // Left PAD marks element start; scan forward for the right PAD.
