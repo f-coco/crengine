@@ -98,12 +98,18 @@ bool applyVerticalNNRubyCenterDistribution(
 bool isVerticalRubyInnerLine(LVFormatter * fmt, formatted_line_t * frmline);
 bool isVerticalRubyAnnotationLine(LVFormatter * fmt, formatted_line_t * frmline);
 
-// Resolve the physical inline-end edge for a vertical text decoration from
-// the inline box that establishes it. Descendant font-size changes must not
-// bend a decoration line established by an ancestor inline box.
-bool getVerticalDecorationInlineEnd(
+// Geometry and identity inherited from the inline box that establishes a
+// vertical text decoration. Descendant font-size changes must not alter them.
+struct VerticalDecorationMetrics {
+    int inline_end;
+    int thickness;
+    int inline_end_border_width;
+    ldomNode * owner;
+};
+bool getVerticalDecorationMetrics(
     formatted_text_fragment_t * pbuffer, formatted_line_t * frmline,
-    ldomNode * node, lUInt32 decoration_flags, int line_x, int & inline_end);
+    ldomNode * node, lUInt32 decoration_flags, int line_x,
+    VerticalDecorationMetrics & metrics);
 
 // Vertical-mode PAD border drawing (defined in lvtextfm_vert.cpp).  Handles
 // both right-pad and left-pad cases.  Scans frmline->words[] for the paired

@@ -7086,12 +7086,18 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
 
             int text_decoration_back_gap;
             lUInt16 lastWordSrcIndex;
+            ldomNode * last_vertical_decoration_owner = NULL;
+            int last_vertical_decoration_end = -1;
             for (j=0; j<frmline->word_count; j++)
             {
                 word = &frmline->words[j];
                 srcline = &m_pbuffer->srctext[word->src_text_index];
-                if ( (srcline->flags & LTEXT_HAS_EXTRA) && getLTextExtraProperty(srcline, LTEXT_EXTRA_CSS_HIDDEN) && !buf->WantsHiddenContent() )
+                ldomNode * vertical_decoration_owner = NULL;
+                if ( (srcline->flags & LTEXT_HAS_EXTRA) && getLTextExtraProperty(srcline, LTEXT_EXTRA_CSS_HIDDEN) && !buf->WantsHiddenContent() ) {
+                    last_vertical_decoration_owner = NULL;
+                    last_vertical_decoration_end = -1;
                     continue;
+                }
                 if (word->flags & LTEXT_WORD_IS_IMAGE)
                 {
                     ldomNode * node = (ldomNode *) srcline->object;
@@ -7235,12 +7241,12 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         buf->FillRect( rc.left, rc.top, rc.right, rc.bottom, 0xAAAAAA );
                     }
                     */
-                    // Check if we need to continue the text decoration from previous word.
-                    // For now, we only ensure it if this word and previous one are in the
-                    // same text node. We wrongly won't when one of these is in a sub <SPAN>
-                    // because we can't detect that rightly at this point anymore...
+                    // Horizontal decorations still use the historical text-node
+                    // continuity rule. In vertical mode we resolve the CSS box that
+                    // established the decoration below: descendants such as a larger
+                    // <span> must not interrupt their ancestor link's rule.
                     text_decoration_back_gap = 0;
-                    if (j > 0 && word->src_text_index == lastWordSrcIndex) {
+                    if (!is_vertical && j > 0 && word->src_text_index == lastWordSrcIndex) {
                         text_decoration_back_gap = word->x - lastWordEnd;
                     }
                     lUInt32 oldColor = buf->GetTextColor();
@@ -7335,9 +7341,33 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         int decoration_offset = 0;
                         if ( (int)frmline->height <= m_pbuffer->strut_height && em < m_pbuffer->strut_height )
                             decoration_offset = (m_pbuffer->strut_height - em) / 2;
-                        h = line_x - (int)frmline->height + decoration_offset + em;
-                        getVerticalDecorationInlineEnd(m_pbuffer, frmline,
-                                (ldomNode *)srcline->object, drawFlags, line_x, h);
+                        VerticalDecorationMetrics metrics = {
+                            line_x - (int)frmline->height + decoration_offset + em,
+                            0,
+                            0,
+                            NULL
+                        };
+                        getVerticalDecorationMetrics(m_pbuffer, frmline,
+                                (ldomNode *)srcline->object, drawFlags, line_x,
+                                metrics);
+                        vertical_decoration_owner = metrics.owner;
+                        if ( vertical_decoration_owner == last_vertical_decoration_owner
+                                && last_vertical_decoration_end >= 0 ) {
+                            text_decoration_back_gap = word->x
+                                    - last_vertical_decoration_end;
+                        }
+                        // A vertical underline and border-right occupy the same
+                        // logical inline-end edge. Start the underline at the
+                        // border's inner edge so the two CSS strokes overlap,
+                        // instead of rendering as adjacent/doubled rules.
+                        h = metrics.inline_end - metrics.inline_end_border_width;
+                        if ( metrics.thickness > 0 ) {
+                            if ( metrics.thickness > 0xFF )
+                                metrics.thickness = 0xFF;
+                            drawFlags &= ~LFNT_HINT_VERTICAL_DECORATION_THICKNESS_MASK;
+                            drawFlags |= metrics.thickness
+                                    << LFNT_HINT_VERTICAL_DECORATION_THICKNESS_SHIFT;
+                        }
                         drawFlags |= LFNT_HINT_VERTICAL_DECORATION_EDGE;
                     }
                     {
@@ -7382,6 +7412,21 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                 }
                 lastWordSrcIndex = word->src_text_index;
                 lastWordEnd = word->x + word->width;
+                if ( is_vertical ) {
+                    if ( vertical_decoration_owner ) {
+                        last_vertical_decoration_owner = vertical_decoration_owner;
+                        last_vertical_decoration_end = word->x + word->width;
+                    }
+                    else if ( !(word->flags & LTEXT_WORD_IS_PAD) ) {
+                        // Inline style boundaries are represented by zero-width
+                        // PAD words even when they add no visible padding. They
+                        // must not break a decoration propagated through a child
+                        // span; the next real word decides whether the owner is
+                        // still the same. Images/boxes/undecorated text do break it.
+                        last_vertical_decoration_owner = NULL;
+                        last_vertical_decoration_end = -1;
+                    }
+                }
             }
 
 #ifdef CR_USE_INVERT_FOR_SELECTION_MARKS
