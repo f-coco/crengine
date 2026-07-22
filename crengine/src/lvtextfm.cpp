@@ -7333,16 +7333,12 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         }
                     }
                     // CSS text-decoration and inline borders share the same
-                    // logical inline-end edge.  Supply that edge explicitly
-                    // for vertically laid out text so rotated Latin runs do
-                    // not derive it from their different font-height box.
+                    // logical inline-end edge.  In vertical-rl that is the
+                    // column's right edge, independent of a descendant's
+                    // font size or glyph box.
                     if ( is_vertical && !(drawFlags & LFNT_HINT_TRANSFORM_STRETCH) ) {
-                        int em = font->getSize();
-                        int decoration_offset = 0;
-                        if ( (int)frmline->height <= m_pbuffer->strut_height && em < m_pbuffer->strut_height )
-                            decoration_offset = (m_pbuffer->strut_height - em) / 2;
                         VerticalDecorationMetrics metrics = {
-                            line_x - (int)frmline->height + decoration_offset + em,
+                            line_x,
                             0,
                             0,
                             NULL
