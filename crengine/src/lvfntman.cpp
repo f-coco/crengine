@@ -49,21 +49,16 @@ static bool drawVerticalTextDecorations(
     int y0 = y - text_decoration_back_gap;
     int y1 = y + extent;
     lUInt32 color = buf->GetTextColor();
-    // The formatter maps CSS underline/overline to the opposite physical
-    // decoration flags in vertical writing.  Preserve that mapping here:
-    // a CSS underline (LFNT_DRAW_OVERLINE) is a bousen on the right, while a
-    // CSS overline (LFNT_DRAW_UNDERLINE) is on the left.
     if ( flags & LFNT_DRAW_UNDERLINE ) {
-        buf->FillRect(x, y0, x + thickness, y1, color);
-    }
-    if ( flags & LFNT_DRAW_OVERLINE ) {
         int inline_end = (flags & LFNT_HINT_VERTICAL_DECORATION_EDGE)
                 ? target_h : x + cross_extent;
-        // In vertical-rl, a CSS underline is painted on the right (under) side.
+        // In vertical-rl, an underline is painted on the right (under) side.
         // The caller resolves this start coordinate from the decoration owner
         // (including overlap with a coincident inline-end border).
         buf->FillRect(inline_end, y0, inline_end + thickness, y1, color);
     }
+    if ( flags & LFNT_DRAW_OVERLINE )
+        buf->FillRect(x, y0, x + thickness, y1, color);
     if ( flags & LFNT_DRAW_LINE_THROUGH ) {
         int line_x = x + (cross_extent - thickness) / 2;
         buf->FillRect(line_x, y0, line_x + thickness, y1, color);
