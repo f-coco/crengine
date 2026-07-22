@@ -21,13 +21,119 @@
 #include <vector>
 
 // =============================================================================
+// Small vertical-only hooks called from upstream-shaped lvtextfm.cpp code.
+// Keeping their policy and explanatory comments here leaves only compact,
+// mode-gated call sites in the shared formatter.
+// =============================================================================
+
+bool verticalTextDebugEnabled()
+{
+    return getenv("KO_DEBUG_VERT_BG") != NULL;
+}
+
+bool isVerticalTextLineDebugClass(const lString32 &cls)
+{
+    return cls == "calibre10" || cls == "calibre11"
+        || cls == "calibre4" || cls == "calibre7"
+        || cls == "margin" || cls == "marginalia1"
+        || cls == "jitsuki" || cls == "jitsuki1" || cls == "jitsuki2";
+}
+
+bool isVerticalInlineBorderDebugClass(const lString32 &cls)
+{
+    return cls == "marker" || cls == "marginalia1" || cls == "line";
+}
+
+int getVerticalImageInlineExtent(
+    LVFormatter * fmt, ldomNode * node, int fallback)
+{
+    if ( !node )
+        return fallback;
+    int extent = fallback;
+    if ( node->isEffectiveImage() ) {
+        ldomNode * image_node = node->getEffectiveNode();
+        int img_width = 0;
+        int img_height = 0;
+        getStyledImageSize(
+            image_node, img_width, img_height, fmt->getLineExtent(), -1, true);
+        if ( img_height > extent )
+            extent = img_height;
+    }
+    for ( int i=0; i<node->getChildCount(); i++ ) {
+        int child_extent = getVerticalImageInlineExtent(
+            fmt, node->getChildNode(i), extent);
+        if ( child_extent > extent )
+            extent = child_extent;
+    }
+    return extent;
+}
+
+static bool isTcyDigitRun(
+    const src_text_fragment_t * srcline,
+    const formatted_word_t * word, int digit_limit)
+{
+    if ( !srcline || !srcline->t.text || word->t.len == 0
+            || word->t.len > digit_limit )
+        return false;
+    for ( int i = 0; i < (int)word->t.len; i++ ) {
+        lChar32 ch = srcline->t.text[word->t.start + i];
+        if ( ch < U'0' || ch > U'9' )
+            return false;
+    }
+    return true;
+}
+
+void applyVerticalTcyWord(
+    LVFormatter * fmt, src_text_fragment_t * srcline,
+    formatted_word_t * word, LVFont * font)
+{
+    if ( !css_wm_is_vertical(fmt->m_writing_mode)
+            || !(srcline->flags & LTEXT_IS_TCY) )
+        return;
+
+    int tcu = getLTextExtraProperty(
+        srcline, LTEXT_EXTRA_CSS_TEXT_COMBINE_UPRIGHT);
+    if ( tcu >= css_tcu_digits_2 && tcu <= css_tcu_digits_4 ) {
+        int limit = 2 + (tcu - css_tcu_digits_2);
+        if ( !isTcyDigitRun(srcline, word, limit) )
+            return;
+    }
+
+    int em = font->getSize();
+    word->width = em;
+    word->min_width = em;
+    word->flags |= LTEXT_WORD_IS_TCY;
+}
+
+void trimVerticalLineEndSpaces(
+    src_text_fragment_t * srcline, formatted_word_t * word)
+{
+    // A Latin word in vertical text is rendered as a rotated block.  Keeping a
+    // trailing space in its string after layout discarded its width leaves a
+    // visible blank at the bottom of the column.
+    int trimmed_spaces = 0;
+    while ( word->t.len > 0 ) {
+        lChar32 ch = srcline->t.text[word->t.start + word->t.len - 1];
+        if ( !(lGetCharProps(ch) & CH_PROP_SPACE) )
+            break;
+        word->t.len--;
+        trimmed_spaces++;
+    }
+    if ( trimmed_spaces > 0 ) {
+        ltext_vert_trailing_space_trim_count++;
+        ltext_vert_trailing_space_trim_chars += trimmed_spaces;
+    }
+    word->flags &= ~LTEXT_WORD_CAN_ADD_SPACE_AFTER;
+}
+
+// =============================================================================
 // Vertical-mode diagnostic globals (Phase C Step 1 + 2a relocation).
 //
 // These counters are spec oracles: regression specs read them via cre.cpp to
 // assert vertical-rl layout invariants (ruby advance diff, column bleed, inline
 // box layout gap, character overlap, inline image draw drift).  They live here
-// so lvtextfm.cpp stays closer to upstream.  Their extern declarations are in
-// lvtextfm_fork.h.
+// so lvtextfm.cpp stays closer to upstream.  Their declarations and public
+// reset/get API are in lvtextfm_vert_diag.h.
 // Increment sites are:
 //   - lvtextfm.cpp measureText (ruby_adv_diff)
 //   - lvtextfm.cpp LFormattedText::Draw (bleed, ib_layout_gap, char_overlap)
@@ -1829,6 +1935,45 @@ bool isVerticalRubyAnnotationLine(LVFormatter * fmt, formatted_line_t * frmline)
         n = n->getParentNode();
     }
     return false;
+}
+
+bool prepareVerticalRubyLineAlignment(
+    LVFormatter * fmt, formatted_line_t * frmline, int & width_inout)
+{
+    if ( !css_wm_is_vertical(fmt->m_pbuffer->writing_mode)
+            || !isVerticalRubyInnerLine(fmt, frmline)
+            || fmt->m_pbuffer->width <= 0
+            || fmt->m_pbuffer->width >= width_inout )
+        return false;
+
+    // Inner ruby cells align against their declared slot rather than the page
+    // height returned by getAvailableWidthAtY() in vertical mode.  HarfBuzz
+    // rounding can make the rendered line a pixel wider than that estimate;
+    // using the real width then preserves symmetric annotation overhang.
+    width_inout = fmt->m_pbuffer->width;
+    if ( (int)frmline->width > width_inout )
+        width_inout = (int)frmline->width;
+    return true;
+}
+
+void applyVerticalRubyCenterAlignment(
+    LVFormatter * fmt, formatted_line_t * frmline,
+    int extra_width)
+{
+    // N:N mono-ruby uses per-character distribution.  Other ruby forms are
+    // centred as one block using round-half-up so base and annotation cells
+    // land on the same integer-pixel centre.
+    if ( applyVerticalNNRubyCenterDistribution(
+            frmline, fmt->m_pbuffer->width, extra_width, fmt) )
+        return;
+
+    // If annotation is wider than its base, avoid a negative start shift: an
+    // overflow after the ruby group is less disruptive than bleeding into the
+    // preceding character.
+    int center_shift = (extra_width + 1) / 2;
+    if ( center_shift < 0 )
+        center_shift = 0;
+    frmline->x += center_shift;
 }
 
 // =============================================================================

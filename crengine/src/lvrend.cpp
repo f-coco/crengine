@@ -17,6 +17,7 @@
 #include "../include/lvtinydom.h"
 #include "../include/fb2def.h"
 #include "../include/lvrend.h"
+#include "../include/lvrend_vert_diag.h"
 #include "../include/lvlogical.h"
 #include "../include/renderutil.h"
 
@@ -54,15 +55,6 @@
 
 int gRenderDPI = DEF_RENDER_DPI; // if 0: old crengine behaviour: 1px/pt=1px, 1in/cm/pc...=0px
 bool gRenderScaleFontWithDPI = DEF_RENDER_SCALE_FONT_WITH_DPI;
-
-// Ruby-table vertical-detection diagnostic counters: definitions and the
-// reset/getter live in fork-only lvrend_vert_diag.cpp.  CCRTable::renderCells
-// below increments them via these extern references.
-extern int s_ruby_vert_ok;
-extern int s_ruby_vert_miss;
-extern int s_ruby_col_x_max;
-extern int s_list_marker_vert_ok;
-extern int s_list_marker_vert_miss;
 
 static int resolveEffectiveWritingMode(ldomNode *enode)
 {
@@ -1982,13 +1974,7 @@ public:
                             }
                             vert_ruby = (css_wm_is_vertical(wm));
                             // Diagnostic counters (exposed via Lua resetRubyDiag / getRubyDiagStats).
-                            if (vert_ruby) {
-                                s_ruby_vert_ok++;
-                            } else if (cell->col->x != 0) {
-                                s_ruby_vert_miss++;
-                                if (cell->col->x > s_ruby_col_x_max)
-                                    s_ruby_col_x_max = cell->col->x;
-                            }
+                            lvrend_record_ruby_diag(vert_ruby, cell->col->x);
                         }
                         if (vert_ruby) {
                             fmt.setX(0);  // same inline-start for all cells
@@ -11119,10 +11105,8 @@ void DrawDocument( LVDrawBuf & drawbuf, ldomNode * enode, int x0, int y0, int dx
                     int list_marker_width;
                     renderListItemMarker( enode, list_marker_width, NULL, txform.get(), txt_flags);
                     int marker_writing_mode = resolveEffectiveWritingMode(enode);
-                    if ( css_wm_is_vertical(marker_writing_mode) )
-                        s_list_marker_vert_ok++;
-                    else
-                        s_list_marker_vert_miss++;
+                    lvrend_record_list_marker_diag(
+                        css_wm_is_vertical(marker_writing_mode));
                     /*
                     lUInt32 h = txform->Format( (lUInt16)list_marker_width, (lUInt16)page_height, direction, marker_writing_mode );
                     lvRect clip;
@@ -11323,10 +11307,8 @@ void DrawDocument( LVDrawBuf & drawbuf, ldomNode * enode, int x0, int y0, int dx
                     int list_marker_width;
                     renderListItemMarker( enode, list_marker_width, NULL, txform.get(), txt_flags);
                     int marker_writing_mode = resolveEffectiveWritingMode(enode);
-                    if ( css_wm_is_vertical(marker_writing_mode) )
-                        s_list_marker_vert_ok++;
-                    else
-                        s_list_marker_vert_miss++;
+                    lvrend_record_list_marker_diag(
+                        css_wm_is_vertical(marker_writing_mode));
                     /*
                     lUInt32 h = txform->Format( (lUInt16)list_marker_width, (lUInt16)page_height, direction, marker_writing_mode );
                     lvRect clip;

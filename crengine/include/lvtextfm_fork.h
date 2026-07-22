@@ -16,6 +16,11 @@
 
 class LVFormatter;
 
+// Fork-only vertical debug selectors (defined in lvtextfm_vert.cpp).
+bool verticalTextDebugEnabled();
+bool isVerticalTextLineDebugClass(const lString32 &cls);
+bool isVerticalInlineBorderDebugClass(const lString32 &cls);
+
 // Horizontal layout free functions (defined in lvtextfm.cpp,
 // called from LVFormatter::splitParagraphs).
 void processParagraphHorizontal( LVFormatter* fmt, int start, int end, bool isLastPara );
@@ -77,6 +82,24 @@ struct VertRubyInlineBoxMetrics {
 };
 VertRubyInlineBoxMetrics computeVertRubyInlineBoxMetrics(
     formatted_text_fragment_t * pbuffer, ldomNode * node, LVFont * lastFont);
+
+// Vertical-only image and line-alignment adaptations.  Keeping these out of
+// LVFormatter's upstream-shaped methods limits future rebase conflicts to the
+// small call sites in lvtextfm.cpp.
+int getVerticalImageInlineExtent(
+    LVFormatter * fmt, ldomNode * node, int fallback);
+bool prepareVerticalRubyLineAlignment(
+    LVFormatter * fmt, formatted_line_t * frmline, int & width_inout);
+void applyVerticalRubyCenterAlignment(
+    LVFormatter * fmt, formatted_line_t * frmline,
+    int extra_width);
+
+// Vertical word-formation hooks used by addLineHorizontal().
+void applyVerticalTcyWord(
+    LVFormatter * fmt, src_text_fragment_t * srcline,
+    formatted_word_t * word, LVFont * font);
+void trimVerticalLineEndSpaces(
+    src_text_fragment_t * srcline, formatted_word_t * word);
 
 // Adjust frmline->width / height for vertical-mode lines (defined in
 // lvtextfm_vert.cpp).  In vertical-rl/lr the column WIDTH on screen lives
@@ -199,28 +222,6 @@ bool isLeftPunctuation( lChar32 c );
 bool isCJKPunctuation( lChar32 c );
 bool isCJKLeftPunctuation( lChar32 c );
 #endif
-
-// Vertical-mode diagnostic globals.  Defined in lvtextfm_vert.cpp;
-// incremented from various sites in lvtextfm.cpp.  Reset/getter
-// functions are exposed to cre.cpp.
-extern int ltext_vert_ruby_adv_diff_total;
-extern int ltext_vert_ruby_adv_diff_max;
-extern int ltext_vert_bleed_count;
-extern int ltext_vert_bleed_max_px;
-extern int ltext_vert_ib_layout_gap_total;
-extern int ltext_vert_ib_layout_gap_max;
-extern int ltext_vert_char_overlap_count;
-extern int ltext_vert_char_overlap_max_px;
-extern int ltext_vert_trailing_space_trim_count;
-extern int ltext_vert_trailing_space_trim_chars;
-extern int ltext_vert_image_draw_count;
-extern int ltext_vert_image_draw_drift_count;
-extern int ltext_vert_image_draw_drift_max_px;
-extern int ltext_vert_image_cross_underreserve_count;
-extern int ltext_vert_image_cross_underreserve_max_px;
-extern int ltext_vert_mixed_image_axis_sample_count;
-extern int ltext_vert_mixed_image_axis_drift_count;
-extern int ltext_vert_mixed_image_axis_drift_max_px;
 
 // True if every char in the word belongs on the upright CJK vertical path
 // (Japanese horizontal marks or fullwidth fixed-pitch Latin/numerals).

@@ -19,6 +19,7 @@
 #include "../include/lvfnt.h"
 #include "../include/lvtextfm.h"
 #include "../include/lvfntman_vert.h"   // fork-only: JFM class + glue/kern helpers
+#include "../include/lvtextfm_vert_diag.h"
 #include "../include/lvdrawbuf.h"
 #include "../include/fb2def.h"
 
@@ -44,42 +45,6 @@
 #define UNUSED_SPACE_THRESHOLD_PERCENT 5
 #define MAX_ADDED_LETTER_SPACING_PERCENT 0
 #define CJK_WIDTH_SCALE_PERCENT 100
-
-static bool verticalTextDebugEnabled()
-{
-    return getenv("KO_DEBUG_VERT_BG") != NULL;
-}
-
-static bool isVerticalTextLineDebugClass(const lString32 &cls)
-{
-    return cls == "calibre10" || cls == "calibre11"
-        || cls == "calibre4" || cls == "calibre7"
-        || cls == "margin" || cls == "marginalia1"
-        || cls == "jitsuki" || cls == "jitsuki1" || cls == "jitsuki2";
-}
-
-static bool isVerticalInlineBorderDebugClass(const lString32 &cls)
-{
-    return cls == "marker" || cls == "marginalia1" || cls == "line";
-}
-
-// `text-combine-upright: digits [2|3|4]` applies only to an ASCII digit run
-// no longer than its declared limit.  Keeping this decision beside word
-// formation ensures layout, draw, selection and hit testing share one TCY
-// word model.
-static bool isTcyDigitRun(const src_text_fragment_t * srcline,
-                          const formatted_word_t * word, int digit_limit)
-{
-    if ( !srcline || !srcline->t.text || word->t.len == 0
-            || word->t.len > digit_limit )
-        return false;
-    for ( int i = 0; i < (int)word->t.len; i++ ) {
-        lChar32 ch = srcline->t.text[word->t.start + i];
-        if ( ch < U'0' || ch > U'9' )
-            return false;
-    }
-    return true;
-}
 
 // to debug formatter
 
@@ -639,26 +604,6 @@ public:
                 ? m_pbuffer->page_height : m_pbuffer->width;
     }
 
-    int getVerticalImageInlineExtent(ldomNode * node, int fallback) {
-        if ( !node )
-            return fallback;
-        int extent = fallback;
-        if ( node->isEffectiveImage() ) {
-            ldomNode * image_node = node->getEffectiveNode();
-            int img_width = 0;
-            int img_height = 0;
-            getStyledImageSize( image_node, img_width, img_height, getLineExtent(), -1, true );
-            if ( img_height > extent )
-                extent = img_height;
-        }
-        for ( int i=0; i<node->getChildCount(); i++ ) {
-            int child_extent = getVerticalImageInlineExtent(node->getChildNode(i), extent);
-            if ( child_extent > extent )
-                extent = child_extent;
-        }
-        return extent;
-    }
-
     // Embedded floats positioning helpers.
     // Returns y of the bottom of the lowest float
     int getFloatsMaxBottomY() {
@@ -864,7 +809,7 @@ public:
         height = fmt.getHeight();
         int margin_width = width;
         if ( css_wm_is_vertical(m_pbuffer->writing_mode) ) {
-            int inline_extent = getVerticalImageInlineExtent(node, width);
+            int inline_extent = getVerticalImageInlineExtent(this, node, width);
             if ( inline_extent > width )
                 width = inline_extent;
         }
@@ -2591,7 +2536,7 @@ public:
                             advance = width;
                         }
                         if ( css_wm_is_vertical(m_pbuffer->writing_mode) && !is_ruby_inline_pre ) {
-                            int inline_extent = getVerticalImageInlineExtent(node, advance);
+                            int inline_extent = getVerticalImageInlineExtent(this, node, advance);
                             if ( inline_extent > advance )
                                 advance = inline_extent;
                         }
@@ -3086,37 +3031,9 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
         int width = fmt->getAvailableWidthAtY(fmt->m_line_advance, fmt->m_pbuffer->strut_height, x_offset);
         // printf("alignLine %d+%d < %d\n", frmline->x, frmline->width, width);
 
-        // For vertical text, getAvailableWidthAtY returns the column length
-        // (page_height-strut) so chars wrap correctly at column boundaries.
-        // But for inner blocks (e.g., ruby annotation cells) using that
-        // page-sized avail would cause text-align:center/right to over-shift
-        // by hundreds of pixels.  Use the actual block width for alignment.
-        //
-        // render_w is estimated from font->getSize()*N, but HarfBuzz advances
-        // can be 1 px/char larger due to font-metric rounding, so
-        // frmline->width may slightly exceed m_pbuffer->width.  Use
-        // max(m_pbuffer->width, frmline->width) as the effective slot width so
-        // that JLReq-correct symmetric overhang is preserved: when annotation
-        // is wider than base, the annotation fills its own (larger) slot with
-        // zero shift, and the base is centred inside that slot — giving equal
-        // overhang on both sides.  Never fall back to page_height.
         bool is_vert = css_wm_is_vertical(fmt->m_pbuffer->writing_mode);
-        // Track whether we clamped to an inner ruby cell's declared slot width.
-        // When true, CENTER alignment uses round-half-up so that annotation and
-        // base cells both land on the same integer pixel center (JLReq §3.3.8).
-        bool is_inner_vert_cell = false;
-        if ( is_vert && isVerticalRubyInnerLine(fmt, frmline)
-                     && fmt->m_pbuffer->width > 0
-                     && fmt->m_pbuffer->width < width ) {
-            is_inner_vert_cell = true;
-            width = fmt->m_pbuffer->width;
-            // If content is slightly wider than the estimated cell (e.g. due to
-            // HarfBuzz rounding), use the actual content width as the slot so
-            // extra_width == 0 and alignment shift is zero — the annotation
-            // fills its slot symmetrically without drifting above the cell top.
-            if ( (int)frmline->width > width )
-                width = (int)frmline->width;
-        }
+        bool is_inner_vert_cell = is_vert
+                && prepareVerticalRubyLineAlignment(fmt, frmline, width);
 
         // (frmline->x may be different from x_offset when non-zero text-indent)
         int usable_width = width - (frmline->x - x_offset) - rightIndent; // remove both sides indents
@@ -3566,27 +3483,10 @@ void alignLineHorizontal( LVFormatter* fmt, formatted_line_t * frmline, int alig
             }
         }
         else if ( alignment==LTEXT_ALIGN_CENTER ) {
-            // Fork: extracted N:N / N:M ruby distribution to lvtextfm_vert.cpp.
-            // Caller-side narrowness gate (is_inner_vert_cell) combined with
-            // the function's DOM-based ruby-context check correctly limits
-            // per-char distribution to actual ruby annotation cells.
-            bool used_even_dist = false;
-            if ( is_inner_vert_cell ) {
-                used_even_dist = applyVerticalNNRubyCenterDistribution(
-                    frmline, fmt->m_pbuffer->width, extra_width, fmt);
-            }
-            if ( !used_even_dist ) {
-                // Standard round-half-up block centering (also correct for base inner cells).
-                // For vertical ruby inner cells with annotation longer than base (extra_width < 0):
-                // centering would give a negative shift (annotation starts above the cell top),
-                // causing the first annotation char to bleed into the character preceding the ruby
-                // group.  Clamp to 0 so the annotation starts at the cell top and overflows only
-                // downward (past the last base char) — less visually disruptive than upward bleed.
-                int center_shift = is_inner_vert_cell ? (extra_width + 1) / 2 : extra_width / 2;
-                if ( is_inner_vert_cell && center_shift < 0 )
-                    center_shift = 0;
-                frmline->x += center_shift;
-            }
+            if ( is_inner_vert_cell )
+                applyVerticalRubyCenterAlignment(fmt, frmline, extra_width);
+            else
+                frmline->x += extra_width / 2;
         }
         else if ( alignment==LTEXT_ALIGN_RIGHT ) {
             frmline->x += extra_width;
@@ -4709,23 +4609,8 @@ void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fr
                     word->width = fmt->m_advance[i>0 ? i-1 : 0] - (wstart>0 ? fmt->m_advance[wstart-1] : 0);
                     word->min_width = word->width;
                     TR("addLine - word(%d, %d) x=%d (%d..%d)[%d] |%s|", wstart, i, frmline->width, wstart>0 ? fmt->m_advance[wstart-1] : 0, fmt->m_advance[i-1], word->width, LCSTR(lString32(fmt->m_text+wstart, i-wstart)));
-                    // TCY (tate-chu-yoko): in vertical mode, each TCY span occupies exactly 1em
-                    bool is_tcy_word = (srcline->flags & LTEXT_IS_TCY)
-                            && css_wm_is_vertical(fmt->m_writing_mode);
-                    if ( is_tcy_word ) {
-                        int tcu = getLTextExtraProperty(srcline,
-                                LTEXT_EXTRA_CSS_TEXT_COMBINE_UPRIGHT);
-                        if ( tcu >= css_tcu_digits_2 && tcu <= css_tcu_digits_4 ) {
-                            int limit = 2 + (tcu - css_tcu_digits_2);
-                            is_tcy_word = isTcyDigitRun(srcline, word, limit);
-                        }
-                    }
-                    if ( is_tcy_word ) {
-                        int em = font->getSize();
-                        word->width = em;
-                        word->min_width = em;
-                        word->flags |= LTEXT_WORD_IS_TCY;
-                    }
+                    if ( is_vertical_mode )
+                        applyVerticalTcyWord(fmt, srcline, word, font);
                     if ( fmt->m_flags[wstart] & LCHAR_IS_CLUSTER_TAIL ) {
                         // The start of this word is part of a ligature that started
                         // in a previous word: some hyphenation wrap happened on
@@ -4782,26 +4667,8 @@ void addLineHorizontal( LVFormatter* fmt, int start, int end, int x, src_text_fr
                             // lose any trailing space)
                             word->width = fmt->m_advance[i>1 ? i-2 : 0] - (wstart>0 ? fmt->m_advance[wstart-1] : 0);
                             word->min_width = word->width;
-                            if ( is_vertical_mode ) {
-                                // In vertical-rl, Latin words are rendered as a rotated
-                                // block. If a wrap happens after a Latin word's following
-                                // space, keeping that space in the string while removing
-                                // it from the width leaves a visible blank at the column
-                                // end (e.g. "blessing software" split after "blessing").
-                                int trimmed_spaces = 0;
-                                while ( word->t.len > 0 ) {
-                                    lChar32 ch = srcline->t.text[word->t.start + word->t.len - 1];
-                                    if ( !(lGetCharProps(ch) & CH_PROP_SPACE) )
-                                        break;
-                                    word->t.len--;
-                                    trimmed_spaces++;
-                                }
-                                if ( trimmed_spaces > 0 ) {
-                                    ltext_vert_trailing_space_trim_count++;
-                                    ltext_vert_trailing_space_trim_chars += trimmed_spaces;
-                                }
-                                word->flags &= ~LTEXT_WORD_CAN_ADD_SPACE_AFTER;
-                            }
+                            if ( is_vertical_mode )
+                                trimVerticalLineEndSpaces(srcline, word);
                         }
                     }
                     else if ( !firstWord && fmt->m_flags[wstart] & LCHAR_IS_SPACE ) {

@@ -11,33 +11,52 @@
 //            displacement.
 // col_x_max: the largest col->x used when vert_miss > 0.
 //
-// Populated by CCRTable::renderCells() in lvrend.cpp via extern int
-// references.  Exposed to cre.cpp (Lua side) through
-// lvrend_reset_ruby_diag() / lvrend_get_ruby_diag().
+// Populated through the record functions below.  Exposed to cre.cpp (Lua side)
+// through lvrend_reset_ruby_diag() / lvrend_get_ruby_diag().
 // =============================================================================
 
-int s_ruby_vert_ok   = 0;
-int s_ruby_vert_miss = 0;
-int s_ruby_col_x_max = 0;
-int s_list_marker_vert_ok = 0;
-int s_list_marker_vert_miss = 0;
+#include "../include/lvrend_vert_diag.h"
+
+static int ruby_vert_ok   = 0;
+static int ruby_vert_miss = 0;
+static int ruby_col_x_max = 0;
+static int list_marker_vert_ok = 0;
+static int list_marker_vert_miss = 0;
+
+void lvrend_record_ruby_diag(bool is_vertical, int column_x) {
+    if ( is_vertical ) {
+        ruby_vert_ok++;
+    }
+    else if ( column_x != 0 ) {
+        ruby_vert_miss++;
+        if ( column_x > ruby_col_x_max )
+            ruby_col_x_max = column_x;
+    }
+}
+
+void lvrend_record_list_marker_diag(bool is_vertical) {
+    if ( is_vertical )
+        list_marker_vert_ok++;
+    else
+        list_marker_vert_miss++;
+}
 
 void lvrend_reset_ruby_diag() {
-    s_ruby_vert_ok = s_ruby_vert_miss = s_ruby_col_x_max = 0;
+    ruby_vert_ok = ruby_vert_miss = ruby_col_x_max = 0;
 }
 
 void lvrend_get_ruby_diag(int *ok_out, int *miss_out, int *col_x_max_out) {
-    *ok_out        = s_ruby_vert_ok;
-    *miss_out      = s_ruby_vert_miss;
-    *col_x_max_out = s_ruby_col_x_max;
+    *ok_out        = ruby_vert_ok;
+    *miss_out      = ruby_vert_miss;
+    *col_x_max_out = ruby_col_x_max;
 }
 
 void lvrend_reset_list_marker_diag() {
-    s_list_marker_vert_ok = 0;
-    s_list_marker_vert_miss = 0;
+    list_marker_vert_ok = 0;
+    list_marker_vert_miss = 0;
 }
 
 void lvrend_get_list_marker_diag(int *ok_out, int *miss_out) {
-    *ok_out = s_list_marker_vert_ok;
-    *miss_out = s_list_marker_vert_miss;
+    *ok_out = list_marker_vert_ok;
+    *miss_out = list_marker_vert_miss;
 }
