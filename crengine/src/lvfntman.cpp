@@ -8660,7 +8660,7 @@ bool InitFontManager( lString8 path )
     fontMan = new LVWin32FontManager;
 #elif (USE_FREETYPE==1)
     fontMan = new LVFreeTypeFontManager;
-#else
+#elif (USE_BITMAP_FONTS==1)
     fontMan = new LVBitmapFontManager;
 #endif
     return fontMan->Init( path );
