@@ -16,7 +16,7 @@ jobs:
           fetch-depth: 0
           # A PAT with the "workflow" scope is needed when upstream changes
           # files under .github/workflows/.
-          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
 
       - name: Configure git
         run: |
