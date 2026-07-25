@@ -14,7 +14,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # A PAT with the "workflow" scope is needed when upstream changes
+          # files under .github/workflows/.
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
 
       - name: Configure git
         run: |
