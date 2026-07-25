@@ -24,4 +24,5 @@ thirdparty/*/
 !thirdparty/antiword/
 !thirdparty/chmlib/
 build/
+build-check/
 tests/font-manager-test.epub
