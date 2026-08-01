@@ -24,6 +24,7 @@
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include <hb.h>
 
 // Match the local macro in lvfntman.cpp (round + truncate from 26.6 fixed).
 #define FONT_METRIC_TO_PX(x)    (((x)+32) >> 6)
@@ -664,4 +665,34 @@ void LVFontVertGlyphMetricsCache::clear()
         _cache->clear();
     _checked = false;
     _has_vert = false;
+}
+
+bool LVFontVertBodyMetricsCache::get(hb_font_t * font, lUInt32 glyph_index,
+                                     VertBodyGlyphMetrics & out)
+{
+    if (!font)
+        return false;
+    if (!_cache)
+        _cache = new LVHashTable<lUInt32, VertBodyGlyphMetrics>(256);
+    if (_cache->get(glyph_index, out))
+        return true;
+
+    hb_glyph_extents_t glyph_extents;
+    hb_font_extents_t font_extents;
+    if (!hb_font_get_glyph_extents(font, glyph_index, &glyph_extents)
+            || !hb_font_get_h_extents(font, &font_extents))
+        return false;
+
+    out.x_bearing = glyph_extents.x_bearing;
+    out.y_bearing = glyph_extents.y_bearing;
+    out.h_advance = hb_font_get_glyph_h_advance(font, glyph_index);
+    out.ascender = font_extents.ascender;
+    _cache->set(glyph_index, out);
+    return true;
+}
+
+void LVFontVertBodyMetricsCache::clear()
+{
+    if (_cache)
+        _cache->clear();
 }
