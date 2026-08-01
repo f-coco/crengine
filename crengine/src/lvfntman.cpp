@@ -267,6 +267,26 @@ static void destroy_SVGGlyphsCollector_svg_funcs() {
 // Uncomment to use the former >>6 (trunc) with no rounding (instead of previous one)
 // #define FONT_METRIC_TO_PX(x)    ((x) >> 6)
 
+// Round a signed 26.6 coordinate exactly once, at final raster placement.
+// FONT_METRIC_TO_PX is only safe for non-negative metrics; vertical placement
+// routinely combines negative bearings and offsets.
+static inline int roundFontMetricToPixel(lInt64 value)
+{
+    return value >= 0 ? (int)((value + 32) / 64)
+                      : -(int)((-value + 32) / 64);
+}
+
+// Opt-in placement trace for numerical verification of vertical capsules.
+// Checked once per process; unset in normal use, so the hot path only pays a
+// predictable branch. Example: CRE_LOG_VERT_CAPSULE=1 ./luajit reader.lua ...
+static bool logVerticalCapsules()
+{
+    static int enabled = -1;
+    if (enabled < 0)
+        enabled = getenv("CRE_LOG_VERT_CAPSULE") ? 1 : 0;
+    return enabled != 0;
+}
+
 #if COLOR_BACKBUFFER==0
 //#define USE_BITMAP_FONT
 #endif
@@ -1576,6 +1596,7 @@ protected:
     LVFontLocalGlyphCache            _glyph_cache;
     // Fork-only: per-face TTB metrics cache for vertical-rl/lr rendering.
     LVFontVertGlyphMetricsCache      _vert_metrics_cache;
+    LVFontVertBodyMetricsCache       _vert_body_metrics_cache;
     bool           _drawMonochrome;
     hinting_mode_t _hintingMode;
     kerning_mode_t _kerningMode;
@@ -1839,6 +1860,7 @@ public:
         _lsbcache.clear();
         _rsbcache.clear();
         _vert_metrics_cache.clear();  // fork-only
+        _vert_body_metrics_cache.clear();
         #if USE_HARFBUZZ==1
         _glyph_cache2.clear();
         _width_cache2.clear();
@@ -4713,21 +4735,15 @@ public:
                                 int gy = y + _baseline - item->origin_y - FONT_METRIC_TO_PX(glyph_pos[i].y_offset);
                                 // Fork-only: vertical-rl/lr placement.
                                 //
-                                // Virtual-body / central-baseline model (JLReq 2.1.1, CSS
-                                // Writing Modes 3 central baseline, upTeX/LuaTeX-ja JFM):
-                                // CJK ideographs, kana, Hangul, and vertical marks (ー — ‥
-                                // … 〜 ～ ―) occupy a uniform 1em virtual body whose letter
-                                // face (= bitmap) is centred on BOTH the horizontal and
-                                // vertical centres of the character frame.  In screen
-                                // coords for vertical-rl this means bitmap-centred X
-                                // (= column axis) and bitmap-centred Y (= slot vertical
-                                // centre).  Per-glyph vmtx variation in CJK fonts is
-                                // generated noise, not authorial intent — mainstream
-                                // typesetting systems (Chromium, WebKit, InDesign,
-                                // pTeX/LuaTeX-ja) all normalise it.  Centring on bitmap
-                                // dimensions rather than vBX/vBY also makes the position
-                                // font-independent (Noto vs Hiragino differ by a few px
-                                // in vmtx values for the same character).
+                                // Virtual-body / central-baseline model (JLReq 2.1.1,
+                                // LuaTeX-ja's capsule_glyph_tate): ordinary CJK is put in a
+                                // uniform 1em capsule.  Its horizontal advance is centred in
+                                // that capsule and every glyph uses the same font ascender as
+                                // baseline.  Do not centre the bitmap rectangle: asymmetric
+                                // kana have deliberately asymmetric ink, so rectangle
+                                // centring makes them snake.  Also do not expose per-glyph
+                                // vertBearingY here: LuaTeX-ja normalises ordinary body glyphs
+                                // to a common capsule baseline.
                                 //
                                 // Punctuation (、。), brackets (「」 etc.) and other glyphs
                                 // whose in-slot position IS by design fall through to the
@@ -4741,11 +4757,11 @@ public:
                                 // HarfBuzz's offsets must NOT be added on top — that would
                                 // double-displace the glyph.
                                 if (is_vertical_draw) {
-                                    // LuaTeX-ja unified vertical placement (jfm-ujisv.lua +
-                                    // ltj-setwidth.lua capsule_glyph_tate()):
+                                    // LuaTeX-ja-style placement has two paths:
                                     //
-                                    //   gx = col_center + vBX           (font's vmtx vertBearingX)
-                                    //   gy = slot_top  + vBY + cwa      (vmtx vertBearingY + JFM shift)
+                                    //   body CJK: a common 1em capsule, using horizontal
+                                    //             glyph extents and one shared ascender
+                                    //   punctuation: vmtx origin plus the JFM cwa shift
                                     //
                                     // where:
                                     //
@@ -4756,9 +4772,7 @@ public:
                                     //                       advance in Phase 3 above)
                                     //   vadv  : font's natural vertical advance (= em for CJK)
                                     //
-                                    // Per-class behaviour after this formula:
-                                    //   [0] CJK body / vert marks    align=middle, fwidth=em → cwa=0
-                                    //                                  → pure vBY-based (vmtx parity)
+                                    // Exceptional-class behaviour after this formula:
                                     //   [1] open bracket             align=right , fwidth=em/2 → cwa=-em/2
                                     //                                  → shift to slot bottom (close to next char)
                                     //   [2] close bracket, comma     align=left  , fwidth=em/2 → cwa=0
@@ -4770,30 +4784,84 @@ public:
                                     //   [6] exclam/quest             align=left  , fwidth=em   → cwa=0
                                     //   [7] halfwidth kana           align=left  , fwidth=em/2 → cwa=0
                                     //
-                                    // The font's vBY is trusted: well-designed CJK fonts
-                                    // (Hiragino, Noto Serif JP) place +vert glyphs at JLReq-
-                                    // correct positions in their vmtx tables.  For fonts whose
-                                    // vmtx is missing or unreliable, fall through to the
-                                    // bitmap-origin fallback below.
+                                    // vBY is used only for punctuation, brackets and other
+                                    // exceptional classes whose corner/slot position is part
+                                    // of the font design. Ordinary body glyphs use the common
+                                    // capsule baseline below.
                                     lChar32 cluster_char = 0;
                                     lUInt32 cluster_idx = glyph_info[i].cluster;
                                     if (cluster_idx < (lUInt32)len)
                                         cluster_char = text[cluster_idx];
-                                    int cwa = getJLReqVertCwa(cluster_char, _size, vert_natural_adv);
-                                    VertGlyphMetrics vm;
-                                    if (_vert_metrics_cache.get(_face, glyph_info[i].codepoint, vm)) {
-                                        int col_center = x + _size / 2;
-                                        gx = col_center + vm.origin_x;
-                                        gy = y + vm.origin_y + cwa;
+                                    JLReqVertClass vert_class = getJLReqVertClass(cluster_char);
+                                    if (vert_class == JLREQ_VERT_CJK_BODY && !is_vert_mark) {
+                                        // Keep all arithmetic in HarfBuzz/FreeType 26.6 units.
+                                        // hb_ft_font uses the same load flags as the cached
+                                        // bitmap, so these are the hinted outline extents that
+                                        // correspond to the pixels drawGlyphItem() will use.
+                                        VertBodyGlyphMetrics body_metrics;
+                                        if (_vert_body_metrics_cache.get(_hb_font,
+                                                glyph_info[i].codepoint, body_metrics)) {
+                                            lInt64 gx_26_6 = (lInt64)x * 64
+                                                + ((lInt64)_size * 64
+                                                   - body_metrics.h_advance) / 2
+                                                + body_metrics.x_bearing;
+                                            lInt64 gy_26_6 = (lInt64)y * 64
+                                                + body_metrics.ascender
+                                                - body_metrics.y_bearing;
+                                            gx = roundFontMetricToPixel(gx_26_6);
+                                            gy = roundFontMetricToPixel(gy_26_6);
+                                            if (logVerticalCapsules()) {
+                                                // Relative values remove the changing column
+                                                // and slot origins. For a fullwidth CJK run,
+                                                // axis_x_rel and baseline_y_rel must each be
+                                                // constant across every ordinary character.
+                                                lInt64 axis_x_rel_26_6 = gx_26_6
+                                                    - (lInt64)x * 64
+                                                    - body_metrics.x_bearing;
+                                                lInt64 baseline_y_rel_26_6 = gy_26_6
+                                                    - (lInt64)y * 64
+                                                    + body_metrics.y_bearing;
+                                                fprintf(stderr,
+                                                    "VERT_CAPSULE U+%04X gid=%u "
+                                                    "axis_x_rel_26_6=%lld "
+                                                    "baseline_y_rel_26_6=%lld "
+                                                    "gx=%d gy=%d\n",
+                                                    (unsigned int)cluster_char,
+                                                    (unsigned int)glyph_info[i].codepoint,
+                                                    (long long)axis_x_rel_26_6,
+                                                    (long long)baseline_y_rel_26_6,
+                                                    gx, gy);
+                                            }
+                                        } else {
+                                            // Same virtual-body model with already rounded
+                                            // cached metrics as a compatibility fallback.
+                                            gx = x + (_size - (int)item->advance) / 2
+                                                + item->origin_x;
+                                            gy = y + FONT_METRIC_TO_PX(
+                                                _face->size->metrics.ascender)
+                                                - item->origin_y;
+                                        }
                                     } else {
-                                        // No vmtx: bitmap-centre X, slot-edge Y with cwa shift.
-                                        gx = x + (_size - (int)item->bmp_width) / 2;
-                                        int em_top = _size - (_height - _baseline);
-                                        gy = y + em_top - item->origin_y
-                                             - FONT_METRIC_TO_PX(glyph_pos[i].y_offset)
-                                             + cwa;
-                                        if (gy < y && cwa >= 0)
-                                            gy = y;
+                                        int cwa = getJLReqVertCwa(cluster_char, _size,
+                                            vert_natural_adv);
+                                        VertGlyphMetrics vm;
+                                        if (_vert_metrics_cache.get(_face,
+                                                glyph_info[i].codepoint, vm)) {
+                                            int col_center = x + _size / 2;
+                                            gx = col_center + vm.origin_x;
+                                            gy = y + vm.origin_y + cwa;
+                                        } else {
+                                            // No vmtx: bitmap-centre X, slot-edge Y with
+                                            // cwa shift. This path is for punctuation and
+                                            // other exceptional vertical glyphs only.
+                                            gx = x + (_size - (int)item->bmp_width) / 2;
+                                            int em_top = _size - (_height - _baseline);
+                                            gy = y + em_top - item->origin_y
+                                                 - FONT_METRIC_TO_PX(glyph_pos[i].y_offset)
+                                                 + cwa;
+                                            if (gy < y && cwa >= 0)
+                                                gy = y;
+                                        }
                                     }
                                 }
                                 bool did_rotate = false;

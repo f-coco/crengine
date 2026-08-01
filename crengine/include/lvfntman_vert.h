@@ -20,6 +20,7 @@
 // Forward-declare FT_Face so this header doesn't pull in FreeType.
 struct FT_FaceRec_;
 typedef struct FT_FaceRec_ * FT_Face;
+typedef struct hb_font_t hb_font_t;
 
 struct VertGlyphMetrics {
     lInt16  origin_x;   // vertBearingX in pixels
@@ -27,13 +28,22 @@ struct VertGlyphMetrics {
     lUInt16 advance;    // vertAdvance in pixels
 };
 
+// Raw 26.6 metrics used by the LuaTeX-ja-style ordinary-glyph capsule.
+// These come from the HarfBuzz font because it carries the exact same
+// FreeType load/hinting flags as the raster cache.
+struct VertBodyGlyphMetrics {
+    lInt32 x_bearing;
+    lInt32 y_bearing;
+    lInt32 h_advance;
+    lInt32 ascender;
+};
+
 // True for characters that should be placed by the central-baseline /
 // virtual-body model in vertical-rl/lr layout (JLReq, CSS Writing Modes 3,
 // upTeX/LuaTeX-ja JFM): ideographs and syllabic kana/Hangul that occupy a
-// uniform 1em virtual body centred on the column axis.  Per-glyph vmtx
-// variation in CJK fonts is generated noise, not authorial intent, and
-// mainstream typesetting systems normalise it.  Caller bitmap-centres
-// these glyphs in the column for visually uniform body text.
+// uniform 1em virtual body centred on the column axis.  The caller centres
+// horizontal advance (not the bitmap rectangle) and uses a common ascender
+// baseline, matching LuaTeX-ja's ordinary-glyph capsule.
 //
 // Excludes:
 //   - CJK punctuation block (U+3001..U+303F): position is by font design
@@ -272,6 +282,19 @@ private:
     LVHashTable<lUInt32, VertGlyphMetrics> * _cache;  // lazily allocated
     bool _has_vert;   // FT_HAS_VERTICAL(face) result, cached after first check
     bool _checked;
+};
+
+class LVFontVertBodyMetricsCache {
+public:
+    LVFontVertBodyMetricsCache() : _cache(NULL) {}
+    ~LVFontVertBodyMetricsCache() { delete _cache; }
+
+    bool get(hb_font_t * font, lUInt32 glyph_index,
+             VertBodyGlyphMetrics & out);
+    void clear();
+
+private:
+    LVHashTable<lUInt32, VertBodyGlyphMetrics> * _cache;
 };
 
 #endif  // __LV_FNT_MAN_VERT_H_INCLUDED__
