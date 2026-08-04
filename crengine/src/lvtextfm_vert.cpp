@@ -2087,6 +2087,7 @@ bool getVerticalDecorationMetrics(formatted_text_fragment_t * pbuffer,
                                   int line_x,
                                   VerticalDecorationMetrics & metrics)
 {
+    (void)pbuffer;
     if ( !node )
         return false;
     if ( node->isEffectiveText() )
@@ -2112,34 +2113,13 @@ bool getVerticalDecorationMetrics(formatted_text_fragment_t * pbuffer,
     metrics.inline_end_border_width = (decoration_flags & LTEXT_TD_UNDERLINE)
             ? measureBorder(decoration_node, 1) : 0;
     metrics.owner = decoration_node;
-    // Resolve the largest font in the establishing inline box.  A TOC link
-    // commonly has 90% and 140% child spans: positioning from the current
-    // fragment kinks the rule, while positioning from the parent font puts a
-    // rule beside a 140% title too far away.
-    int reference_em = decoration_node->getFont()->getSize();
-    for ( int i = 0; i < pbuffer->srctextlen; i++ ) {
-        ldomNode * candidate = (ldomNode *)pbuffer->srctext[i].object;
-        if ( candidate && candidate->isEffectiveText() )
-            candidate = candidate->getParentNode();
-        for ( ldomNode * current = candidate; current; current = current->getParentNode() ) {
-            if ( current == decoration_node ) {
-                if ( !candidate->getFont().isNull()
-                        && candidate->getFont()->getSize() > reference_em )
-                    reference_em = candidate->getFont()->getSize();
-                break;
-            }
-        }
-    }
-    int column_width = (int)frmline->height;
-    if ( column_width < pbuffer->strut_height )
-        column_width = pbuffer->strut_height;
-    if ( column_width < reference_em )
-        column_width = reference_em;
-    // JLREQ treats sidelines as interlinear material and specifies no
-    // numerical offset for them.  Use the edge of the reference character
-    // frame (rather than an arbitrary fraction of an em); the font's own
-    // side bearing supplies any visible ink gap.
-    metrics.inline_end = line_x - (column_width - reference_em) / 2;
+    // A Japanese vertical underline is a right-side sideline.  In particular,
+    // it must clear the largest descendant, not the edge of its nominal em
+    // frame.  Ordinary CJK glyphs are placed by the vertical capsule path,
+    // whose hinted advance/bearing can protrude past that frame at small sizes.
+    // line_x is the formatted line box's physical right edge and therefore
+    // remains a single, outside edge for every 90%/140% descendant.
+    metrics.inline_end = line_x;
     return true;
 }
 
