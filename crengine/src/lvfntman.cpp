@@ -12,12 +12,11 @@
 
 */
 
+#include "crsetup.h"
+
 #include <stdlib.h>
 #include <stdio.h>
 
-
-
-#include "../include/crsetup.h"
 #include "../include/lvfntman.h"
 #include "../include/lvfntman_vert.h"  // fork-only: TTB glyph metrics cache
 #include "../include/lvstream.h"

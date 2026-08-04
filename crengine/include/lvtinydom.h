@@ -25,6 +25,8 @@
 #ifndef __LV_TINYDOM_H_INCLUDED__
 #define __LV_TINYDOM_H_INCLUDED__
 
+#include "crsetup.h"
+
 #include "lvtypes.h"
 #include "lvplatform.h"
 #include "lvmemman.h"
@@ -2512,6 +2514,7 @@ public:
 class LVPageMap
 {
     friend class ldomDocument;
+    friend class LVDocView;
 private:
     ldomDocument *  _doc;
     int             _valid_for_visible_page_numbers;
@@ -2525,6 +2528,9 @@ private:
         item->_index = _children.length();
         _children.add(item);
     }
+    /// order items by their resolved document Y position (see lvtinydom.cpp).
+    /// Only for LVDocView::updatePageMapInfo(), which has resolved _doc_y beforehand.
+    void sortByDocY();
 public:
     /// serialize to byte array (pointer will be incremented by number of bytes written)
     bool serialize( SerialBuf & buf );

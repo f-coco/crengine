@@ -13,6 +13,8 @@
 
 *******************************************************/
 
+#include "crsetup.h"
+
 #include "../include/lvstsheet.h"
 #include "../include/lvtinydom.h"
 #include "../include/fb2def.h"
@@ -800,6 +802,8 @@ bool parse_number_value( const char * & str, css_length_t & value,
         value.type = css_val_ch;
     else if ( substr_icompare( "rem", str ) )
         value.type = css_val_rem;
+    else if ( substr_icompare( "urem", str ) )
+        value.type = css_val_urem;
     else if ( substr_icompare( "px", str ) )
         value.type = css_val_px;
     else if ( substr_icompare( "in", str ) )
@@ -826,6 +830,18 @@ bool parse_number_value( const char * & str, css_length_t & value,
         value.type = css_val_vmin;
     else if ( substr_icompare( "vmax", str ) )
         value.type = css_val_vmax;
+    else if ( substr_icompare( "q", str ) )
+        value.type = css_val_q;
+    else if ( substr_icompare( "rex", str ) )
+        value.type = css_val_rex;
+    else if ( substr_icompare( "rch", str ) )
+        value.type = css_val_rch;
+    else if ( substr_icompare( "lh", str ) )
+        value.type = css_val_lh;
+    else if ( substr_icompare( "rlh", str ) )
+        value.type = css_val_rlh;
+    else if ( substr_icompare( "urlh", str ) )
+        value.type = css_val_urlh;
     else if ( css_is_alpha(*str) ) { // some other unit we don't support
         str = orig_pos; // revert our possible str++
         return false;
@@ -4021,12 +4037,14 @@ bool LVCssDeclaration::parse( const char * &decl, bool higher_importance, lxmlDo
             case cssd_font_variant_numeric:
             case cssd_font_variant_east_asian:
             case cssd_font_variant_alternates:
-                // 'initial', like 'normal' and 'none', when used on the specific properties,
-                // will unfortunately reset all the others.
-                IF_g_PUSH_LENGTH_AND_break(1, true, css_val_unspecified, 0);
+                // Not using IF_g_PUSH_LENGTH_AND_break() here, as cssd_font_features records
+                // carry an extra 3rd word (reset_mask, see below) that this macro doesn't know
+                // how to emit.
                 {
                     // https://drafts.csswg.org/css-fonts-3/#propdef-font-variant
                     // https://developer.mozilla.org/en-US/docs/Web/CSS/font-variant
+                    // Which of the font_features sub-ranges this specific longhand (or the full
+                    // shorthand) owns.
                     bool parse_ligatures =  prop_code == cssd_font_variant || prop_code == cssd_font_variant_ligatures
                                                                            || prop_code == cssd_font_variant_ligatures2;
                     bool parse_caps =       prop_code == cssd_font_variant || prop_code == cssd_font_variant_caps;
@@ -4034,8 +4052,38 @@ bool LVCssDeclaration::parse( const char * &decl, bool higher_importance, lxmlDo
                     bool parse_numeric =    prop_code == cssd_font_variant || prop_code == cssd_font_variant_numeric;
                     bool parse_eastasian =  prop_code == cssd_font_variant || prop_code == cssd_font_variant_east_asian;
                     bool parse_alternates = prop_code == cssd_font_variant || prop_code == cssd_font_variant_alternates;
-                    // All values are mapped into a single style->font_features 31 bits bitmap
-                    prop_code = cssd_font_features;
+                    // All values are mapped into a single style->font_features 31 bits bitmap.
+                    // reset_mask tracks which bits this specific longhand (or the full shorthand)
+                    // is allowed to affect, so that eg. "font-variant-alternates: normal" only
+                    // clears the alternates bit and doesn't wipe out a "small-caps" bit set by
+                    // another declaration (possibly the font-variant shorthand) in the same rule.
+                    int reset_mask = (parse_ligatures  ? LFNT_OT_FEATURES_MASK_LIGATURES  : 0)
+                                   | (parse_alternates ? LFNT_OT_FEATURES_MASK_ALTERNATES : 0)
+                                   | (parse_caps       ? LFNT_OT_FEATURES_MASK_CAPS       : 0)
+                                   | (parse_position   ? LFNT_OT_FEATURES_MASK_POSITION   : 0)
+                                   | (parse_numeric    ? LFNT_OT_FEATURES_MASK_NUMERIC    : 0)
+                                   | (parse_eastasian  ? LFNT_OT_FEATURES_MASK_EASTASIAN  : 0);
+
+                    if ( g >= 0 ) {
+                        // Use cssd_font_features, which is the only one we handle in apply()..
+                        buf<<(lUInt32) (cssd_font_features | importance | parse_important(decl));
+                        if ( g != css_g_initial ) {
+                            // inherit/unset: let lvrend.cpp's inheritance merge handle it
+                            buf<<(lUInt32) css_val_inherited;
+                            buf<<(lUInt32) 0;
+                            buf<<(lUInt32) 0; // reset_mask unused for the inherited marker
+                        }
+                        else {
+                            // 'initial' resets this property to its initial value ('normal'),
+                            // same as an explicit "normal"/"none" named value would -- so reuse
+                            // the same reset_mask, resetting only the bits this specific longhand
+                            // (or, for the shorthand, all of them) owns.
+                            buf<<(lUInt32) css_val_unspecified;
+                            buf<<(lUInt32) 0;
+                            buf<<(lUInt32) reset_mask;
+                        }
+                        break;
+                    }
                     int features = 0; // "normal" = no extra feature
                     int nb_parsed = 0;
                     int nb_invalid = 0;
@@ -4096,9 +4144,10 @@ bool LVCssDeclaration::parse( const char * &decl, bool higher_importance, lxmlDo
                         skip_spaces( decl );
                     }
                     if ( nb_parsed - nb_invalid > 0 ) { // at least one valid named value seen
-                        buf<<(lUInt32) (prop_code | importance | parsed_important);
+                        buf<<(lUInt32) (cssd_font_features | importance | parsed_important);
                         buf<<(lUInt32) css_val_unspecified; // len.type
                         buf<<(lUInt32) features; // len.value
+                        buf<<(lUInt32) reset_mask; // bits this declaration is allowed to clear/set
                         // css_val_unspecified just says this value has no unit
                         // For cssd_font_features, it actually means there is a value specified.
                         // The default of (css_val_inherited, 0) is what means there was no
@@ -5505,12 +5554,20 @@ void LVCssDeclaration::apply( css_style_rec_t * style, const ldomNode * node ) c
             // (while still ensuring !important).
             {
                 css_length_t font_features = read_length(p);
-                if ( font_features.value == 0 && font_features.type == css_val_unspecified ) {
-                    // except if "font-variant: normal/none", which resets all previously set bits
+                lUInt32 reset_mask = (lUInt32) *p++;
+                if ( font_features.type == css_val_inherited ) {
+                    // "inherit"/"unset": fully reset to the inherited marker (a plain
+                    // assignment, not a bitmap-OR), discarding any bits a lower-specificity
+                    // declaration may have already set on this same node, so the merge in
+                    // lvrend.cpp starts purely from the parent's value, as the property
+                    // being explicitly inherited implies.
                     style->Apply( font_features, &style->font_features, imp_bit_font_features, is_important );
                 }
                 else {
-                    style->ApplyAsBitmapOr( font_features, &style->font_features, imp_bit_font_features, is_important );
+                    // Only clear/set the bits owned by the longhand (or shorthand) that produced
+                    // this declaration (reset_mask), so a "font-variant-xxx: normal" doesn't wipe
+                    // out bits set by another font-variant-* property in the same rule.
+                    style->ApplyAsBitmapMaskedOr( font_features, reset_mask, &style->font_features, imp_bit_font_features, is_important );
                 }
                 style->flags |= STYLE_REC_FLAG_INHERITABLE_APPLIED;
             }
@@ -6129,6 +6186,56 @@ bool LVCssSelectorRule::quickClassCheck(const lUInt32 *classHashes, size_t size)
     return false;
 }
 
+static bool getOriginalFragmentAttributeValue(const ldomNode *node, lUInt16 attrid, lString32 &original_value) {
+    // EPUB/CHM documents are merged into a single DOM, and ldomDocumentFragmentWriter
+    // rewrites some attributes with a "_doc_fragment_N_ " prefix so they stay unique.
+    // CSS selectors should still be able to target the original source value, so we
+    // recover it here when the stored DOM value clearly comes from that rewrite.
+    if (attrid == attr_id || attrid == attr_name) {
+        lString32 value = node->getAttributeValue(attrid);
+        if (!value.startsWith(U"_doc_fragment_"))
+            return false;
+        int sep = value.pos(lString32(" "));
+        if (sep <= 0 || sep + 1 >= value.length())
+            return false;
+        if (value[sep - 1] != U'_')
+            return false;
+        original_value = value.substr(sep + 1, value.length() - sep - 1);
+        return true;
+    }
+    if (attrid == attr_href || attrid == attr_src || attrid == attr_data) {
+        lString32 value = node->getAttributeValue(attrid);
+        if (!value.startsWith(U"#_doc_fragment_"))
+            return false;
+        int sep = value.pos(lString32(" "));
+        if (sep <= 1 || sep + 1 > value.length())
+            return false;
+        if (value[sep - 1] != U'_')
+            return false;
+        lString32 doc_fragment_id;
+        const ldomNode *parent = node;
+        while (parent) {
+            if (parent->getNodeId() == el_DocFragment) {
+                doc_fragment_id = parent->getAttributeValue(attr_id);
+                break;
+            }
+            parent = parent->getParentNode();
+        }
+        if (doc_fragment_id.empty())
+            return false;
+        // Cross-fragment links lose their original path when imported into the
+        // single DOM, so only recover the original "#id" for same-fragment refs.
+        lString32 same_fragment_prefix = lString32(U"#") + doc_fragment_id + U"_ ";
+        if (!value.startsWith(same_fragment_prefix))
+            return false;
+        original_value = lString32(U"#");
+        if (sep + 1 < value.length())
+            original_value << value.substr(sep + 1, value.length() - sep - 1);
+        return true;
+    }
+    return false;
+}
+
 bool LVCssSelectorRule::check( const ldomNode * & node, bool allow_cache ) const
 {
     if (!node || node->isNull() || node->isRoot())
@@ -6261,7 +6368,16 @@ bool LVCssSelectorRule::check( const ldomNode * & node, bool allow_cache ) const
             lString32 val = node->getAttributeValue(_attrid);
             if (_type == cssrt_attreq_i)
                 val.lowercase();
-            return val == _value;
+            if (val == _value)
+                return true;
+            // Retry with the pre-rewrite source value, as DocFragment import may have
+            // prefixed it with "_doc_fragment_N_ " to keep merged-DOM attributes unique.
+            lString32 original_val;
+            if ( !getOriginalFragmentAttributeValue(node, _attrid, original_val) )
+                return false;
+            if (_type == cssrt_attreq_i)
+                original_val.lowercase();
+            return original_val == _value;
         }
         break;
     case cssrt_attrhas:       // E[foo~="value"]
@@ -6281,6 +6397,20 @@ bool LVCssSelectorRule::check( const ldomNode * & node, bool allow_cache ) const
             int pos;
             while ((pos = val.pos(_value, start)) >= 0) {
                 if ((pos == 0 || val[pos - 1] == ' ') && (pos + value_len == val_len || val[pos + value_len] == ' '))
+                    return true;
+                start = pos + 1;
+            }
+            // Retry with the pre-rewrite source value, as DocFragment import may have
+            // prefixed it with "_doc_fragment_N_ " to keep merged-DOM attributes unique.
+            lString32 original_val;
+            if ( !getOriginalFragmentAttributeValue(node, _attrid, original_val) )
+                return false;
+            if (_type == cssrt_attrhas_i)
+                original_val.lowercase();
+            val_len = original_val.length();
+            start = 0;
+            while ((pos = original_val.pos(_value, start)) >= 0) {
+                if ((pos == 0 || original_val[pos - 1] == ' ') && (pos + value_len == val_len || original_val[pos + value_len] == ' '))
                     return true;
                 start = pos + 1;
             }
@@ -6304,12 +6434,27 @@ bool LVCssSelectorRule::check( const ldomNode * & node, bool allow_cache ) const
             if (_type == cssrt_attrstarts_i)
                 val.lowercase();
             if (value_len == val_len) {
-                return val == _value;
+                if (val == _value)
+                    return true;
             }
-            if (val[value_len] != '-')
+            else if (val[value_len] == '-' && val.substr(0, value_len) == _value) {
+                return true;
+            }
+            // Retry with the pre-rewrite source value, as DocFragment import may have
+            // prefixed it with "_doc_fragment_N_ " to keep merged-DOM attributes unique.
+            lString32 original_val;
+            if ( !getOriginalFragmentAttributeValue(node, _attrid, original_val) )
                 return false;
-            val = val.substr(0, value_len);
-            return val == _value;
+            val_len = original_val.length();
+            if (value_len > val_len)
+                return false;
+            if (_type == cssrt_attrstarts_i)
+                original_val.lowercase();
+            if (value_len == val_len)
+                return original_val == _value;
+            if (original_val[value_len] != '-')
+                return false;
+            return original_val.substr(0, value_len) == _value;
         }
         break;
     case cssrt_attrstarts:    // E[foo^="value"]
@@ -6327,7 +6472,20 @@ bool LVCssSelectorRule::check( const ldomNode * & node, bool allow_cache ) const
             val = val.substr(0, value_len);
             if (_type == cssrt_attrstarts_i)
                 val.lowercase();
-            return val == _value;
+            if (val == _value)
+                return true;
+            // Retry with the pre-rewrite source value, as DocFragment import may have
+            // prefixed it with "_doc_fragment_N_ " to keep merged-DOM attributes unique.
+            lString32 original_val;
+            if ( !getOriginalFragmentAttributeValue(node, _attrid, original_val) )
+                return false;
+            val_len = original_val.length();
+            if (value_len > val_len)
+                return false;
+            original_val = original_val.substr(0, value_len);
+            if (_type == cssrt_attrstarts_i)
+                original_val.lowercase();
+            return original_val == _value;
         }
         break;
     case cssrt_attrends:    // E[foo$="value"]
@@ -6345,7 +6503,20 @@ bool LVCssSelectorRule::check( const ldomNode * & node, bool allow_cache ) const
             val = val.substr(val_len-value_len, value_len);
             if (_type == cssrt_attrends_i)
                 val.lowercase();
-            return val == _value;
+            if (val == _value)
+                return true;
+            // Retry with the pre-rewrite source value, as DocFragment import may have
+            // prefixed it with "_doc_fragment_N_ " to keep merged-DOM attributes unique.
+            lString32 original_val;
+            if ( !getOriginalFragmentAttributeValue(node, _attrid, original_val) )
+                return false;
+            val_len = original_val.length();
+            if (value_len > val_len)
+                return false;
+            original_val = original_val.substr(val_len-value_len, value_len);
+            if (_type == cssrt_attrends_i)
+                original_val.lowercase();
+            return original_val == _value;
         }
         break;
     case cssrt_attrcontains:    // E[foo*="value"]
@@ -6360,7 +6531,18 @@ bool LVCssSelectorRule::check( const ldomNode * & node, bool allow_cache ) const
                 return false;
             if (_type == cssrt_attrcontains_i)
                 val.lowercase();
-            return val.pos(_value, 0) >= 0;
+            if (val.pos(_value, 0) >= 0)
+                return true;
+            // Retry with the pre-rewrite source value, as DocFragment import may have
+            // prefixed it with "_doc_fragment_N_ " to keep merged-DOM attributes unique.
+            lString32 original_val;
+            if ( !getOriginalFragmentAttributeValue(node, _attrid, original_val) )
+                return false;
+            if (_value.length()>original_val.length())
+                return false;
+            if (_type == cssrt_attrcontains_i)
+                original_val.lowercase();
+            return original_val.pos(_value, 0) >= 0;
         }
         break;
     case cssrt_id:            // E#id
@@ -6368,23 +6550,12 @@ bool LVCssSelectorRule::check( const ldomNode * & node, bool allow_cache ) const
             const lString32 &val = node->getAttributeValue(attr_id);
             if ( val.empty() )
                 return false;
-            // With EPUBs and CHMs, using ldomDocumentFragmentWriter,
-            // we get the codeBasePrefix (+ a space) prepended to the
-            // original id, ie: id="_doc_fragment_7_ origId"
-            if ( !val.endsWith(_value) )
-                return false;
-            int prefix_len = val.length() - _value.length();
-            if ( prefix_len == 0 )
-                return true; // exact match (non EPUB/CHM)
-            if ( val[prefix_len - 1] != U' ' )
-                return false; // not a space, can't be a match
-            // Ensure this prefix looks enough like a codeBasePrefix so
-            // that we can consider it a match
-            if ( prefix_len >= 2 && val[prefix_len - 2] != U'_' )
-                return false; // not the trailing '_' of a "_doc_fragment_7_"
-            if ( val.startsWith(U"_doc_fragment_") )
+            if ( val == _value )
                 return true;
-            return false;
+            // Retry with the pre-rewrite source value, as DocFragment import may have
+            // prefixed id= with "_doc_fragment_N_ " to keep merged-DOM ids unique.
+            lString32 original_val;
+            return getOriginalFragmentAttributeValue(node, attr_id, original_val) && original_val == _value;
         }
         break;
     case cssrt_class:         // E.class
