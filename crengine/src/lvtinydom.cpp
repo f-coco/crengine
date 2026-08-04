@@ -22270,28 +22270,28 @@ int ldomNode::renderFinalBlock(  LFormattedTextRef & frmtext, RenderRectAccessor
     // the inner content in that context.
     // This page_h we provide to f->Format() is only used to enforce a max height to images
     int page_h = getDocument()->getPageHeight();
-    // Vertical-rl: reduce page_h by the block's accumulated inline-start offset so
-    // processParagraphVertical() does not place characters past clip.bottom.
+    // Vertical-rl: reserve the accumulated inline-start and inline-end box
+    // insets so processParagraphVertical() keeps text, padding and borders
+    // inside the page clip.  The formatter's page_h applies to every vertical
+    // column; omitting the inline-end inset lets the final line consume the
+    // parent block's bottom padding, leaving its bottom border off-screen.
     // With Option C (CSSLogical in renderBlockElementEnhanced), getX() stores the
     // inline-start content edge (CSS padding-top for vertical-rl), so bvo is
     // naturally 0 for typical body content that has no CSS padding-top/border-top.
     //
-    // KNOWN LIMITATION: the reduction is applied to the whole paragraph, but it is
-    // only strictly correct for the FIRST column (which starts at bvo from the top).
-    // Columns 2+ start at the page top and could use the full page_h; with bvo>0
-    // they end up bvo px short, leaving a small gap at the column bottom.  This is
-    // only observable when the final block carries CSS padding-top/border-top
-    // (bvo>0), which is rare for body text, so the simpler whole-paragraph reduction
-    // is kept.  (An earlier attempt threaded an unreduced page height through to the
-    // formatter for non-first columns; that consumer was never implemented, so the
-    // field was removed to avoid carrying dead state.)
+    // The reduction is applied to every column of the paragraph.  That is needed
+    // for a decorated parent block: each column must leave room for its physical
+    // top and bottom edges instead of allowing text to overwrite the bottom inset.
     {
         css_writing_mode_t wm = getStyle()->writing_mode;
         if (css_wm_is_vertical(wm)) {
             CSSLogical L(wm);
             int bvo = fmt->getX();
+            int bie = 0;
             bvo += measureBorder(this, L.brdIS());   // inline-start border (border-top)
             bvo += lengthToPx(this, getStyle()->padding[L.padIS()], fmt->getWidth());  // padding-top
+            bie += measureBorder(this, L.brdIE());   // inline-end border (border-bottom)
+            bie += lengthToPx(this, getStyle()->padding[L.padIE()], fmt->getWidth());  // padding-bottom
             for (ldomNode* cur = getParentNode(); cur != NULL && cur->isElement(); cur = cur->getParentNode()) {
                 // Stop accumulating bvo when we hit the ruby inline box.
                 // Its getX() encodes the Y position of the ruby group in the outer
@@ -22306,10 +22306,16 @@ int ldomNode::renderFinalBlock(  LFormattedTextRef & frmtext, RenderRectAccessor
                             break;
                     }
                 }
-                bvo += RenderRectAccessor(cur).getX();
+                RenderRectAccessor cur_fmt(cur);
+                css_style_ref_t cur_style = cur->getStyle();
+                CSSLogical curL(cur_style->writing_mode);
+                bvo += cur_fmt.getX();
+                bie += measureBorder(cur, curL.brdIE());
+                bie += lengthToPx(cur, cur_style->padding[curL.padIE()], cur_fmt.getWidth());
             }
-            if (bvo > 0 && bvo < page_h)
-                page_h -= bvo;
+            int inline_insets = bvo + bie;
+            if (inline_insets > 0 && inline_insets < page_h)
+                page_h -= inline_insets;
         }
     }
     // Save or restore outer floats footprint (it is only provided
