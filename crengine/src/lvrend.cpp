@@ -9811,6 +9811,21 @@ static int getVerticalInlineEndPadding(ldomNode *enode, RenderRectAccessor fmt)
     return padding_end > 0 ? padding_end : 0;
 }
 
+// A vertical block's layout width is its initially allocated inline size.  It
+// is not always the size of the box that gets painted: an auto-sized block may
+// extend it to contain descendants that use more inline space.  That used size
+// is kept separately so layout can retain the allocated width while all box
+// decorations (backgrounds and borders) share the same painted rectangle.
+static int getVerticalPaintedInlineSize(RenderRectAccessor fmt)
+{
+    if ( RENDER_RECT_HAS_FLAG(fmt, VERTICAL_USED_INLINE_SIZE_SET) ) {
+        int used_inline_size = fmt.getVerticalUsedInlineSize();
+        if ( used_inline_size > 0 )
+            return used_inline_size;
+    }
+    return fmt.getWidth();
+}
+
 // DrawBorderVertical: draw a block's CSS borders in vertical-rl/lr writing mode.
 //
 // Upstream DrawBorder() draws straight to the buffer from the doc-space
@@ -9867,23 +9882,23 @@ static void DrawBorderVertical(ldomNode *enode, LVDrawBuf & drawbuf,
     draw_extra_info_t * dei = (draw_extra_info_t*)drawbuf.GetDrawExtraInfo();
     int anchor = (dei && dei->vert_column_clip_right) ? dei->vert_column_clip_right : clip.right;
 
-    // The formatted box is the CSS box.  Descendant ink can overflow it, but
-    // must not change its used dimensions while painting.
-    int box_w = fmt.getWidth();   // doc-X extent -> screen height
-    int box_h = fmt.getHeight();  // doc-Y extent -> screen width
+    // The layout box supplies the block-direction extent.  Its separately
+    // tracked used inline extent supplies the screen height, so the border
+    // encloses the same rectangle as the background.
+    int screen_height = getVerticalPaintedInlineSize(fmt); // doc-X extent -> screen height
+    int screen_width = fmt.getHeight();  // doc-Y extent -> screen width
     int screen_top    = x0 + doc_x;
-    int screen_bottom = screen_top + box_w;
+    int screen_bottom = screen_top + screen_height;
     int screen_right  = anchor - (y0 + doc_y);
-    int screen_left   = screen_right - box_h;
+    int screen_left   = screen_right - screen_width;
 
     if ( shouldDebugForkVerticalBoxNode(enode) ) {
         fprintf(stderr,
             "KO_DEBUG_VERT_BG border path=%s class=%s fmt_width=%d fmt_height=%d "
-            "draw_width=%d "
-            "doc=(%d,%d) screen=(%d,%d,%d,%d) borders=(%d,%d,%d,%d)\n",
+            "draw_width=%d doc=(%d,%d) screen=(%d,%d,%d,%d) borders=(%d,%d,%d,%d)\n",
             LCSTR(ldomXPointer(enode, 0).toString()),
             LCSTR(enode->getAttributeValue(attr_class)),
-            fmt.getWidth(), fmt.getHeight(), box_w, doc_x, doc_y,
+            fmt.getWidth(), fmt.getHeight(), screen_height, doc_x, doc_y,
             screen_left, screen_top, screen_right, screen_bottom,
             twidth, rwidth, bwidth, lwidth);
     }
@@ -9902,12 +9917,7 @@ static void DrawBackgroundColorVertical(LVDrawBuf & drawbuf, ldomNode *enode,
     draw_extra_info_t * dei = (draw_extra_info_t*)drawbuf.GetDrawExtraInfo();
     int anchor = (dei && dei->vert_column_clip_right) ? dei->vert_column_clip_right : clip.right;
 
-    int box_w = fmt.getWidth();   // doc-X extent -> screen height
-    if ( RENDER_RECT_HAS_FLAG(fmt, VERTICAL_USED_INLINE_SIZE_SET) ) {
-        int text_bg_w = fmt.getVerticalUsedInlineSize();
-        if ( text_bg_w > 0 )
-            box_w = text_bg_w;
-    }
+    int screen_height = getVerticalPaintedInlineSize(fmt); // doc-X extent -> screen height
     if ( shouldDebugForkVerticalBoxNode(enode) ) {
         fprintf(stderr,
             "KO_DEBUG_VERT_BG draw path=%s class=%s fmt_width=%d draw_width=%d fmt_height=%d "
@@ -9915,15 +9925,15 @@ static void DrawBackgroundColorVertical(LVDrawBuf & drawbuf, ldomNode *enode,
             "padding_inline_end=%d\n",
             LCSTR(ldomXPointer(enode, 0).toString()),
             LCSTR(enode->getAttributeValue(attr_class)),
-            fmt.getWidth(), box_w, fmt.getHeight(), doc_x, doc_y,
-            x0 + doc_x, x0 + doc_x + box_w,
+            fmt.getWidth(), screen_height, fmt.getHeight(), doc_x, doc_y,
+            x0 + doc_x, x0 + doc_x + screen_height,
             getVerticalInlineEndPadding(enode, fmt));
     }
-    int box_h = fmt.getHeight();  // doc-Y extent -> screen width
+    int screen_width = fmt.getHeight();  // doc-Y extent -> screen width
     int screen_top    = x0 + doc_x;
-    int screen_bottom = screen_top + box_w;
+    int screen_bottom = screen_top + screen_height;
     int screen_right  = anchor - (y0 + doc_y);
-    int screen_left   = screen_right - box_h;
+    int screen_left   = screen_right - screen_width;
 
     drawbuf.FillRect(screen_left, screen_top, screen_right, screen_bottom, bg_color);
 }
