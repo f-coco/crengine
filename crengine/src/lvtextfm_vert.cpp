@@ -1694,6 +1694,17 @@ int initVerticalDrawSetup(
     return vert_anchor - x_inout;
 }
 
+lUInt32 mapVerticalTextDecorationFlags(lUInt32 flags)
+{
+    lUInt32 decorations = flags & (LTEXT_TD_UNDERLINE | LTEXT_TD_OVERLINE);
+    flags &= ~(LTEXT_TD_UNDERLINE | LTEXT_TD_OVERLINE);
+    if ( decorations & LTEXT_TD_UNDERLINE )
+        flags |= LTEXT_TD_OVERLINE;
+    if ( decorations & LTEXT_TD_OVERLINE )
+        flags |= LTEXT_TD_UNDERLINE;
+    return flags;
+}
+
 // =============================================================================
 // computeVertRubyInlineBoxMetrics
 //

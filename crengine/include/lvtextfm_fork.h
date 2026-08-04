@@ -41,6 +41,9 @@ int initVerticalDrawSetup(
     formatted_text_fragment_t * pbuffer, LVDrawBuf * buf,
     int & x_inout, int & y_inout, const lvRect & clip);
 
+// Maps CSS decoration flags to the physical sides used by vertical drawing.
+lUInt32 mapVerticalTextDecorationFlags(lUInt32 flags);
+
 // State maintained across the per-word loop in LFormattedText::Draw when
 // rendering in vertical-rl / vertical-lr mode.  Bundled into a struct so
 // it can be passed by reference to fork-only positioning helpers in
