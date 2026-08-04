@@ -7133,6 +7133,13 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                         buf->SetBackgroundColor( bgcl );
                     // Add drawing flags: text decoration (underline...)
                     lUInt32 drawFlags = srcline->flags & LTEXT_TD_MASK;
+                    // The formatter has already mapped vertical CSS sides to
+                    // the font's physical decoration flags. Convert only for
+                    // CSS owner lookup below; DrawTextString() expects the
+                    // original physical flags.
+                    lUInt32 cssDecorationFlags = is_vertical
+                            ? mapVerticalTextDecorationFlags(drawFlags)
+                            : drawFlags;
                     // and chars direction, and if word begins or ends paragraph (for Harfbuzz)
                     drawFlags |= WORD_FLAGS_TO_FNT_FLAGS(word->flags);
                     // For debugging, to visually see overlap/italic correction:
@@ -7211,7 +7218,7 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
                             NULL
                         };
                         getVerticalDecorationMetrics(m_pbuffer, frmline,
-                                (ldomNode *)srcline->object, drawFlags, line_x,
+                                (ldomNode *)srcline->object, cssDecorationFlags, line_x,
                                 metrics);
                         vertical_decoration_owner = metrics.owner;
                         if ( vertical_decoration_owner == last_vertical_decoration_owner
