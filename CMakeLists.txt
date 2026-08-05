@@ -38,11 +38,13 @@ set(CRE_SRCS
     crengine/src/lvdrawbuf.cpp
     crengine/src/lvfnt.cpp
     crengine/src/lvfntman.cpp
+    crengine/src/lvfntman_vert.cpp
     crengine/src/lvimg.cpp
     crengine/src/lvmemman.cpp
     crengine/src/lvopc.cpp
     crengine/src/lvpagesplitter.cpp
     crengine/src/lvrend.cpp
+    crengine/src/lvrend_vert_diag.cpp
     crengine/src/lvstream.cpp
     crengine/src/lvstring.cpp
     crengine/src/lvstsheet.cpp
