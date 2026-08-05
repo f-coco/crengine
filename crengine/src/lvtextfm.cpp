@@ -16,7 +16,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include "../include/crsetup.h"
 #include "../include/cssdef.h"
 #include "../include/lvfnt.h"
 #include "../include/lvtextfm.h"

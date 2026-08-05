@@ -14,7 +14,7 @@
 
 // lvfonttest.cpp
 
-#include "../include/crsetup.h"
+#include "crsetup.h"
 #ifdef __SYMBIAN32__
 
 #include <e32base.h>

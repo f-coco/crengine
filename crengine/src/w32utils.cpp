@@ -14,7 +14,7 @@
 
 // lvfonttest.cpp
 
-#include "../include/crsetup.h"
+#include "crsetup.h"
 #if !defined(__SYMBIAN32__) && defined(_WIN32)
 
 extern "C" {
