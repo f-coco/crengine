@@ -579,6 +579,30 @@ bool needsVerticalRotation90CW(lChar32 c)
             break;
     }
 
+    // --- CJK brackets / book title marks: ROTATE in vertical text ---
+    // (Tategumi fork fallback: when the font lacks a +vert/+vrt2 substitution,
+    // these upright glyphs must be rotated 90° CW for TTB layout. Quotes are
+    // deliberately NOT listed here — they are handled by getVertPresentationForm
+    // substitution to U+FE41–FE44; and ideographic comma/period/middle-dot/
+    // exclam/quest (、。，：；！？) are left upright, per GB/T 15834 and the
+    // readest (browser) behaviour.)
+    switch (c) {
+        case 0x3008: case 0x3009: // 〈 〉
+        case 0x300A: case 0x300B: // 《 》
+        case 0x3010: case 0x3011: // 【 】
+        case 0x3014: case 0x3015: // 〔 〕
+        case 0x3016: case 0x3017: // 〖 〗
+        case 0x3018: case 0x3019: // 〘 〙
+        case 0x301A: case 0x301B: // 〚 〛
+        case 0xFF08: case 0xFF09: // （ ）
+        case 0xFF3B: case 0xFF3D: // ［ ］
+        case 0xFF5B: case 0xFF5D: // ｛ ｝
+        case 0xFF5F: case 0xFF60: // ｟ ｠
+            return true;
+        default:
+            break;
+    }
+
     // --- CJK / East Asian scripts: do NOT rotate ---
     if (c >= 0x2E80 && c <= 0x9FFF) return false; // CJK radicals … CJK Unified
     if (c >= 0xAC00 && c <= 0xD7A3) return false; // Hangul syllables
