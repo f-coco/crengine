@@ -332,6 +332,17 @@ lChar32 getVertPresentationForm(lChar32 c)
         // Punctuation
         case 0x3001: return 0xFE11; // 、 → ︑
         case 0x3002: return 0xFE12; // 。 → ︒
+        // ---- 中文弯引号 → 竖排直角引号（GB/T 15834-2011：横排用弯引号，直排改用直角引号）----
+        // “ (U+201C) → ﹃ (U+FE43, 『 的竖排呈现形式)  ← 直排双引号
+        // ” (U+201D) → ﹄ (U+FE44)
+        // ‘ (U+2018) → ﹁ (U+FE41, 「 的竖排呈现形式)  ← 直排单引号
+        // ’ (U+2019) → ﹂ (U+FE42)
+        // 原字符与目标在 getJLReqVertClass() 同属 OPEN_BRACKET（左）/CLOSE_BRACKET_COMMA（右），
+        // JFM 槽位（半宽 em/2）不变，仅换 shaping 字形；只作用于 HarfBuzz buffer，不影响换行/高亮。
+        case 0x201C: return 0xFE43; // “ → ﹃
+        case 0x201D: return 0xFE44; // ” → ﹄
+        case 0x2018: return 0xFE41; // ‘ → ﹁
+        case 0x2019: return 0xFE42; // ’ → ﹂
         // Underscore
         case 0xFF3F: return 0xFE33; // ＿ → ︳
         // Angle brackets
