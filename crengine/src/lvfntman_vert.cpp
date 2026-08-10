@@ -274,6 +274,16 @@ JLReqVertLayout getJLReqVertLayout(JLReqVertClass cls)
             // Latin/numerals routed elsewhere; treat as full-em fallback
             break;
     }
+    // Tategumi fork: in Chinese modes (simplified/traditional), disable the
+    // Japanese JFM half-em compaction — CJK punctuation keeps full em so that
+    // consecutive punctuation don't squeeze together (GB/T 15834).  Half-width
+    // dashes and halfwidth kana stay half-width (they are genuinely so).
+    if ( fontMan && fontMan->GetVertPunctMode() != VERT_PUNCT_MODE_JA ) {
+        if ( cls == JLREQ_VERT_OPEN_BRACKET || cls == JLREQ_VERT_CLOSE_BRACKET_COMMA
+             || cls == JLREQ_VERT_MIDDLE_DOT || cls == JLREQ_VERT_PERIOD ) {
+            out.width_halves = 2; // full em
+        }
+    }
     return out;
 }
 
@@ -314,6 +324,11 @@ int getJLReqVertCwa(lChar32 c, int em_px, int vadv_px)
 
 lChar32 getVertPresentationForm(lChar32 c)
 {
+    // Tategumi fork: curved-quote substitution depends on the vertical mode.
+    //  ZH_S (简): “”→﹃﹄(FE43/44), ‘’→﹁﹂(FE41/42)
+    //  ZH_T (繁): “”→﹁﹂(FE41/42), ‘’→﹁﹂(FE41/42)   (corner-quote convention)
+    //  JA   (日): leave curved quotes untouched (Japanese uses 「」『』 natively)
+    vert_punct_mode_t vp_mode = fontMan ? fontMan->GetVertPunctMode() : VERT_PUNCT_MODE_ZH_S;
     // LuaTeX-ja vert_form_table port (ltj-jfont.lua:948-957).
     // 23 codepoint mappings to U+FE10-FE48 (CJK Compatibility Forms block).
     //
@@ -339,10 +354,26 @@ lChar32 getVertPresentationForm(lChar32 c)
         // ’ (U+2019) → ﹂ (U+FE42)
         // 原字符与目标在 getJLReqVertClass() 同属 OPEN_BRACKET（左）/CLOSE_BRACKET_COMMA（右），
         // JFM 槽位（半宽 em/2）不变，仅换 shaping 字形；只作用于 HarfBuzz buffer，不影响换行/高亮。
-        case 0x201C: return 0xFE43; // “ → ﹃
-        case 0x201D: return 0xFE44; // ” → ﹄
-        case 0x2018: return 0xFE41; // ‘ → ﹁
-        case 0x2019: return 0xFE42; // ’ → ﹂
+        case 0x201C: // “ → 简:﹃(FE43) / 繁:﹁(FE41) / 日:不转
+            if ( vp_mode == VERT_PUNCT_MODE_ZH_T )
+                return 0xFE41;
+            if ( vp_mode == VERT_PUNCT_MODE_JA )
+                return c;
+            return 0xFE43;
+        case 0x201D: // ” → 简:﹄(FE44) / 繁:﹂(FE42) / 日:不转
+            if ( vp_mode == VERT_PUNCT_MODE_ZH_T )
+                return 0xFE42;
+            if ( vp_mode == VERT_PUNCT_MODE_JA )
+                return c;
+            return 0xFE44;
+        case 0x2018: // ‘ → 简:﹁(FE41) / 繁:﹁(FE41) / 日:不转
+            if ( vp_mode == VERT_PUNCT_MODE_JA )
+                return c;
+            return 0xFE41;
+        case 0x2019: // ’ → 简:﹂(FE42) / 繁:﹂(FE42) / 日:不转
+            if ( vp_mode == VERT_PUNCT_MODE_JA )
+                return c;
+            return 0xFE42;
         // Underscore
         case 0xFF3F: return 0xFE33; // ＿ → ︳
         // Angle brackets
@@ -394,6 +425,10 @@ static inline JLReqVertGlueSpec jfmNone()
 
 JLReqVertGlueSpec getJLReqVertGlueSpec(JLReqVertClass prev_class, JLReqVertClass next_class)
 {
+    // Tategumi fork: Chinese modes use uniform full-em spacing — no Japanese
+    // JFM inter-character glue.
+    if ( fontMan && fontMan->GetVertPunctMode() != VERT_PUNCT_MODE_JA )
+        return jfmNone();
     // Encodes jfm-ujisv.lua [N].glue[M] in eighths of em.
     // Switch on prev (rows of the matrix), then next (columns).
     // Pairs not listed default to 0.

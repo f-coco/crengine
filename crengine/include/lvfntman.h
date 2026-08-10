@@ -222,6 +222,13 @@ enum kerning_mode_t {
     KERNING_MODE_HARFBUZZ
 };
 
+/// vertical-rl punctuation/typography mode (tategumi fork)
+enum vert_punct_mode_t {
+    VERT_PUNCT_MODE_ZH_S,   // 简体中文 (GB/T 15834): full-em punctuation, curved -> corner quotes
+    VERT_PUNCT_MODE_ZH_T,   // 繁体中文: full-em punctuation, corner quotes
+    VERT_PUNCT_MODE_JA      // 日本語 (m-tky original): Japanese JFM half-em compaction + glue
+};
+
 
 // Hint flags for measuring and drawing (some used only with full Harfbuzz)
 // These 4 translate (after mask & shift) from LTEXT_WORD_* equivalents
@@ -748,6 +755,7 @@ class LVFontManager
 protected:
     int _antialiasMode;
     kerning_mode_t _kerningMode;
+    vert_punct_mode_t _vertPunctMode;
     hinting_mode_t _hintingMode;
     int _monospaceSizeScale;
     bool _fallbackFontSizesAdjusted;
@@ -800,6 +808,10 @@ public:
     /// get kerning mode: true==ON, false=OFF
     virtual void SetKerningMode( kerning_mode_t mode ) { _kerningMode = mode; gc(); clearGlyphCache(); }
 
+    /// get/set vertical punctuation mode (tategumi fork)
+    virtual vert_punct_mode_t GetVertPunctMode() { return _vertPunctMode; }
+    virtual void SetVertPunctMode( vert_punct_mode_t mode ) { _vertPunctMode = mode; gc(); clearGlyphCache(); }
+
     /// get monospace size scale percent
     virtual int GetMonospaceSizeScale() { return _monospaceSizeScale; }
     /// set monospace size scale percent
@@ -811,7 +823,7 @@ public:
     virtual void SetFallbackFontSizesAdjusted( bool adjusted ) { _fallbackFontSizesAdjusted = adjusted; gc(); }
 
     /// constructor
-    LVFontManager() : _antialiasMode(font_aa_all), _kerningMode(KERNING_MODE_DISABLED), _hintingMode(HINTING_MODE_AUTOHINT)
+    LVFontManager() : _antialiasMode(font_aa_all), _kerningMode(KERNING_MODE_DISABLED), _vertPunctMode(VERT_PUNCT_MODE_ZH_S), _hintingMode(HINTING_MODE_AUTOHINT)
                      , _monospaceSizeScale(100), _fallbackFontSizesAdjusted(false) { }
     /// destructor
     virtual ~LVFontManager() { }

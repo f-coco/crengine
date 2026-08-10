@@ -7066,6 +7066,13 @@ CRPropRef LVDocView::propsApply(CRPropRef props) {
                 fontMan->SetKerningMode((kerning_mode_t)mode);
                 REQUEST_RENDER("propsApply - font kerning")
             }
+        } else if (name == PROP_VERT_PUNCT_MODE) {
+            int mode = props->getIntDef(PROP_VERT_PUNCT_MODE, (int)VERT_PUNCT_MODE_ZH_S);
+            if ((int)fontMan->GetVertPunctMode() != mode && mode>=0 && mode<=2) {
+                //CRLog::debug("Setting vertical punct mode to %d", mode);
+                fontMan->SetVertPunctMode((vert_punct_mode_t)mode);
+                REQUEST_RENDER("propsApply - vert punct mode")
+            }
         } else if (name == PROP_FONT_BASE_WEIGHT) {
             // replaces PROP_FONT_WEIGHT_EMBOLDEN
             int v = props->getIntDef(PROP_FONT_BASE_WEIGHT, 400);
