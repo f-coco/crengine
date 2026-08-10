@@ -4890,17 +4890,24 @@ public:
                                             // cwa shift. This path is for punctuation and
                                             // other exceptional vertical glyphs only.
                                             gx = x + (_size - (int)item->bmp_width) / 2;
-                                            int em_top = _size - (_height - _baseline);
+                                            // _baseline == hhea ascent == hb h-extents ascender,
+                                            // the same em-top reference the CJK body-glyph path uses,
+                                            // so punctuation lines up with body glyphs.  The old
+                                            // `_size - (_height - _baseline)` (= size - |descent|)
+                                            // drifts punctuation whenever the font's hhea line
+                                            // height exceeds the em (e.g. LXGW WenKai: 1.172em).
+                                            int em_top = _baseline;
                                             gy = y + em_top - item->origin_y
                                                  - FONT_METRIC_TO_PX(glyph_pos[i].y_offset)
                                                  + cwa;
                                             if (gy < y && cwa >= 0)
                                                 gy = y;
                                             // TEMP-DEBUG (vert punct placement)
-                                            vdbg_log("VNOX U+%04X gx=%d gy=%d cwa=%d bmp_w=%d bmp_h=%d em_top=%d\n",
+                                            vdbg_log("VNOX U+%04X gx=%d gy=%d cwa=%d bmp_w=%d bmp_h=%d em_top=%d asc=%d base=%d hgt=%d sz=%d\n",
                                                 (unsigned int)cluster_char, gx, gy, cwa,
                                                 (int)item->bmp_width, (int)item->bmp_height,
-                                                _size - (_height - _baseline));
+                                                em_top, FONT_METRIC_TO_PX(_face->size->metrics.ascender),
+                                                _baseline, _height, _size);
                                         }
                                     }
                                 }
