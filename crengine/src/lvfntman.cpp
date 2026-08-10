@@ -4890,24 +4890,20 @@ public:
                                             // cwa shift. This path is for punctuation and
                                             // other exceptional vertical glyphs only.
                                             gx = x + (_size - (int)item->bmp_width) / 2;
-                                            // _baseline == hhea ascent == hb h-extents ascender,
-                                            // the same em-top reference the CJK body-glyph path uses,
-                                            // so punctuation lines up with body glyphs.  The old
-                                            // `_size - (_height - _baseline)` (= size - |descent|)
-                                            // drifts punctuation whenever the font's hhea line
-                                            // height exceeds the em (e.g. LXGW WenKai: 1.172em).
-                                            int em_top = _baseline;
-                                            gy = y + em_top - item->origin_y
-                                                 - FONT_METRIC_TO_PX(glyph_pos[i].y_offset)
-                                                 + cwa;
+                                            // Vertical centring in the em square, symmetric with
+                                            // the horizontal centring of gx.  The old baseline-based
+                                            // `em_top(=ascender) - origin_y` placement drifts whenever
+                                            // the font's hhea line height differs from the em, pulling
+                                            // bracket/quote groups down relative to body glyphs.
+                                            // GB/T 15834 vertical punctuation is centred in its em slot.
+                                            gy = y + (_size - (int)item->bmp_height) / 2;
                                             if (gy < y && cwa >= 0)
                                                 gy = y;
                                             // TEMP-DEBUG (vert punct placement)
-                                            vdbg_log("VNOX U+%04X gx=%d gy=%d cwa=%d bmp_w=%d bmp_h=%d em_top=%d asc=%d base=%d hgt=%d sz=%d\n",
+                                            vdbg_log("VNOX U+%04X gx=%d gy=%d cwa=%d bmp_w=%d bmp_h=%d sz=%d\n",
                                                 (unsigned int)cluster_char, gx, gy, cwa,
                                                 (int)item->bmp_width, (int)item->bmp_height,
-                                                em_top, FONT_METRIC_TO_PX(_face->size->metrics.ascender),
-                                                _baseline, _height, _size);
+                                                _size);
                                         }
                                     }
                                 }
@@ -4917,6 +4913,13 @@ public:
                                     if (cluster < (lUInt32)len && needsVerticalRotation90CW(text[cluster])) {
                                         hb_codepoint_t nominal = 0;
                                         bool has_nominal = hb_font_get_glyph(_hb_font, text[cluster], 0, &nominal) != 0;
+                                        // TEMP-DEBUG (why did rotation not fire)
+                                        vdbg_log("VROTCHK U+%04X gid=%u nominal=%u has=%d pxfmt=%d is_vert=%d bmp_w=%d bmp_h=%d\n",
+                                            (unsigned int)text[cluster],
+                                            (unsigned int)glyph_info[i].codepoint,
+                                            (unsigned int)nominal, (int)has_nominal,
+                                            (int)item->bmp_pixelformat, (int)is_vertical_draw,
+                                            (int)item->bmp_width, (int)item->bmp_height);
                                         // Rotate only when cmap lookup succeeds AND +vert left the glyph unchanged.
                                         if (has_nominal && nominal != 0 && glyph_info[i].codepoint == nominal) {
                                             // Bearing-correct placement of the rotated glyph.
