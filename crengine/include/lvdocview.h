@@ -321,6 +321,10 @@ private:
 
 
     lvRect m_pageMargins;
+    /// FORK (guji mode): raw user page margins (distance from screen edge
+    /// to the OUTER guji frame); m_pageMargins is inset by the guji gap
+    /// while the guji frame is active.
+    lvRect m_userPageMargins;
     lvRect m_pageRects[2];
     int    m_pagesVisible;
     bool   m_pagesVisible_onlyIfSane;
@@ -616,8 +620,10 @@ public:
     void setBatteryIcons( const LVRefVec<LVImageSource> & icons );
     /// sets page margins
     void setPageMargins( const lvRect & rc );
+    /// FORK (guji mode): 古籍夹层间距（自动按夹层字号或手动 gap）
+    int getVertGujiPad();
     /// returns page margins
-    lvRect getPageMargins() const { return m_pageMargins; }
+    lvRect getPageMargins() const { return m_userPageMargins; }
     /// returns true if the document uses vertical-rl or vertical-lr writing mode
     /// Phase 1: document-level flag only; mixed horizontal/vertical elements not yet supported.
     /// TODO (Phase 2): per-element writing mode for mixed-mode documents.

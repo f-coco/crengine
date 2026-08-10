@@ -6484,10 +6484,9 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
         if (line_visible)
         {
             // FORK (guji mode): vertical column rule — a thin vertical line at
-            // the column's right edge, spanning the FULL text area (clip.top..
-            // clip.bottom, i.e. up to the inner border).  Using the frmline's
-            // local extent yields broken segments when a column is split across
-            // pages; the whole text area is the inner frame's interior.
+            // the column's right edge, spanning the text area (clip.top..
+            // clip.bottom) which is exactly the inner guji frame, so the rule
+            // meets the inner border without entering the guji ring.
             if ( is_vertical && fontMan->GetVertColumnRule() > 0 ) {
                 int cr = fontMan->GetVertColumnRule();
                 lUInt32 fg = buf->GetTextColor();

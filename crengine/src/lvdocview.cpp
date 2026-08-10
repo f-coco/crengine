@@ -179,6 +179,9 @@ LVDocView::LVDocView(int bitsPerPixel, bool noDefaultDocument) :
 			m_pageMargins(DEFAULT_PAGE_MARGIN,
 					DEFAULT_PAGE_MARGIN / 2 /*+ INFO_FONT_SIZE + 4 */,
 					DEFAULT_PAGE_MARGIN, DEFAULT_PAGE_MARGIN / 2),
+			m_userPageMargins(DEFAULT_PAGE_MARGIN,
+					DEFAULT_PAGE_MARGIN / 2 /*+ INFO_FONT_SIZE + 4 */,
+					DEFAULT_PAGE_MARGIN, DEFAULT_PAGE_MARGIN / 2),
 			m_pagesVisible(2), m_pagesVisible_onlyIfSane(true), m_twoVisiblePagesAsOnePageNumber(false),
 			m_pageHeaderInfo(PGHDR_PAGE_NUMBER
 #ifndef LBOOK
@@ -414,16 +417,39 @@ lvPoint LVDocView::rotatePoint(lvPoint & pt, bool winToDoc) {
 }
 
 /// sets page margins
-void LVDocView::setPageMargins(const lvRect & rc) {
-	if (m_pageMargins.left + m_pageMargins.right != rc.left + rc.right
-            || m_pageMargins.top + m_pageMargins.bottom != rc.top + rc.bottom) {
+/// FORK (guji mode): 古籍夹层间距——夹层显示章节/页码时按夹层字号自动；否则用手动 gap。
+int LVDocView::getVertGujiPad() {
+    int g = fontMan->GetVertGujiGap();
+    if ( fontMan->GetVertGujiShowChapter() || fontMan->GetVertGujiShowPage() ) {
+        int em = !m_font.isNull() ? m_font->getSize() : 16;
+        g = em * fontMan->GetVertGujiAuxScale() / 100 + 8;
+    }
+    return g;
+}
 
-        m_pageMargins = rc;
+void LVDocView::setPageMargins(const lvRect & rc) {
+    // FORK (guji mode): keep the raw user margins; while the guji frame is
+    // active, the effective layout margins are inset by the guji gap, so the
+    // user margins become the distance from the screen edge to the OUTER
+    // frame and the text area sits inside the INNER frame (gap away from it).
+    m_userPageMargins = rc;
+    lvRect eff = rc;
+    if ( fontMan->GetVertPageBorder() > 0 ) {
+        int g = getVertGujiPad();
+        eff.left += g;
+        eff.top += g;
+        eff.right += g;
+        eff.bottom += g;
+    }
+    if (m_pageMargins.left + m_pageMargins.right != eff.left + eff.right
+                || m_pageMargins.top + m_pageMargins.bottom != eff.top + eff.bottom) {
+
+        m_pageMargins = eff;
         updateLayout();
         REQUEST_RENDER("setPageMargins")
     } else {
-		clearImageCache();
-        m_pageMargins = rc;
+        clearImageCache();
+        m_pageMargins = eff;
     }
 }
 
@@ -2312,32 +2338,33 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 	drawbuf->SetClipRect(NULL);
 
 	// FORK (guji mode): 回字形双层外框.
-	//  - outer border sits at the SCREEN visible edge (pageRect), independent
-	//    of the page margins; the margins become the gap between the two frames
-	//    (reserved for book-title / chapter-page in the future).
-	//  - inner border hugs the text area but is padded outward by guji_pad so
-	//    the first/last glyph rows do not touch the frame.
+	//  - outer border sits at the user page margins (m_userPageMargins), so
+	//    the margins control the distance from the screen edge to the OUTER
+	//    frame; the guji gap between the two frames is reserved for
+	//    book-title / chapter-page (the text area is inset by that same gap
+	//    through setPageMargins()).
+	//  - inner border hugs the text area (which already carries the gap), so
+	//    the ring between the two frames is exactly guji_pad wide.
 	if ( fontMan->GetVertPageBorder() > 0 ) {
 		int pb = fontMan->GetVertPageBorder();
 		// 夹层间距：夹层显示章节/页码时按夹层字号自动；否则用手动 gap
-		int guji_pad = fontMan->GetVertGujiGap();
-		if ( fontMan->GetVertGujiShowChapter() || fontMan->GetVertGujiShowPage() ) {
-			int em = !m_font.isNull() ? m_font->getSize() : 16;
-			guji_pad = em * fontMan->GetVertGujiAuxScale() / 100 + 8;
-		}
+		int guji_pad = getVertGujiPad();
 		lUInt32 fg = drawbuf->GetTextColor();
-		// outer border: screen visible edge
-		int ox0 = pageRect->left, oy0 = pageRect->top;
-		int ox1 = pageRect->right, oy1 = pageRect->bottom;
+		// outer border: inset from the screen edge by the user margins
+		int ox0 = pageRect->left + m_userPageMargins.left;
+		int oy0 = pageRect->top + m_userPageMargins.top;
+		int ox1 = pageRect->right - m_userPageMargins.right;
+		int oy1 = pageRect->bottom - m_userPageMargins.bottom;
 		drawbuf->FillRect(ox0, oy0, ox0+pb, oy1, fg);
 		drawbuf->FillRect(ox0, oy0, ox1, oy0+pb, fg);
 		drawbuf->FillRect(ox1-pb, oy0, ox1, oy1, fg);
 		drawbuf->FillRect(ox0, oy1-pb, ox1, oy1, fg);
-		// inner border: text area padded outward by the guji gap
-		int ix0 = pageRect->left + m_pageMargins.left - guji_pad;
-		int iy0 = pageRect->top + m_pageMargins.top + headerHeight - guji_pad;
-		int ix1 = pageRect->right - m_pageMargins.right + guji_pad;
-		int iy1 = pageRect->bottom - m_pageMargins.bottom + guji_pad;
+		// inner border: the text area (already inset by the guji gap through
+		// m_pageMargins), so the column rules reach exactly the inner frame.
+		int ix0 = pageRect->left + m_pageMargins.left;
+		int iy0 = pageRect->top + m_pageMargins.top + headerHeight;
+		int ix1 = pageRect->right - m_pageMargins.right;
+		int iy1 = pageRect->bottom - m_pageMargins.bottom;
 		drawbuf->FillRect(ix0, iy0, ix0+pb, iy1, fg);
 		drawbuf->FillRect(ix0, iy0, ix1, iy0+pb, fg);
 		drawbuf->FillRect(ix1-pb, iy0, ix1, iy1, fg);
@@ -7111,36 +7138,42 @@ CRPropRef LVDocView::propsApply(CRPropRef props) {
             if (fontMan->GetVertColumnRule() != v && v>=0) {
                 fontMan->SetVertColumnRule(v);
                 REQUEST_RENDER("propsApply - vert column rule")
+                setPageMargins(m_userPageMargins);
             }
         } else if (name == PROP_VERT_PAGE_BORDER) {
             int v = props->getIntDef(PROP_VERT_PAGE_BORDER, 0);
             if (fontMan->GetVertPageBorder() != v && v>=0) {
                 fontMan->SetVertPageBorder(v);
                 REQUEST_RENDER("propsApply - vert page border")
+                setPageMargins(m_userPageMargins);
             }
         } else if (name == PROP_VERT_GUJI_GAP) {
             int v = props->getIntDef(PROP_VERT_GUJI_GAP, 10);
             if (fontMan->GetVertGujiGap() != v && v>=0) {
                 fontMan->SetVertGujiGap(v);
                 REQUEST_RENDER("propsApply - vert guji gap")
+                setPageMargins(m_userPageMargins);
             }
         } else if (name == PROP_VERT_GUJI_AUX_SCALE) {
             int v = props->getIntDef(PROP_VERT_GUJI_AUX_SCALE, 65);
             if (fontMan->GetVertGujiAuxScale() != v && v>=30 && v<=100) {
                 fontMan->SetVertGujiAuxScale(v);
                 REQUEST_RENDER("propsApply - vert guji aux scale")
+                setPageMargins(m_userPageMargins);
             }
         } else if (name == PROP_VERT_GUJI_SHOW_CHAPTER) {
             bool v = props->getBoolDef(PROP_VERT_GUJI_SHOW_CHAPTER, false);
             if (fontMan->GetVertGujiShowChapter() != v) {
                 fontMan->SetVertGujiShowChapter(v);
                 REQUEST_RENDER("propsApply - vert guji show chapter")
+                setPageMargins(m_userPageMargins);
             }
         } else if (name == PROP_VERT_GUJI_SHOW_PAGE) {
             bool v = props->getBoolDef(PROP_VERT_GUJI_SHOW_PAGE, false);
             if (fontMan->GetVertGujiShowPage() != v) {
                 fontMan->SetVertGujiShowPage(v);
                 REQUEST_RENDER("propsApply - vert guji show page")
+                setPageMargins(m_userPageMargins);
             }
         } else if (name == PROP_FONT_BASE_WEIGHT) {
             // replaces PROP_FONT_WEIGHT_EMBOLDEN
