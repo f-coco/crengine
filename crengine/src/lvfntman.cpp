@@ -13,6 +13,7 @@
 */
 
 #include "crsetup.h"
+#include <cstdarg>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -284,6 +285,21 @@ static bool logVerticalCapsules()
     if (enabled < 0)
         enabled = getenv("CRE_LOG_VERT_CAPSULE") ? 1 : 0;
     return enabled != 0;
+}
+
+// TEMP-DEBUG: vertical placement log (Android) -> /sdcard/koreader/vert_debug.log
+static void vdbg_log(const char * fmt, ...)
+{
+    static FILE * f = NULL;
+    if ( !f ) {
+        f = fopen("/sdcard/koreader/vert_debug.log", "w");
+        if ( !f ) return;
+    }
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fflush(f);
 }
 
 #if COLOR_BACKBUFFER==0
@@ -4881,7 +4897,7 @@ public:
                                             if (gy < y && cwa >= 0)
                                                 gy = y;
                                             // TEMP-DEBUG (vert punct placement)
-                                            fprintf(stderr, "VNOX U+%04X gx=%d gy=%d cwa=%d bmp_w=%d bmp_h=%d em_top=%d\n",
+                                            vdbg_log("VNOX U+%04X gx=%d gy=%d cwa=%d bmp_w=%d bmp_h=%d em_top=%d\n",
                                                 (unsigned int)cluster_char, gx, gy, cwa,
                                                 (int)item->bmp_width, (int)item->bmp_height,
                                                 _size - (_height - _baseline));
@@ -4922,7 +4938,7 @@ public:
                                             int rot_gy = correct_y - (bh - bw) / 2;
                                             drawGlyphItemRotated90CW(buf, rot_gx, rot_gy, item, palette);
                                             // TEMP-DEBUG (vert rotated glyph placement)
-                                            fprintf(stderr, "VROT U+%04X gx=%d gy=%d bw=%d bh=%d correct_x=%d correct_y=%d rot_gx=%d rot_gy=%d baseline=%d o_x=%d o_y=%d\n",
+                                            vdbg_log("VROT U+%04X gx=%d gy=%d bw=%d bh=%d correct_x=%d correct_y=%d rot_gx=%d rot_gy=%d baseline=%d o_x=%d o_y=%d\n",
                                                 (unsigned int)text[cluster], gx, gy, bw, bh,
                                                 correct_x, correct_y, rot_gx, rot_gy,
                                                 _baseline, item->origin_x, item->origin_y);
