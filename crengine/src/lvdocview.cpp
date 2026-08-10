@@ -2322,7 +2322,7 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 		// 夹层间距：夹层显示章节/页码时按夹层字号自动；否则用手动 gap
 		int guji_pad = fontMan->GetVertGujiGap();
 		if ( fontMan->GetVertGujiShowChapter() || fontMan->GetVertGujiShowPage() ) {
-			int em = m_font ? m_font->getSize() : 16;
+			int em = !m_font.isNull() ? m_font->getSize() : 16;
 			guji_pad = em * fontMan->GetVertGujiAuxScale() / 100 + 8;
 		}
 		lUInt32 fg = drawbuf->GetTextColor();
