@@ -6483,6 +6483,17 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
             : (line_y + frmline->height > clip.top || ignore_clip);
         if (line_visible)
         {
+            // FORK (guji mode): vertical column rule — draw a vertical line at
+            // the column's right edge, spanning the column extent (= the text
+            // area, i.e. up to the inner border).  Y-extent is the column's
+            // screen-Y range; X is a thin stripe at line_x (column right edge).
+            if ( is_vertical && fontMan->GetVertColumnRule() > 0 ) {
+                int cr = fontMan->GetVertColumnRule();
+                int gy0 = y + (int)frmline->x;
+                int gy1 = y + (int)frmline->x + (int)frmline->width;
+                lUInt32 fg = buf->GetTextColor();
+                buf->FillRect(line_x - cr, gy0, line_x, gy1, fg);
+            }
             if ( is_vertical && verticalTextDebugEnabled() ) {
                 ldomNode * line_node = NULL;
                 for ( int wi = 0; wi < frmline->word_count && !line_node; wi++ ) {

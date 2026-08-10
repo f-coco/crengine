@@ -2310,6 +2310,31 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 		}
 	}
 	drawbuf->SetClipRect(NULL);
+
+	// FORK (guji mode): 回字形双层外框.  Inner border hugs the text area
+	// (page margins + header), outer border is guji_gap px further out; the
+	// gap between them is reserved for book-title / chapter-page (future).
+	if ( fontMan->GetVertPageBorder() > 0 ) {
+		int pb = fontMan->GetVertPageBorder();
+		const int guji_gap = 10;
+		lUInt32 fg = drawbuf->GetTextColor();
+		int cx0 = pageRect->left + m_pageMargins.left;
+		int cy0 = pageRect->top + m_pageMargins.top + headerHeight;
+		int cx1 = pageRect->right - m_pageMargins.right;
+		int cy1 = pageRect->bottom - m_pageMargins.bottom;
+		// inner border (text-area edge)
+		drawbuf->FillRect(cx0, cy0, cx0+pb, cy1, fg);
+		drawbuf->FillRect(cx0, cy0, cx1, cy0+pb, fg);
+		drawbuf->FillRect(cx1-pb, cy0, cx1, cy1, fg);
+		drawbuf->FillRect(cx0, cy1-pb, cx1, cy1, fg);
+		// outer border (guji_gap outside the text area)
+		int ox0 = cx0 - guji_gap, oy0 = cy0 - guji_gap;
+		int ox1 = cx1 + guji_gap, oy1 = cy1 + guji_gap;
+		drawbuf->FillRect(ox0, oy0, ox0+pb, oy1, fg);
+		drawbuf->FillRect(ox0, oy0, ox1, oy0+pb, fg);
+		drawbuf->FillRect(ox1-pb, oy0, ox1, oy1, fg);
+		drawbuf->FillRect(ox0, oy1-pb, ox1, oy1, fg);
+	}
 #ifdef SHOW_PAGE_RECT
 	drawbuf->FillRect(pageRect->left, pageRect->top, pageRect->left+1, pageRect->bottom, 0xAAAAAA);
 	drawbuf->FillRect(pageRect->left, pageRect->top, pageRect->right, pageRect->top+1, 0xAAAAAA);
@@ -7072,6 +7097,18 @@ CRPropRef LVDocView::propsApply(CRPropRef props) {
                 //CRLog::debug("Setting vertical punct mode to %d", mode);
                 fontMan->SetVertPunctMode((vert_punct_mode_t)mode);
                 REQUEST_RENDER("propsApply - vert punct mode")
+            }
+        } else if (name == PROP_VERT_COLUMN_RULE) {
+            int v = props->getIntDef(PROP_VERT_COLUMN_RULE, 0);
+            if (fontMan->GetVertColumnRule() != v && v>=0) {
+                fontMan->SetVertColumnRule(v);
+                REQUEST_RENDER("propsApply - vert column rule")
+            }
+        } else if (name == PROP_VERT_PAGE_BORDER) {
+            int v = props->getIntDef(PROP_VERT_PAGE_BORDER, 0);
+            if (fontMan->GetVertPageBorder() != v && v>=0) {
+                fontMan->SetVertPageBorder(v);
+                REQUEST_RENDER("propsApply - vert page border")
             }
         } else if (name == PROP_FONT_BASE_WEIGHT) {
             // replaces PROP_FONT_WEIGHT_EMBOLDEN

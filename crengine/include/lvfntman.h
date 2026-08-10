@@ -756,6 +756,8 @@ protected:
     int _antialiasMode;
     kerning_mode_t _kerningMode;
     vert_punct_mode_t _vertPunctMode;
+    int _vertColumnRule;   // 古籍界行（列间竖线）线宽 px, 0=off
+    int _vertPageBorder;   // 古籍回字形双层外框线宽 px, 0=off
     hinting_mode_t _hintingMode;
     int _monospaceSizeScale;
     bool _fallbackFontSizesAdjusted;
@@ -812,6 +814,13 @@ public:
     virtual vert_punct_mode_t GetVertPunctMode() { return _vertPunctMode; }
     virtual void SetVertPunctMode( vert_punct_mode_t mode ) { _vertPunctMode = mode; gc(); clearGlyphCache(); }
 
+    /// get/set 古籍界行线宽 (tategumi fork)
+    virtual int GetVertColumnRule() { return _vertColumnRule; }
+    virtual void SetVertColumnRule( int v ) { _vertColumnRule = v; gc(); clearGlyphCache(); }
+    /// get/set 古籍回字形外框线宽 (tategumi fork)
+    virtual int GetVertPageBorder() { return _vertPageBorder; }
+    virtual void SetVertPageBorder( int v ) { _vertPageBorder = v; gc(); clearGlyphCache(); }
+
     /// get monospace size scale percent
     virtual int GetMonospaceSizeScale() { return _monospaceSizeScale; }
     /// set monospace size scale percent
@@ -824,6 +833,7 @@ public:
 
     /// constructor
     LVFontManager() : _antialiasMode(font_aa_all), _kerningMode(KERNING_MODE_DISABLED), _vertPunctMode(VERT_PUNCT_MODE_ZH_S), _hintingMode(HINTING_MODE_AUTOHINT)
+                     , _vertColumnRule(0), _vertPageBorder(0)
                      , _monospaceSizeScale(100), _fallbackFontSizesAdjusted(false) { }
     /// destructor
     virtual ~LVFontManager() { }

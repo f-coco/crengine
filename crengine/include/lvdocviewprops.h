@@ -10,6 +10,8 @@
 #define PROP_FONT_HINTING            "font.hinting.mode"
 #define PROP_FONT_KERNING            "font.kerning.mode"
 #define PROP_VERT_PUNCT_MODE         "vert.punct.mode"
+#define PROP_VERT_COLUMN_RULE        "vert.column.rule"
+#define PROP_VERT_PAGE_BORDER        "vert.page.border"
 #define PROP_FONT_COLOR              "font.color.default"
 #define PROP_FONT_FACE               "font.face.default"
 #define PROP_FONT_BASE_WEIGHT        "font.face.base.weight"        // replaces PROP_FONT_WEIGHT_EMBOLDEN ("font.face.weight.embolden")
