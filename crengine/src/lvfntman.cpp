@@ -4346,7 +4346,11 @@ public:
     #if USE_HARFBUZZ==1
         // Fork (tategumi): vertical text must go through the HarfBuzz path even when
         // kerning is disabled (see measureText() for the same change).
-        bool force_hb_for_vertical = (flags & LFNT_HINT_IS_VERTICAL) != 0;
+        // Latin words in a vertical column are drawn via LFNT_HINT_RENDER_ROTATE_FOR_VERTICAL
+        // (render horizontally into a temp buffer, then rotate 90 deg CW) and do NOT carry
+        // LFNT_HINT_IS_VERTICAL, so that render+rotate machinery (rr_buf) must also be
+        // reachable regardless of kerning mode.
+        bool force_hb_for_vertical = (flags & (LFNT_HINT_IS_VERTICAL | LFNT_HINT_RENDER_ROTATE_FOR_VERTICAL)) != 0;
         if (_kerningMode == KERNING_MODE_HARFBUZZ || force_hb_for_vertical) {
             // See measureText() for more comments on how to work with Harfbuzz,
             // as we do and must work the same way here.
@@ -4876,6 +4880,11 @@ public:
                                                  + cwa;
                                             if (gy < y && cwa >= 0)
                                                 gy = y;
+                                            // TEMP-DEBUG (vert punct placement)
+                                            fprintf(stderr, "VNOX U+%04X gx=%d gy=%d cwa=%d bmp_w=%d bmp_h=%d em_top=%d\n",
+                                                (unsigned int)cluster_char, gx, gy, cwa,
+                                                (int)item->bmp_width, (int)item->bmp_height,
+                                                _size - (_height - _baseline));
                                         }
                                     }
                                 }
@@ -4912,6 +4921,11 @@ public:
                                             int rot_gx = correct_x - (bw - bh) / 2;
                                             int rot_gy = correct_y - (bh - bw) / 2;
                                             drawGlyphItemRotated90CW(buf, rot_gx, rot_gy, item, palette);
+                                            // TEMP-DEBUG (vert rotated glyph placement)
+                                            fprintf(stderr, "VROT U+%04X gx=%d gy=%d bw=%d bh=%d correct_x=%d correct_y=%d rot_gx=%d rot_gy=%d baseline=%d o_x=%d o_y=%d\n",
+                                                (unsigned int)text[cluster], gx, gy, bw, bh,
+                                                correct_x, correct_y, rot_gx, rot_gy,
+                                                _baseline, item->origin_x, item->origin_y);
                                             did_rotate = true;
                                         }
                                     }
