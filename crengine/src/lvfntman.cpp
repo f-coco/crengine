@@ -2019,7 +2019,15 @@ public:
             // even the one-to-one substitutions like small-cap or oldstyle-nums...
             return;
         }
-        else { // Not using Harfbuzz
+        else { // Not using Harfbuzz (KERNING_MODE_DISABLED / KERNING_MODE_FREETYPE)
+            // Fork (tategumi): vertical text is routed through HarfBuzz even when
+            // kerning is disabled, so it still needs the vertical features here.
+            if ( is_vertical ) {
+                _hb_features.reserve(3);
+                addHBFeature("+vert");  // vertical glyph substitution (base)
+                addHBFeature("+vrt2");  // vertical rotation (composite glyphs)
+                addHBFeature("+vkrn");  // vertical kerning
+            }
             return;
         }
         if ( _features != LFNT_OT_FEATURES_NORMAL ) {
@@ -2970,7 +2978,12 @@ public:
         // measure character widths
 
     #if USE_HARFBUZZ==1
-        if (_kerningMode == KERNING_MODE_HARFBUZZ) {
+        // Fork (tategumi): vertical text must go through the HarfBuzz path even when
+        // kerning is disabled, since vertical form substitution (getVertPresentationForm)
+        // and 90-degree glyph rotation (needsVerticalRotation90CW) only live in the
+        // HarfBuzz shaping/drawing path.
+        bool force_hb_for_vertical = (hints & LFNT_HINT_IS_VERTICAL) != 0;
+        if (_kerningMode == KERNING_MODE_HARFBUZZ || force_hb_for_vertical) {
 
             /** from harfbuzz/src/hb-buffer.h
              * hb_glyph_info_t:
@@ -4331,7 +4344,10 @@ public:
         int text_origin_y = y;
 
     #if USE_HARFBUZZ==1
-        if (_kerningMode == KERNING_MODE_HARFBUZZ) {
+        // Fork (tategumi): vertical text must go through the HarfBuzz path even when
+        // kerning is disabled (see measureText() for the same change).
+        bool force_hb_for_vertical = (flags & LFNT_HINT_IS_VERTICAL) != 0;
+        if (_kerningMode == KERNING_MODE_HARFBUZZ || force_hb_for_vertical) {
             // See measureText() for more comments on how to work with Harfbuzz,
             // as we do and must work the same way here.
             int glyph_count;
