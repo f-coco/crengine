@@ -6483,16 +6483,15 @@ void LFormattedText::Draw( LVDrawBuf * buf, int x, int y, ldomMarkedRangeList * 
             : (line_y + frmline->height > clip.top || ignore_clip);
         if (line_visible)
         {
-            // FORK (guji mode): vertical column rule — draw a vertical line at
-            // the column's right edge, spanning the column extent (= the text
-            // area, i.e. up to the inner border).  Y-extent is the column's
-            // screen-Y range; X is a thin stripe at line_x (column right edge).
+            // FORK (guji mode): vertical column rule — a thin vertical line at
+            // the column's right edge, spanning the FULL text area (clip.top..
+            // clip.bottom, i.e. up to the inner border).  Using the frmline's
+            // local extent yields broken segments when a column is split across
+            // pages; the whole text area is the inner frame's interior.
             if ( is_vertical && fontMan->GetVertColumnRule() > 0 ) {
                 int cr = fontMan->GetVertColumnRule();
-                int gy0 = y + (int)frmline->x;
-                int gy1 = y + (int)frmline->x + (int)frmline->width;
                 lUInt32 fg = buf->GetTextColor();
-                buf->FillRect(line_x - cr, gy0, line_x, gy1, fg);
+                buf->FillRect(line_x - cr, clip.top, line_x, clip.bottom, fg);
             }
             if ( is_vertical && verticalTextDebugEnabled() ) {
                 ldomNode * line_node = NULL;

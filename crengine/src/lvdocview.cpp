@@ -2311,29 +2311,32 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 	}
 	drawbuf->SetClipRect(NULL);
 
-	// FORK (guji mode): 回字形双层外框.  Inner border hugs the text area
-	// (page margins + header), outer border is guji_gap px further out; the
-	// gap between them is reserved for book-title / chapter-page (future).
+	// FORK (guji mode): 回字形双层外框.
+	//  - outer border sits at the SCREEN visible edge (pageRect), independent
+	//    of the page margins; the margins become the gap between the two frames
+	//    (reserved for book-title / chapter-page in the future).
+	//  - inner border hugs the text area but is padded outward by guji_pad so
+	//    the first/last glyph rows do not touch the frame.
 	if ( fontMan->GetVertPageBorder() > 0 ) {
 		int pb = fontMan->GetVertPageBorder();
-		const int guji_gap = 10;
+		const int guji_pad = 4;
 		lUInt32 fg = drawbuf->GetTextColor();
-		int cx0 = pageRect->left + m_pageMargins.left;
-		int cy0 = pageRect->top + m_pageMargins.top + headerHeight;
-		int cx1 = pageRect->right - m_pageMargins.right;
-		int cy1 = pageRect->bottom - m_pageMargins.bottom;
-		// inner border (text-area edge)
-		drawbuf->FillRect(cx0, cy0, cx0+pb, cy1, fg);
-		drawbuf->FillRect(cx0, cy0, cx1, cy0+pb, fg);
-		drawbuf->FillRect(cx1-pb, cy0, cx1, cy1, fg);
-		drawbuf->FillRect(cx0, cy1-pb, cx1, cy1, fg);
-		// outer border (guji_gap outside the text area)
-		int ox0 = cx0 - guji_gap, oy0 = cy0 - guji_gap;
-		int ox1 = cx1 + guji_gap, oy1 = cy1 + guji_gap;
+		// outer border: screen visible edge
+		int ox0 = pageRect->left, oy0 = pageRect->top;
+		int ox1 = pageRect->right, oy1 = pageRect->bottom;
 		drawbuf->FillRect(ox0, oy0, ox0+pb, oy1, fg);
 		drawbuf->FillRect(ox0, oy0, ox1, oy0+pb, fg);
 		drawbuf->FillRect(ox1-pb, oy0, ox1, oy1, fg);
 		drawbuf->FillRect(ox0, oy1-pb, ox1, oy1, fg);
+		// inner border: text area padded slightly outward
+		int ix0 = pageRect->left + m_pageMargins.left - guji_pad;
+		int iy0 = pageRect->top + m_pageMargins.top + headerHeight - guji_pad;
+		int ix1 = pageRect->right - m_pageMargins.right + guji_pad;
+		int iy1 = pageRect->bottom - m_pageMargins.bottom + guji_pad;
+		drawbuf->FillRect(ix0, iy0, ix0+pb, iy1, fg);
+		drawbuf->FillRect(ix0, iy0, ix1, iy0+pb, fg);
+		drawbuf->FillRect(ix1-pb, iy0, ix1, iy1, fg);
+		drawbuf->FillRect(ix0, iy1-pb, ix1, iy1, fg);
 	}
 #ifdef SHOW_PAGE_RECT
 	drawbuf->FillRect(pageRect->left, pageRect->top, pageRect->left+1, pageRect->bottom, 0xAAAAAA);
