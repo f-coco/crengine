@@ -308,6 +308,14 @@ int getJLReqVertSlotWidth(lChar32 c, int em_px, int natural_advance_px)
 
 int getJLReqVertCwa(lChar32 c, int em_px, int vadv_px)
 {
+    // Tategumi fork: in Chinese modes (ZH_S/ZH_T) punctuation occupies full
+    // em and is centred in its slot — the Japanese JFM corner offset is
+    // intentionally disabled (GB/T 15834).  This also avoids a spurious
+    // vertical drift for fonts whose TTB advance (vadv) is not a clean em
+    // (e.g. fonts without a vhea/vmtx table, like LXGW WenKai), which made
+    // CJK punctuation shift out of its em slot and overlap its neighbours.
+    if ( fontMan && fontMan->GetVertPunctMode() != VERT_PUNCT_MODE_JA )
+        return 0;
     JLReqVertLayout layout = getJLReqVertLayout(getJLReqVertClass(c));
     // cwa = align_num * (fwidth - vadv) per ltj-setwidth.lua:269.
     // align_num: 0 (left), 0.5 (middle), 1 (right) — our enum maps to
