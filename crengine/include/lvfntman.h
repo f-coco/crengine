@@ -758,6 +758,10 @@ protected:
     vert_punct_mode_t _vertPunctMode;
     int _vertColumnRule;   // 古籍界行（列间竖线）线宽 px, 0=off
     int _vertPageBorder;   // 古籍回字形双层外框线宽 px, 0=off
+    int _vertGujiGap;      // 古籍内外框夹层间距 px（无夹层文字时的手动值）
+    int _vertGujiAuxScale; // 古籍夹层字号相对正文 %（自动间距用）
+    bool _vertGujiShowChapter; // 夹层右上显示章节名（未来）
+    bool _vertGujiShowPage;    // 夹层右下显示页码（未来）
     hinting_mode_t _hintingMode;
     int _monospaceSizeScale;
     bool _fallbackFontSizesAdjusted;
@@ -820,6 +824,15 @@ public:
     /// get/set 古籍回字形外框线宽 (tategumi fork)
     virtual int GetVertPageBorder() { return _vertPageBorder; }
     virtual void SetVertPageBorder( int v ) { _vertPageBorder = v; gc(); clearGlyphCache(); }
+    /// get/set 古籍夹层间距 / 夹层字号缩放 / 夹层文字显示 (tategumi fork)
+    virtual int GetVertGujiGap() { return _vertGujiGap; }
+    virtual void SetVertGujiGap( int v ) { _vertGujiGap = v; gc(); }
+    virtual int GetVertGujiAuxScale() { return _vertGujiAuxScale; }
+    virtual void SetVertGujiAuxScale( int v ) { _vertGujiAuxScale = v; gc(); }
+    virtual bool GetVertGujiShowChapter() { return _vertGujiShowChapter; }
+    virtual void SetVertGujiShowChapter( bool v ) { _vertGujiShowChapter = v; gc(); }
+    virtual bool GetVertGujiShowPage() { return _vertGujiShowPage; }
+    virtual void SetVertGujiShowPage( bool v ) { _vertGujiShowPage = v; gc(); }
 
     /// get monospace size scale percent
     virtual int GetMonospaceSizeScale() { return _monospaceSizeScale; }
@@ -834,6 +847,7 @@ public:
     /// constructor
     LVFontManager() : _antialiasMode(font_aa_all), _kerningMode(KERNING_MODE_DISABLED), _vertPunctMode(VERT_PUNCT_MODE_ZH_S), _hintingMode(HINTING_MODE_AUTOHINT)
                      , _vertColumnRule(0), _vertPageBorder(0)
+                     , _vertGujiGap(10), _vertGujiAuxScale(65), _vertGujiShowChapter(false), _vertGujiShowPage(false)
                      , _monospaceSizeScale(100), _fallbackFontSizesAdjusted(false) { }
     /// destructor
     virtual ~LVFontManager() { }

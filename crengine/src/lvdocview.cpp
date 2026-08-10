@@ -2319,7 +2319,12 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 	//    the first/last glyph rows do not touch the frame.
 	if ( fontMan->GetVertPageBorder() > 0 ) {
 		int pb = fontMan->GetVertPageBorder();
-		const int guji_pad = 4;
+		// 夹层间距：夹层显示章节/页码时按夹层字号自动；否则用手动 gap
+		int guji_pad = fontMan->GetVertGujiGap();
+		if ( fontMan->GetVertGujiShowChapter() || fontMan->GetVertGujiShowPage() ) {
+			int em = m_font ? m_font->getSize() : 16;
+			guji_pad = em * fontMan->GetVertGujiAuxScale() / 100 + 8;
+		}
 		lUInt32 fg = drawbuf->GetTextColor();
 		// outer border: screen visible edge
 		int ox0 = pageRect->left, oy0 = pageRect->top;
@@ -2328,7 +2333,7 @@ void LVDocView::drawPageTo(LVDrawBuf * drawbuf, LVRendPageInfo & page,
 		drawbuf->FillRect(ox0, oy0, ox1, oy0+pb, fg);
 		drawbuf->FillRect(ox1-pb, oy0, ox1, oy1, fg);
 		drawbuf->FillRect(ox0, oy1-pb, ox1, oy1, fg);
-		// inner border: text area padded slightly outward
+		// inner border: text area padded outward by the guji gap
 		int ix0 = pageRect->left + m_pageMargins.left - guji_pad;
 		int iy0 = pageRect->top + m_pageMargins.top + headerHeight - guji_pad;
 		int ix1 = pageRect->right - m_pageMargins.right + guji_pad;
@@ -7112,6 +7117,30 @@ CRPropRef LVDocView::propsApply(CRPropRef props) {
             if (fontMan->GetVertPageBorder() != v && v>=0) {
                 fontMan->SetVertPageBorder(v);
                 REQUEST_RENDER("propsApply - vert page border")
+            }
+        } else if (name == PROP_VERT_GUJI_GAP) {
+            int v = props->getIntDef(PROP_VERT_GUJI_GAP, 10);
+            if (fontMan->GetVertGujiGap() != v && v>=0) {
+                fontMan->SetVertGujiGap(v);
+                REQUEST_RENDER("propsApply - vert guji gap")
+            }
+        } else if (name == PROP_VERT_GUJI_AUX_SCALE) {
+            int v = props->getIntDef(PROP_VERT_GUJI_AUX_SCALE, 65);
+            if (fontMan->GetVertGujiAuxScale() != v && v>=30 && v<=100) {
+                fontMan->SetVertGujiAuxScale(v);
+                REQUEST_RENDER("propsApply - vert guji aux scale")
+            }
+        } else if (name == PROP_VERT_GUJI_SHOW_CHAPTER) {
+            bool v = props->getBoolDef(PROP_VERT_GUJI_SHOW_CHAPTER, false);
+            if (fontMan->GetVertGujiShowChapter() != v) {
+                fontMan->SetVertGujiShowChapter(v);
+                REQUEST_RENDER("propsApply - vert guji show chapter")
+            }
+        } else if (name == PROP_VERT_GUJI_SHOW_PAGE) {
+            bool v = props->getBoolDef(PROP_VERT_GUJI_SHOW_PAGE, false);
+            if (fontMan->GetVertGujiShowPage() != v) {
+                fontMan->SetVertGujiShowPage(v);
+                REQUEST_RENDER("propsApply - vert guji show page")
             }
         } else if (name == PROP_FONT_BASE_WEIGHT) {
             // replaces PROP_FONT_WEIGHT_EMBOLDEN
